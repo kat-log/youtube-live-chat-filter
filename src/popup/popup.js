@@ -10,7 +10,7 @@ class PopupController {
         this.commentFilters = {
             owner: true,
             moderator: true,
-            sponsor: true,
+            sponsor: false,
             normal: false
         };
         
@@ -653,7 +653,7 @@ class PopupController {
         
         // 現在の状態に応じてアクティブなプリセットを設定
         if (this.commentFilters.owner && this.commentFilters.moderator && 
-            this.commentFilters.sponsor && !this.commentFilters.normal) {
+            !this.commentFilters.sponsor && !this.commentFilters.normal) {
             this.elements.presetSpecial.classList.add('btn-preset-active');
         } else if (this.commentFilters.owner && this.commentFilters.moderator && 
                    this.commentFilters.sponsor && this.commentFilters.normal) {
@@ -691,7 +691,7 @@ class PopupController {
                 this.commentFilters = {
                     owner: true,
                     moderator: true,
-                    sponsor: true,
+                    sponsor: false,
                     normal: false
                 };
                 break;

@@ -9,7 +9,7 @@ let monitoringState = {
   commentFilters: {
     owner: true,
     moderator: true,
-    sponsor: true,
+    sponsor: false,
     normal: false
   },
   commentsHistory: [], // 現在監視中のVideo IDの履歴
@@ -217,7 +217,7 @@ async function fetchLiveChatMessages(liveChatId, pageToken = null) {
     const commentFilters = filtersResult.commentFilters || {
       owner: true,
       moderator: true,
-      sponsor: true,
+      sponsor: false,
       normal: false
     };
     
@@ -289,7 +289,7 @@ async function startBackgroundMonitoring(liveChatId, tabId, videoId) {
   const currentFilters = monitoringState.commentFilters || {
     owner: true,
     moderator: true,
-    sponsor: true,
+    sponsor: false,
     normal: false
   };
   
@@ -467,7 +467,7 @@ chrome.runtime.onStartup.addListener(async () => {
   const savedFilters = result.commentFilters || {
     owner: true,
     moderator: true,
-    sponsor: true,
+    sponsor: false,
     normal: false
   };
   
@@ -588,7 +588,7 @@ async function getCommentFilters() {
   const commentFilters = result.commentFilters || {
     owner: true,
     moderator: true,
-    sponsor: true,
+    sponsor: false,
     normal: false
   };
   
