@@ -115,7 +115,7 @@ body {
     font-size: 13px;
 }
 
-.monitoring-video, .current-video {
+.current-video {
     display: flex;
     align-items: center;
     margin-bottom: 8px;
@@ -138,16 +138,6 @@ body {
     flex: 1;
 }
 
-.btn-switch {
-    background-color: #ff9800;
-    color: white;
-    margin-top: 8px;
-    width: 100%;
-}
-
-.btn-switch:hover:not(:disabled) {
-    background-color: #f57c00;
-}
 
 .filter-section {
     background: white;

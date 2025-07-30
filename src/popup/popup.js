@@ -4,7 +4,6 @@ class PopupController {
         this.comments = [];
         this.currentTab = null;
         this.currentVideoId = null;
-        this.monitoringVideoId = null;
         
         // 個別フィルターの状態
         this.commentFilters = {
@@ -55,9 +54,7 @@ class PopupController {
             
             loading: document.getElementById('loading'),
             errorMessage: document.getElementById('error-message'),
-            monitoringVideoId: document.getElementById('monitoring-video-id'),
-            currentVideoId: document.getElementById('current-video-id'),
-            switchToCurrentBtn: document.getElementById('switch-to-current')
+            currentVideoId: document.getElementById('current-video-id')
         };
     }
     
@@ -66,7 +63,6 @@ class PopupController {
         this.elements.startMonitoringBtn.addEventListener('click', () => this.startMonitoring());
         this.elements.stopMonitoringBtn.addEventListener('click', () => this.stopMonitoring());
         this.elements.clearCommentsBtn.addEventListener('click', () => this.clearComments());
-        this.elements.switchToCurrentBtn.addEventListener('click', () => this.switchToCurrentTab());
         
         // 個別フィルタートグル
         this.elements.ownerToggle.addEventListener('change', () => this.onFilterToggleChange('owner'));
@@ -170,7 +166,6 @@ class PopupController {
             // Step 3: 監視状態を更新
             if (monitoringState.success) {
                 this.isMonitoring = monitoringState.isMonitoring;
-                this.monitoringVideoId = monitoringState.currentVideoId;
                 this.updateMonitoringButtonStates();
                 
                 if (this.isMonitoring) {
@@ -249,16 +244,7 @@ class PopupController {
             return;
         }
         
-        // 監視中かつ同じVideo IDの場合は監視中の履歴を優先
         let targetVideoId = currentVideoId;
-        if (this.isMonitoring && this.monitoringVideoId) {
-            if (currentVideoId === this.monitoringVideoId) {
-                console.log('[YouTube Special Comments] Loading history for currently monitored video:', this.monitoringVideoId);
-                targetVideoId = this.monitoringVideoId;
-            } else {
-                console.log('[YouTube Special Comments] Loading history for different video:', currentVideoId, '(monitoring:', this.monitoringVideoId + ')');
-            }
-        }
         
         // プライマリ取得を試行
         let historyLoaded = false;
@@ -284,30 +270,9 @@ class PopupController {
             console.error('[YouTube Special Comments] Primary history loading failed:', error);
         }
         
-        // フォールバック1: 監視中で別のVideo IDの場合、監視中Video IDから取得を試行
-        if (!historyLoaded && this.isMonitoring && this.monitoringVideoId && currentVideoId !== this.monitoringVideoId) {
-            console.log('[YouTube Special Comments] === Fallback 1: Loading monitoring video history ===');
-            try {
-                const fallbackResponse = await chrome.runtime.sendMessage({
-                    action: 'getCommentsHistory',
-                    videoId: this.monitoringVideoId
-                });
-                
-                if (fallbackResponse?.success && fallbackResponse.comments && fallbackResponse.comments.length > 0) {
-                    const formattedComments = this.formatHistoryComments(fallbackResponse.comments);
-                    this.comments = formattedComments;
-                    this.renderComments();
-                    console.log('[YouTube Special Comments] Fallback 1 successful: loaded', formattedComments.length, 'comments from monitoring video');
-                    historyLoaded = true;
-                }
-            } catch (error) {
-                console.error('[YouTube Special Comments] Fallback 1 failed:', error);
-            }
-        }
-        
-        // フォールバック2: Content scriptから直接コメントを取得
+        // フォールバック1: Content scriptから直接コメントを取得
         if (!historyLoaded) {
-            console.log('[YouTube Special Comments] === Fallback 2: Getting comments from content script ===');
+            console.log('[YouTube Special Comments] === Fallback 1: Getting comments from content script ===');
             try {
                 const contentResponse = await chrome.tabs.sendMessage(this.currentTab.id, {
                     action: 'getSpecialComments'
@@ -317,11 +282,11 @@ class PopupController {
                     const formattedComments = this.formatHistoryComments(contentResponse.comments);
                     this.comments = formattedComments;
                     this.renderComments();
-                    console.log('[YouTube Special Comments] Fallback 2 successful: loaded', formattedComments.length, 'comments from content script');
+                    console.log('[YouTube Special Comments] Fallback 1 successful: loaded', formattedComments.length, 'comments from content script');
                     historyLoaded = true;
                 }
             } catch (error) {
-                console.error('[YouTube Special Comments] Fallback 2 failed:', error);
+                console.error('[YouTube Special Comments] Fallback 1 failed:', error);
             }
         }
         
@@ -729,7 +694,6 @@ class PopupController {
     updateVideoIdDisplay() {
         console.log('[YouTube Special Comments] Updating video ID display:', {
             currentVideoId: this.currentVideoId,
-            monitoringVideoId: this.monitoringVideoId,
             isMonitoring: this.isMonitoring
         });
         
@@ -739,79 +703,8 @@ class PopupController {
         } else {
             this.elements.currentVideoId.textContent = '未検出';
         }
-        
-        // 監視中のVideo IDを表示
-        if (this.monitoringVideoId) {
-            this.elements.monitoringVideoId.textContent = this.monitoringVideoId;
-        } else {
-            this.elements.monitoringVideoId.textContent = '未設定';
-        }
-        
-        // 切り替えボタンの表示/非表示を制御
-        if (this.currentVideoId && this.monitoringVideoId && 
-            this.currentVideoId !== this.monitoringVideoId) {
-            this.elements.switchToCurrentBtn.style.display = 'block';
-            console.log('[YouTube Special Comments] Switch button shown - different videos');
-        } else {
-            this.elements.switchToCurrentBtn.style.display = 'none';
-            if (this.currentVideoId === this.monitoringVideoId) {
-                console.log('[YouTube Special Comments] Switch button hidden - same video');
-            } else {
-                console.log('[YouTube Special Comments] Switch button hidden - missing video ID');
-            }
-        }
     }
     
-    async switchToCurrentTab() {
-        if (!this.currentVideoId) {
-            this.showError('現在のタブのVideo IDが検出されていません');
-            return;
-        }
-        
-        console.log('[YouTube Special Comments] Switching to current tab video:', this.currentVideoId);
-        this.showLoading(true);
-        
-        try {
-            // 現在の監視を停止
-            if (this.isMonitoring) {
-                await chrome.tabs.sendMessage(this.currentTab.id, {
-                    action: 'stopMonitoring'
-                });
-            }
-            
-            // 新しいVideo IDで監視を開始
-            const response = await chrome.tabs.sendMessage(this.currentTab.id, {
-                action: 'startMonitoring'
-            });
-            
-            console.log('[YouTube Special Comments] Switch response:', response);
-            
-            if (response && response.success) {
-                this.monitoringVideoId = this.currentVideoId;
-                this.isMonitoring = true;
-                this.updateMonitoringButtonStates();
-                this.updateStatus('監視中 (バックグラウンド)');
-                this.updateVideoIdDisplay();
-                
-                // 新しいVideo IDのコメント履歴をロード
-                await this.loadExistingComments();
-                
-                this.showError('');
-                this.showMessage('現在のタブに切り替えました', 'success');
-            } else {
-                this.showError('切り替えに失敗しました。ライブチャットが見つからない可能性があります。');
-            }
-        } catch (error) {
-            console.error('[YouTube Special Comments] Switch error:', error);
-            if (error.message.includes('Could not establish connection')) {
-                this.showError('ページを再読み込みしてみてください。（Content scriptが読み込まれていません...）');
-            } else {
-                this.showError('切り替えに失敗しました: ' + error.message);
-            }
-        } finally {
-            this.showLoading(false);
-        }
-    }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
