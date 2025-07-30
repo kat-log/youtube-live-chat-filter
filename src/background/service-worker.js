@@ -6,7 +6,12 @@ let monitoringState = {
   tabId: null,
   pollingInterval: null,
   processedMessageIds: new Set(),
-  allCommentsMode: false,
+  commentFilters: {
+    owner: true,
+    moderator: true,
+    sponsor: true,
+    normal: false
+  },
   commentsHistory: [], // 現在監視中のVideo IDの履歴
   currentVideoId: null
 };
@@ -150,15 +155,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
   
-  if (request.action === 'setAllCommentsMode') {
-    setAllCommentsMode(request.enabled)
+  if (request.action === 'setCommentFilters') {
+    setCommentFilters(request.filters)
       .then(response => sendResponse(response))
       .catch(error => sendResponse({ success: false, error: error.message }));
     return true;
   }
   
-  if (request.action === 'getAllCommentsModeState') {
-    getAllCommentsModeState()
+  if (request.action === 'getCommentFilters') {
+    getCommentFilters()
       .then(response => sendResponse(response))
       .catch(error => sendResponse({ success: false, error: error.message }));
     return true;
@@ -207,31 +212,44 @@ async function fetchLiveChatMessages(liveChatId, pageToken = null) {
     
     const data = await response.json();
     
-    // 全コメントモードの状態を取得
-    const modeResult = await chrome.storage.local.get(['allCommentsMode']);
-    const allCommentsMode = modeResult.allCommentsMode || false;
+    // コメントフィルターの状態を取得
+    const filtersResult = await chrome.storage.local.get(['commentFilters']);
+    const commentFilters = filtersResult.commentFilters || {
+      owner: true,
+      moderator: true,
+      sponsor: true,
+      normal: false
+    };
     
-    let filteredComments;
-    if (allCommentsMode) {
-      // 全コメントを取得
-      filteredComments = data.items;
-      console.log('[Background] All comments mode: returning', filteredComments.length, 'comments');
-    } else {
-      // 特別コメントのみをフィルタリング
-      filteredComments = data.items.filter(item => {
-        const authorDetails = item.authorDetails;
-        return authorDetails.isChatModerator || 
-               authorDetails.isChatSponsor || 
-               authorDetails.isChatOwner;
-      });
-      console.log('[Background] Special comments mode: returning', filteredComments.length, 'special comments out of', data.items.length, 'total');
-    }
+    // 個別フィルターに基づいてコメントをフィルタリング
+    const filteredComments = data.items.filter(item => {
+      const authorDetails = item.authorDetails;
+      
+      if (authorDetails.isChatOwner) {
+        return commentFilters.owner;
+      } else if (authorDetails.isChatModerator) {
+        return commentFilters.moderator;
+      } else if (authorDetails.isChatSponsor) {
+        return commentFilters.sponsor;
+      } else {
+        // 一般コメント
+        return commentFilters.normal;
+      }
+    });
+    
+    console.log('[Background] Individual filters applied:', {
+      owner: commentFilters.owner,
+      moderator: commentFilters.moderator, 
+      sponsor: commentFilters.sponsor,
+      normal: commentFilters.normal
+    });
+    console.log('[Background] Returning', filteredComments.length, 'filtered comments out of', data.items.length, 'total');
     
     return {
       comments: filteredComments,
       nextPageToken: data.nextPageToken,
       pollingIntervalMillis: data.pollingIntervalMillis || 5000,
-      allCommentsMode: allCommentsMode
+      commentFilters: commentFilters
     };
     
   } catch (error) {
@@ -267,6 +285,14 @@ async function startBackgroundMonitoring(liveChatId, tabId, videoId) {
     }
   }
   
+  // 現在のフィルター設定を保持
+  const currentFilters = monitoringState.commentFilters || {
+    owner: true,
+    moderator: true,
+    sponsor: true,
+    normal: false
+  };
+  
   monitoringState = {
     isMonitoring: true,
     liveChatId: liveChatId,
@@ -274,7 +300,7 @@ async function startBackgroundMonitoring(liveChatId, tabId, videoId) {
     tabId: tabId,
     pollingInterval: null,
     processedMessageIds: new Set(),
-    allCommentsMode: monitoringState.allCommentsMode || false,
+    commentFilters: currentFilters,
     commentsHistory: existingHistory,
     currentVideoId: videoId
   };
@@ -436,8 +462,14 @@ function startPollingLoop() {
 chrome.runtime.onStartup.addListener(async () => {
   console.log('[Background] Extension startup');
   // 保存された状態を復元
-  const result = await chrome.storage.local.get(['monitoringState']);
+  const result = await chrome.storage.local.get(['monitoringState', 'commentFilters']);
   const savedState = result.monitoringState;
+  const savedFilters = result.commentFilters || {
+    owner: true,
+    moderator: true,
+    sponsor: true,
+    normal: false
+  };
   
   if (savedState && savedState.isMonitoring && savedState.liveChatId) {
     console.log('[Background] Restoring monitoring state');
@@ -453,10 +485,16 @@ chrome.runtime.onStartup.addListener(async () => {
       tabId: savedState.tabId,
       pollingInterval: null,
       processedMessageIds: new Set(),
+      commentFilters: savedFilters,
       commentsHistory: commentsHistory
     };
     console.log('[Background] Restored', commentsHistory.length, 'comments from storage');
+    console.log('[Background] Restored comment filters:', savedFilters);
     startPollingLoop();
+  } else {
+    // 監視していない場合でもフィルター設定は復元
+    monitoringState.commentFilters = savedFilters;
+    console.log('[Background] Restored comment filters:', savedFilters);
   }
 });
 
@@ -534,22 +572,27 @@ async function getLiveChatIdFromVideo(videoId) {
   }
 }
 
-// 全コメントモードを設定
-async function setAllCommentsMode(enabled) {
-  console.log('[Background] Setting all comments mode:', enabled);
+// コメントフィルターを設定
+async function setCommentFilters(filters) {
+  console.log('[Background] Setting comment filters:', filters);
   
-  await chrome.storage.local.set({ allCommentsMode: enabled });
-  monitoringState.allCommentsMode = enabled;
+  await chrome.storage.local.set({ commentFilters: filters });
+  monitoringState.commentFilters = filters;
   
-  return { success: true, allCommentsMode: enabled };
+  return { success: true, filters: filters };
 }
 
-// 全コメントモードの状態を取得
-async function getAllCommentsModeState() {
-  const result = await chrome.storage.local.get(['allCommentsMode']);
-  const allCommentsMode = result.allCommentsMode || false;
+// コメントフィルターの状態を取得
+async function getCommentFilters() {
+  const result = await chrome.storage.local.get(['commentFilters']);
+  const commentFilters = result.commentFilters || {
+    owner: true,
+    moderator: true,
+    sponsor: true,
+    normal: false
+  };
   
-  return { success: true, allCommentsMode: allCommentsMode };
+  return { success: true, filters: commentFilters };
 }
 
 // 古いコメント履歴をクリーンアップ

@@ -6,10 +6,18 @@ class PopupController {
         this.currentVideoId = null;
         this.monitoringVideoId = null;
         
+        // 個別フィルターの状態
+        this.commentFilters = {
+            owner: true,
+            moderator: true,
+            sponsor: true,
+            normal: false
+        };
+        
         this.initializeElements();
         this.attachEventListeners();
         this.loadSavedApiKey();
-        this.loadAllCommentsModeState();
+        this.loadCommentFilters();
         this.checkCurrentTab();
         this.setupMessageListener();
     }
@@ -22,11 +30,29 @@ class PopupController {
             startMonitoringBtn: document.getElementById('start-monitoring'),
             stopMonitoringBtn: document.getElementById('stop-monitoring'),
             clearCommentsBtn: document.getElementById('clear-comments'),
-            allCommentsToggle: document.getElementById('all-comments-toggle'),
+            
+            // 個別フィルタートグル
+            ownerToggle: document.getElementById('owner-toggle'),
+            moderatorToggle: document.getElementById('moderator-toggle'),
+            sponsorToggle: document.getElementById('sponsor-toggle'),
+            normalToggle: document.getElementById('normal-toggle'),
+            
+            // プリセットボタン
+            presetSpecial: document.getElementById('preset-special'),
+            presetAll: document.getElementById('preset-all'),
+            presetNone: document.getElementById('preset-none'),
+            
             commentsTitle: document.getElementById('comments-title'),
             commentsList: document.getElementById('comments-list'),
             noComments: document.getElementById('no-comments'),
-            commentCount: document.getElementById('comment-count'),
+            
+            // コメント数表示
+            totalCount: document.getElementById('total-count'),
+            ownerCount: document.getElementById('owner-count'),
+            moderatorCount: document.getElementById('moderator-count'),
+            sponsorCount: document.getElementById('sponsor-count'),
+            normalCount: document.getElementById('normal-count'),
+            
             loading: document.getElementById('loading'),
             errorMessage: document.getElementById('error-message'),
             monitoringVideoId: document.getElementById('monitoring-video-id'),
@@ -40,8 +66,18 @@ class PopupController {
         this.elements.startMonitoringBtn.addEventListener('click', () => this.startMonitoring());
         this.elements.stopMonitoringBtn.addEventListener('click', () => this.stopMonitoring());
         this.elements.clearCommentsBtn.addEventListener('click', () => this.clearComments());
-        this.elements.allCommentsToggle.addEventListener('change', () => this.toggleAllCommentsMode());
         this.elements.switchToCurrentBtn.addEventListener('click', () => this.switchToCurrentTab());
+        
+        // 個別フィルタートグル
+        this.elements.ownerToggle.addEventListener('change', () => this.onFilterToggleChange('owner'));
+        this.elements.moderatorToggle.addEventListener('change', () => this.onFilterToggleChange('moderator'));
+        this.elements.sponsorToggle.addEventListener('change', () => this.onFilterToggleChange('sponsor'));
+        this.elements.normalToggle.addEventListener('change', () => this.onFilterToggleChange('normal'));
+        
+        // プリセットボタン
+        this.elements.presetSpecial.addEventListener('click', () => this.applyPreset('special'));
+        this.elements.presetAll.addEventListener('click', () => this.applyPreset('all'));
+        this.elements.presetNone.addEventListener('click', () => this.applyPreset('none'));
         
         this.elements.apiKeyInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
@@ -476,22 +512,54 @@ class PopupController {
     
     renderComments() {
         console.log('[Popup] === renderComments called ===');
-        console.log('[Popup] Rendering', this.comments.length, 'comments');
+        console.log('[Popup] Total comments:', this.comments.length);
+        console.log('[Popup] Filter state:', this.commentFilters);
         
-        this.elements.commentCount.textContent = `${this.comments.length}件`;
+        // フィルター適用
+        const filteredComments = this.comments.filter(comment => {
+            switch (comment.roleClass) {
+                case 'role-owner':
+                    return this.commentFilters.owner;
+                case 'role-moderator':
+                    return this.commentFilters.moderator;
+                case 'role-sponsor':
+                    return this.commentFilters.sponsor;
+                case 'role-normal':
+                    return this.commentFilters.normal;
+                default:
+                    return false;
+            }
+        });
         
-        if (this.comments.length === 0) {
-            console.log('[Popup] No comments to display, showing placeholder');
+        console.log('[Popup] Filtered comments:', filteredComments.length);
+        
+        // コメント数の集計
+        const counts = {
+            owner: this.comments.filter(c => c.roleClass === 'role-owner').length,
+            moderator: this.comments.filter(c => c.roleClass === 'role-moderator').length,
+            sponsor: this.comments.filter(c => c.roleClass === 'role-sponsor').length,
+            normal: this.comments.filter(c => c.roleClass === 'role-normal').length
+        };
+        
+        // コメント数表示を更新
+        this.elements.totalCount.textContent = `${filteredComments.length}件`;
+        this.elements.ownerCount.textContent = `配信者: ${counts.owner}`;
+        this.elements.moderatorCount.textContent = `モデレーター: ${counts.moderator}`;
+        this.elements.sponsorCount.textContent = `メンバー: ${counts.sponsor}`;
+        this.elements.normalCount.textContent = `一般: ${counts.normal}`;
+        
+        if (filteredComments.length === 0) {
+            console.log('[Popup] No filtered comments to display, showing placeholder');
             this.elements.noComments.style.display = 'block';
             this.elements.commentsList.style.display = 'none';
             return;
         }
         
-        console.log('[Popup] Displaying comments list');
+        console.log('[Popup] Displaying filtered comments list');
         this.elements.noComments.style.display = 'none';
         this.elements.commentsList.style.display = 'block';
         
-        const reversedComments = [...this.comments].reverse();
+        const reversedComments = [...filteredComments].reverse();
         
         this.elements.commentsList.innerHTML = reversedComments.map(comment => `
             <div class="comment-item">
@@ -553,50 +621,108 @@ class PopupController {
         return div.innerHTML;
     }
     
-    async loadAllCommentsModeState() {
+    async loadCommentFilters() {
         try {
-            const response = await chrome.runtime.sendMessage({ action: 'getAllCommentsModeState' });
+            const response = await chrome.runtime.sendMessage({ action: 'getCommentFilters' });
             if (response && response.success) {
-                this.elements.allCommentsToggle.checked = response.allCommentsMode;
-                this.updateCommentsTitle(response.allCommentsMode);
+                this.commentFilters = response.filters;
+                this.updateFilterUI();
             }
         } catch (error) {
-            console.error('[YouTube Special Comments] Error loading all comments mode state:', error);
+            console.error('[YouTube Special Comments] Error loading comment filters:', error);
+            // デフォルト値を使用
+            this.updateFilterUI();
         }
     }
     
-    async toggleAllCommentsMode() {
-        const enabled = this.elements.allCommentsToggle.checked;
-        console.log('[YouTube Special Comments] Toggling all comments mode:', enabled);
+    updateFilterUI() {
+        this.elements.ownerToggle.checked = this.commentFilters.owner;
+        this.elements.moderatorToggle.checked = this.commentFilters.moderator;
+        this.elements.sponsorToggle.checked = this.commentFilters.sponsor;
+        this.elements.normalToggle.checked = this.commentFilters.normal;
+        
+        this.updatePresetButtons();
+        this.renderComments(); // フィルターが変更されたら再描画
+    }
+    
+    updatePresetButtons() {
+        // すべてのプリセットボタンを非アクティブに
+        this.elements.presetSpecial.classList.remove('btn-preset-active');
+        this.elements.presetAll.classList.remove('btn-preset-active');
+        this.elements.presetNone.classList.remove('btn-preset-active');
+        
+        // 現在の状態に応じてアクティブなプリセットを設定
+        if (this.commentFilters.owner && this.commentFilters.moderator && 
+            this.commentFilters.sponsor && !this.commentFilters.normal) {
+            this.elements.presetSpecial.classList.add('btn-preset-active');
+        } else if (this.commentFilters.owner && this.commentFilters.moderator && 
+                   this.commentFilters.sponsor && this.commentFilters.normal) {
+            this.elements.presetAll.classList.add('btn-preset-active');
+        } else if (!this.commentFilters.owner && !this.commentFilters.moderator && 
+                   !this.commentFilters.sponsor && !this.commentFilters.normal) {
+            this.elements.presetNone.classList.add('btn-preset-active');
+        }
+    }
+    
+    async onFilterToggleChange(filterType) {
+        this.commentFilters[filterType] = this.elements[filterType + 'Toggle'].checked;
+        
+        console.log('[YouTube Special Comments] Filter changed:', filterType, '=', this.commentFilters[filterType]);
         
         try {
-            const response = await chrome.runtime.sendMessage({
-                action: 'setAllCommentsMode',
-                enabled: enabled
+            await chrome.runtime.sendMessage({
+                action: 'setCommentFilters',
+                filters: this.commentFilters
             });
             
-            if (response && response.success) {
-                this.updateCommentsTitle(enabled);
-                // コメントをクリアして新しいモードで再取得
-                this.clearComments();
-                this.showMessage('モードを切り替えました。新しいコメントが表示されます。', 'success');
-            } else {
-                console.error('[YouTube Special Comments] Failed to toggle all comments mode');
-                // トグルを元に戻す
-                this.elements.allCommentsToggle.checked = !enabled;
-            }
+            this.updatePresetButtons();
+            this.renderComments(); // フィルターが変更されたら再描画
+            
         } catch (error) {
-            console.error('[YouTube Special Comments] Error toggling all comments mode:', error);
-            // トグルを元に戻す
-            this.elements.allCommentsToggle.checked = !enabled;
+            console.error('[YouTube Special Comments] Error saving comment filters:', error);
         }
     }
     
-    updateCommentsTitle(allCommentsMode) {
-        if (allCommentsMode) {
-            this.elements.commentsTitle.textContent = '全コメント履歴';
-        } else {
-            this.elements.commentsTitle.textContent = '特別コメント履歴';
+    async applyPreset(presetType) {
+        console.log('[YouTube Special Comments] Applying preset:', presetType);
+        
+        switch (presetType) {
+            case 'special':
+                this.commentFilters = {
+                    owner: true,
+                    moderator: true,
+                    sponsor: true,
+                    normal: false
+                };
+                break;
+            case 'all':
+                this.commentFilters = {
+                    owner: true,
+                    moderator: true,
+                    sponsor: true,
+                    normal: true
+                };
+                break;
+            case 'none':
+                this.commentFilters = {
+                    owner: false,
+                    moderator: false,
+                    sponsor: false,
+                    normal: false
+                };
+                break;
+        }
+        
+        try {
+            await chrome.runtime.sendMessage({
+                action: 'setCommentFilters',
+                filters: this.commentFilters
+            });
+            
+            this.updateFilterUI();
+            
+        } catch (error) {
+            console.error('[YouTube Special Comments] Error applying preset:', error);
         }
     }
     

@@ -43,13 +43,53 @@
             </div>
         </div>
 
-        <div class="toggle-section">
-            <label class="toggle-container">
-                <input type="checkbox" id="all-comments-toggle">
-                <span class="toggle-slider"></span>
-                <span class="toggle-label">全コメント取得モード</span>
-            </label>
-            <p class="toggle-help">特別コメント以外も表示します</p>
+        <div class="filter-section">
+            <div class="filter-header">
+                <h3>コメントフィルター</h3>
+                <div class="filter-presets">
+                    <button id="preset-special" class="btn-preset btn-preset-active">特別コメント</button>
+                    <button id="preset-all" class="btn-preset">すべて</button>
+                    <button id="preset-none" class="btn-preset">なし</button>
+                </div>
+            </div>
+            
+            <div class="filter-toggles">
+                <label class="filter-toggle-container">
+                    <input type="checkbox" id="owner-toggle" checked>
+                    <span class="toggle-slider owner-slider"></span>
+                    <span class="toggle-label">
+                        <span class="comment-role role-owner">配信者</span>
+                        配信者コメント
+                    </span>
+                </label>
+                
+                <label class="filter-toggle-container">
+                    <input type="checkbox" id="moderator-toggle" checked>
+                    <span class="toggle-slider moderator-slider"></span>
+                    <span class="toggle-label">
+                        <span class="comment-role role-moderator">モデレーター</span>
+                        モデレーターコメント
+                    </span>
+                </label>
+                
+                <label class="filter-toggle-container">
+                    <input type="checkbox" id="sponsor-toggle" checked>
+                    <span class="toggle-slider sponsor-slider"></span>
+                    <span class="toggle-label">
+                        <span class="comment-role role-sponsor">メンバー</span>
+                        メンバーコメント
+                    </span>
+                </label>
+                
+                <label class="filter-toggle-container">
+                    <input type="checkbox" id="normal-toggle">
+                    <span class="toggle-slider normal-slider"></span>
+                    <span class="toggle-label">
+                        <span class="comment-role role-normal">一般</span>
+                        一般コメント
+                    </span>
+                </label>
+            </div>
         </div>
         
         <div class="controls">
@@ -60,8 +100,16 @@
 
         <div class="comments-section">
             <div class="comments-header">
-                <h2 id="comments-title">特別コメント履歴</h2>
-                <span id="comment-count" class="comment-count">0件</span>
+                <h2 id="comments-title">コメント履歴</h2>
+                <div class="comment-counts">
+                    <span id="total-count" class="comment-count comment-count-total">0件</span>
+                    <div class="comment-count-details">
+                        <span id="owner-count" class="comment-count-item owner-count">配信者: 0</span>
+                        <span id="moderator-count" class="comment-count-item moderator-count">モデレーター: 0</span>
+                        <span id="sponsor-count" class="comment-count-item sponsor-count">メンバー: 0</span>
+                        <span id="normal-count" class="comment-count-item normal-count">一般: 0</span>
+                    </div>
+                </div>
             </div>
             
             <div id="no-comments" class="no-comments">
