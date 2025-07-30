@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Special Comments Filter</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>YouTube特別コメント</h1>
+            <div class="status">
+                <span id="status-indicator" class="status-offline">オフライン</span>
+            </div>
+        </header>
+
+        <div class="api-key-section" id="api-key-section">
+            <div class="api-key-form">
+                <label for="api-key-input">YouTube Data API Key:</label>
+                <div class="input-group">
+                    <input type="password" id="api-key-input" placeholder="APIキーを入力してください">
+                    <button id="save-api-key" class="btn btn-primary">保存</button>
+                </div>
+                <p class="help-text">
+                    <a href="https://console.developers.google.com/" target="_blank">Google Cloud Console</a>
+                    でAPIキーを取得してください
+                </p>
+            </div>
+        </div>
+
+        <div class="toggle-section">
+            <label class="toggle-container">
+                <input type="checkbox" id="all-comments-toggle">
+                <span class="toggle-slider"></span>
+                <span class="toggle-label">全コメント取得モード</span>
+            </label>
+            <p class="toggle-help">特別コメント以外も表示します</p>
+        </div>
+        
+        <div class="controls">
+            <button id="start-monitoring" class="btn btn-success" disabled>監視開始</button>
+            <button id="stop-monitoring" class="btn btn-danger" disabled>監視停止</button>
+            <button id="clear-comments" class="btn btn-secondary">履歴クリア</button>
+        </div>
+
+        <div class="comments-section">
+            <div class="comments-header">
+                <h2 id="comments-title">特別コメント履歴</h2>
+                <span id="comment-count" class="comment-count">0件</span>
+            </div>
+            
+            <div id="no-comments" class="no-comments">
+                まだコメントがありません
+            </div>
+            
+            <div id="comments-list" class="comments-list"></div>
+        </div>
+
+        <div class="loading" id="loading" style="display: none;">
+            <div class="spinner"></div>
+            <span>読み込み中...</span>
+        </div>
+
+        <div class="error-message" id="error-message" style="display: none;"></div>
+    </div>
+
+    <script src="popup.js"></script>
+</body>
+</html>
