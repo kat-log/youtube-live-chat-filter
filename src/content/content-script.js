@@ -44,14 +44,46 @@ class YouTubeLiveChatMonitor {
     return isWatchPage && (hasLiveChat || hasLiveChatFrame);
   }
   
-  extractLiveChatId() {
-    console.log('[YouTube Special Comments] Attempting to extract live chat ID...');
+  async extractLiveChatId() {
+    console.log('[YouTube Special Comments] === Starting live chat ID extraction ===');
     
     // 現在のVideo IDを更新
     this.currentVideoId = this.extractVideoId();
     console.log('[YouTube Special Comments] Current video ID:', this.currentVideoId);
     
-    // Method 1: Check yt-live-chat-renderer element
+    if (!this.currentVideoId) {
+      console.warn('[YouTube Special Comments] No video ID found, cannot proceed');
+      this.retryExtraction();
+      return;
+    }
+    
+    // Method 1 (PRIMARY): API Lookup - 最も確実な方法
+    console.log('[YouTube Special Comments] === Method 1: API Lookup (Primary) ===');
+    try {
+      const apiSuccess = await this.getLiveChatIdFromVideoId(this.currentVideoId);
+      if (apiSuccess && this.liveChatId) {
+        console.log('[YouTube Special Comments] ✅ API lookup successful:', this.liveChatId);
+        return;
+      }
+    } catch (error) {
+      console.warn('[YouTube Special Comments] API lookup failed:', error);
+    }
+    
+    // Method 2 (FALLBACK): DOM Extraction - APIが失敗した場合のフォールバック
+    console.log('[YouTube Special Comments] === Method 2: DOM Extraction (Fallback) ===');
+    const domSuccess = this.tryDomExtraction();
+    if (domSuccess) {
+      console.log('[YouTube Special Comments] ✅ DOM extraction successful:', this.liveChatId);
+      return;
+    }
+    
+    // Both methods failed, retry
+    console.log('[YouTube Special Comments] ❌ Both API and DOM extraction failed');
+    this.retryExtraction();
+  }
+  
+  tryDomExtraction() {
+    // DOM Method 1: Check yt-live-chat-renderer element
     const liveChatRenderer = document.querySelector('yt-live-chat-renderer');
     if (liveChatRenderer) {
       console.log('[YouTube Special Comments] Found yt-live-chat-renderer element');
@@ -63,7 +95,7 @@ class YouTubeLiveChatMonitor {
           if (match) {
             this.liveChatId = match[1];
             console.log('[YouTube Special Comments] Live chat ID found via continuation:', this.liveChatId);
-            return;
+            return true;
           }
         } catch (e) {
           console.warn('[YouTube Special Comments] Failed to decode continuation:', e);
@@ -71,21 +103,7 @@ class YouTubeLiveChatMonitor {
       }
     }
     
-    // Method 2: Check iframe src
-    const liveChatFrame = document.querySelector('iframe[src*="live_chat"]');
-    if (liveChatFrame) {
-      console.log('[YouTube Special Comments] Found live chat iframe');
-      const src = liveChatFrame.src;
-      const match = src.match(/v=([^&]+)/);
-      if (match) {
-        // Video IDからlive chat IDを推測（通常は同じ）
-        const videoId = match[1];
-        console.log('[YouTube Special Comments] Video ID found:', videoId);
-        // 実際のlive chat IDを取得するため、別の方法を試す
-      }
-    }
-    
-    // Method 3: Check script elements
+    // DOM Method 2: Check script elements
     const scriptElements = document.querySelectorAll('script');
     for (const script of scriptElements) {
       const content = script.textContent || script.innerText;
@@ -94,39 +112,42 @@ class YouTubeLiveChatMonitor {
         if (match) {
           this.liveChatId = match[1];
           console.log('[YouTube Special Comments] Live chat ID found in script:', this.liveChatId);
-          return;
+          return true;
         }
       }
     }
     
-    // Method 4: Check window.ytInitialData
+    // DOM Method 3: Check window.ytInitialData
     if (window.ytInitialData) {
       try {
         const liveChatRenderer = this.findLiveChatInYtData(window.ytInitialData);
         if (liveChatRenderer && liveChatRenderer.liveChatId) {
           this.liveChatId = liveChatRenderer.liveChatId;
           console.log('[YouTube Special Comments] Live chat ID found in ytInitialData:', this.liveChatId);
-          return;
+          return true;
         }
       } catch (e) {
         console.warn('[YouTube Special Comments] Error parsing ytInitialData:', e);
       }
     }
     
-    // Method 5: Extract video ID and get live chat ID via API
-    const videoId = this.extractVideoId();
-    if (videoId) {
-      console.log('[YouTube Special Comments] Video ID found:', videoId);
-      this.getLiveChatIdFromVideoId(videoId);
-      return;
+    // DOM Method 4: Check iframe src (less reliable)
+    const liveChatFrame = document.querySelector('iframe[src*="live_chat"]');
+    if (liveChatFrame) {
+      console.log('[YouTube Special Comments] Found live chat iframe (but this is less reliable)');
     }
     
+    return false;
+  }
+  
+  retryExtraction() {
     console.log('[YouTube Special Comments] Live chat ID not found, retrying in 2 seconds...');
     if (this.initRetryCount < this.maxInitRetries) {
       this.initRetryCount++;
       setTimeout(() => this.extractLiveChatId(), 2000);
     } else {
-      console.warn('[YouTube Special Comments] Max retry attempts reached, live chat ID not found');
+      console.warn('[YouTube Special Comments] ❌ Max retry attempts reached, live chat ID not found');
+      console.warn('[YouTube Special Comments] This video may not be a live stream or may not have live chat enabled');
     }
   }
   
@@ -408,11 +429,14 @@ YouTubeLiveChatMonitor.prototype.getLiveChatIdFromVideoId = async function(video
     if (response && response.liveChatId) {
       this.liveChatId = response.liveChatId;
       console.log('[YouTube Special Comments] Live chat ID obtained from API:', this.liveChatId);
+      return true;
     } else {
-      console.log('[YouTube Special Comments] No live chat found for this video');
+      console.log('[YouTube Special Comments] No live chat found for this video via API');
+      return false;
     }
   } catch (error) {
     console.error('[YouTube Special Comments] Error getting live chat ID from API:', error);
+    return false;
   }
 };
 
