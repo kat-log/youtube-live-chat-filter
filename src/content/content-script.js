@@ -7,6 +7,7 @@ class YouTubeLiveChatMonitor {
     this.specialComments = [];
     this.initRetryCount = 0;
     this.maxInitRetries = 10;
+    this.currentVideoId = null;
     
     console.log('[YouTube Special Comments] Content script initializing...');
     this.init();
@@ -45,6 +46,10 @@ class YouTubeLiveChatMonitor {
   
   extractLiveChatId() {
     console.log('[YouTube Special Comments] Attempting to extract live chat ID...');
+    
+    // 現在のVideo IDを更新
+    this.currentVideoId = this.extractVideoId();
+    console.log('[YouTube Special Comments] Current video ID:', this.currentVideoId);
     
     // Method 1: Check yt-live-chat-renderer element
     const liveChatRenderer = document.querySelector('yt-live-chat-renderer');
@@ -139,7 +144,8 @@ class YouTubeLiveChatMonitor {
         sendResponse({ 
           comments: this.specialComments,
           liveChatId: this.liveChatId,
-          isMonitoring: this.isMonitoring
+          isMonitoring: this.isMonitoring,
+          videoId: this.currentVideoId
         });
       } else if (request.action === 'newSpecialComments') {
         // background scriptからの新しいコメント通知
@@ -174,7 +180,8 @@ class YouTubeLiveChatMonitor {
     try {
       const response = await chrome.runtime.sendMessage({
         action: 'startBackgroundMonitoring',
-        liveChatId: this.liveChatId
+        liveChatId: this.liveChatId,
+        videoId: this.currentVideoId
       });
       
       if (response.success) {
@@ -281,6 +288,7 @@ YouTubeLiveChatMonitor.prototype.observePageChanges = function() {
       // 監視を停止
       this.stopBackgroundMonitoring();
       this.liveChatId = null;
+      this.currentVideoId = null;
       this.initRetryCount = 0;
       
       // 新しいページをチェック
@@ -320,18 +328,31 @@ YouTubeLiveChatMonitor.prototype.findLiveChatInYtData = function(data) {
 };
 
 YouTubeLiveChatMonitor.prototype.extractVideoId = function() {
-  // URLからvideo IDを抽出
+  console.log('[YouTube Special Comments] Extracting video ID from URL:', window.location.href);
+  
+  // Method 1: URLからvideo IDを抽出
   const url = window.location.href;
-  const match = url.match(/[?&]v=([^&]+)/);
-  if (match) {
-    return match[1];
+  const urlMatch = url.match(/[?&]v=([^&]+)/);
+  if (urlMatch) {
+    const videoId = urlMatch[1];
+    console.log('[YouTube Special Comments] Video ID found in URL:', videoId);
+    return videoId;
   }
   
-  // ytInitialDataからvideo IDを抽出
+  // Method 2: URLのパスからvideo IDを抽出（/watch/video_id形式）
+  const pathMatch = url.match(/\/watch\/([^/?]+)/);
+  if (pathMatch) {
+    const videoId = pathMatch[1];
+    console.log('[YouTube Special Comments] Video ID found in path:', videoId);
+    return videoId;
+  }
+  
+  // Method 3: ytInitialDataからvideo IDを抽出
   if (window.ytInitialData) {
     try {
       const videoDetails = this.findVideoDetailsInYtData(window.ytInitialData);
       if (videoDetails && videoDetails.videoId) {
+        console.log('[YouTube Special Comments] Video ID found in ytInitialData:', videoDetails.videoId);
         return videoDetails.videoId;
       }
     } catch (e) {
@@ -339,6 +360,18 @@ YouTubeLiveChatMonitor.prototype.extractVideoId = function() {
     }
   }
   
+  // Method 4: meta tagからvideo IDを抽出
+  const metaTag = document.querySelector('meta[property="og:url"]');
+  if (metaTag) {
+    const metaUrl = metaTag.getAttribute('content');
+    const metaMatch = metaUrl.match(/[?&]v=([^&]+)/);
+    if (metaMatch) {
+      console.log('[YouTube Special Comments] Video ID found in meta tag:', metaMatch[1]);
+      return metaMatch[1];
+    }
+  }
+  
+  console.log('[YouTube Special Comments] No video ID found');
   return null;
 };
 

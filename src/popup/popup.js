@@ -3,6 +3,8 @@ class PopupController {
         this.isMonitoring = false;
         this.comments = [];
         this.currentTab = null;
+        this.currentVideoId = null;
+        this.monitoringVideoId = null;
         
         this.initializeElements();
         this.attachEventListeners();
@@ -26,7 +28,10 @@ class PopupController {
             noComments: document.getElementById('no-comments'),
             commentCount: document.getElementById('comment-count'),
             loading: document.getElementById('loading'),
-            errorMessage: document.getElementById('error-message')
+            errorMessage: document.getElementById('error-message'),
+            monitoringVideoId: document.getElementById('monitoring-video-id'),
+            currentVideoId: document.getElementById('current-video-id'),
+            switchToCurrentBtn: document.getElementById('switch-to-current')
         };
     }
     
@@ -36,6 +41,7 @@ class PopupController {
         this.elements.stopMonitoringBtn.addEventListener('click', () => this.stopMonitoring());
         this.elements.clearCommentsBtn.addEventListener('click', () => this.clearComments());
         this.elements.allCommentsToggle.addEventListener('change', () => this.toggleAllCommentsMode());
+        this.elements.switchToCurrentBtn.addEventListener('click', () => this.switchToCurrentTab());
         
         this.elements.apiKeyInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
@@ -46,6 +52,7 @@ class PopupController {
     
     setupMessageListener() {
         chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+            console.log('[Popup] Received message:', request.action, 'with', request.comments?.length || 0, 'comments');
             if (request.action === 'newSpecialComments') {
                 this.addNewComments(request.comments);
             }
@@ -113,85 +120,213 @@ class PopupController {
     
     async loadExistingComments() {
         try {
-            console.log('[YouTube Special Comments] Loading existing comments and monitoring state...');
+            console.log('[YouTube Special Comments] === Starting comment history restoration ===');
             
-            // background scriptから監視状態を取得
-            const backgroundResponse = await chrome.runtime.sendMessage({
-                action: 'getMonitoringState'
-            });
+            // Step 1: 現在のVideo IDを取得
+            const currentVideoId = await this.getCurrentVideoId();
+            this.currentVideoId = currentVideoId;
+            console.log('[YouTube Special Comments] Current video ID:', currentVideoId);
             
-            console.log('[YouTube Special Comments] Background monitoring state:', backgroundResponse);
+            // Step 2: Background scriptから監視状態を取得
+            const monitoringState = await this.getBackgroundMonitoringState();
+            console.log('[YouTube Special Comments] Background monitoring state:', monitoringState);
             
-            if (backgroundResponse && backgroundResponse.success) {
-                this.isMonitoring = backgroundResponse.isMonitoring;
+            // Step 3: 監視状態を更新
+            if (monitoringState.success) {
+                this.isMonitoring = monitoringState.isMonitoring;
+                this.monitoringVideoId = monitoringState.currentVideoId;
                 this.updateMonitoringButtonStates();
                 
-                if (backgroundResponse.isMonitoring) {
+                if (this.isMonitoring) {
                     this.updateStatus('監視中 (バックグラウンド)');
-                }
-            }
-            
-            // background scriptからコメント履歴を取得
-            const historyResponse = await chrome.runtime.sendMessage({
-                action: 'getCommentsHistory'
-            });
-            
-            console.log('[YouTube Special Comments] Comments history response:', historyResponse);
-            
-            if (historyResponse && historyResponse.success && historyResponse.comments) {
-                // 履歴からコメントを復元
-                console.log('[YouTube Special Comments] Raw history data length:', historyResponse.comments.length);
-                
-                const formattedComments = historyResponse.comments.map((comment, index) => {
-                    try {
-                        const formatted = this.formatComment(comment);
-                        console.log(`[YouTube Special Comments] Formatted comment ${index}:`, {
-                            role: formatted.role,
-                            author: formatted.displayName,
-                            message: formatted.message ? formatted.message.substring(0, 30) + '...' : 'undefined'
-                        });
-                        return formatted;
-                    } catch (error) {
-                        console.error(`[YouTube Special Comments] Error formatting comment ${index}:`, error, comment);
-                        return null;
-                    }
-                }).filter(comment => comment !== null);
-                
-                this.comments = formattedComments;
-                this.renderComments();
-                console.log('[YouTube Special Comments] Successfully loaded', formattedComments.length, 'formatted comments from history');
-            } else {
-                console.log('[YouTube Special Comments] No history data available:', historyResponse);
-            }
-            
-            // content scriptからライブチャット状態を取得
-            try {
-                const response = await chrome.tabs.sendMessage(this.currentTab.id, {
-                    action: 'getSpecialComments'
-                });
-                
-                console.log('[YouTube Special Comments] Response from content script:', response);
-                
-                if (response && response.liveChatId) {
-                    if (!this.isMonitoring) {
-                        this.updateStatus('ライブチャット検出済み');
-                    }
                 } else {
-                    if (!this.isMonitoring) {
-                        this.updateStatus('ライブチャット未検出');
-                    }
-                }
-            } catch (contentError) {
-                console.log('[YouTube Special Comments] Content script not available:', contentError);
-                if (!this.isMonitoring) {
-                    this.updateStatus('ライブチャット未検出');
+                    this.updateStatus('停止済み');
                 }
             }
+            
+            // Step 4: Video ID表示を更新
+            this.updateVideoIdDisplay();
+            
+            // Step 5: コメント履歴を復元
+            await this.restoreCommentHistory(currentVideoId);
+            
+            // Step 6: Content scriptの状態をチェック（監視していない場合のみ）
+            if (!this.isMonitoring) {
+                await this.checkContentScriptStatus();
+            }
+            
+            console.log('[YouTube Special Comments] === Comment history restoration completed ===');
             
         } catch (error) {
             console.error('[YouTube Special Comments] Error loading existing comments:', error);
             this.showError('コメント履歴の読み込みに失敗しました。');
             this.updateStatus('エラー');
+        }
+    }
+    
+    async getCurrentVideoId() {
+        // Content scriptから取得を試行
+        try {
+            const response = await chrome.tabs.sendMessage(this.currentTab.id, {
+                action: 'getSpecialComments'
+            });
+            
+            if (response && response.videoId) {
+                console.log('[YouTube Special Comments] Video ID from content script:', response.videoId);
+                return response.videoId;
+            }
+        } catch (contentError) {
+            console.log('[YouTube Special Comments] Content script not available:', contentError);
+        }
+        
+        // URLから抽出
+        if (this.currentTab.url) {
+            const urlMatch = this.currentTab.url.match(/[?&]v=([^&]+)/);
+            if (urlMatch) {
+                console.log('[YouTube Special Comments] Video ID from URL:', urlMatch[1]);
+                return urlMatch[1];
+            }
+        }
+        
+        console.log('[YouTube Special Comments] Could not extract video ID');
+        return null;
+    }
+    
+    async getBackgroundMonitoringState() {
+        try {
+            const response = await chrome.runtime.sendMessage({
+                action: 'getMonitoringState'
+            });
+            
+            return response || { success: false };
+        } catch (error) {
+            console.error('[YouTube Special Comments] Error getting monitoring state:', error);
+            return { success: false };
+        }
+    }
+    
+    async restoreCommentHistory(currentVideoId) {
+        if (!currentVideoId) {
+            console.log('[YouTube Special Comments] No video ID available, clearing comments');
+            this.comments = [];
+            this.renderComments();
+            return;
+        }
+        
+        // 監視中かつ同じVideo IDの場合は監視中の履歴を優先
+        let targetVideoId = currentVideoId;
+        if (this.isMonitoring && this.monitoringVideoId) {
+            if (currentVideoId === this.monitoringVideoId) {
+                console.log('[YouTube Special Comments] Loading history for currently monitored video:', this.monitoringVideoId);
+                targetVideoId = this.monitoringVideoId;
+            } else {
+                console.log('[YouTube Special Comments] Loading history for different video:', currentVideoId, '(monitoring:', this.monitoringVideoId + ')');
+            }
+        }
+        
+        // プライマリ取得を試行
+        let historyLoaded = false;
+        try {
+            const historyResponse = await chrome.runtime.sendMessage({
+                action: 'getCommentsHistory',
+                videoId: targetVideoId
+            });
+            
+            console.log('[YouTube Special Comments] History response for', targetVideoId + ':', {
+                success: historyResponse?.success,
+                commentsCount: historyResponse?.comments?.length || 0
+            });
+            
+            if (historyResponse?.success && historyResponse.comments && historyResponse.comments.length > 0) {
+                const formattedComments = this.formatHistoryComments(historyResponse.comments);
+                this.comments = formattedComments;
+                this.renderComments();
+                console.log('[YouTube Special Comments] Successfully restored', formattedComments.length, 'comments');
+                historyLoaded = true;
+            }
+        } catch (error) {
+            console.error('[YouTube Special Comments] Primary history loading failed:', error);
+        }
+        
+        // フォールバック1: 監視中で別のVideo IDの場合、監視中Video IDから取得を試行
+        if (!historyLoaded && this.isMonitoring && this.monitoringVideoId && currentVideoId !== this.monitoringVideoId) {
+            console.log('[YouTube Special Comments] === Fallback 1: Loading monitoring video history ===');
+            try {
+                const fallbackResponse = await chrome.runtime.sendMessage({
+                    action: 'getCommentsHistory',
+                    videoId: this.monitoringVideoId
+                });
+                
+                if (fallbackResponse?.success && fallbackResponse.comments && fallbackResponse.comments.length > 0) {
+                    const formattedComments = this.formatHistoryComments(fallbackResponse.comments);
+                    this.comments = formattedComments;
+                    this.renderComments();
+                    console.log('[YouTube Special Comments] Fallback 1 successful: loaded', formattedComments.length, 'comments from monitoring video');
+                    historyLoaded = true;
+                }
+            } catch (error) {
+                console.error('[YouTube Special Comments] Fallback 1 failed:', error);
+            }
+        }
+        
+        // フォールバック2: Content scriptから直接コメントを取得
+        if (!historyLoaded) {
+            console.log('[YouTube Special Comments] === Fallback 2: Getting comments from content script ===');
+            try {
+                const contentResponse = await chrome.tabs.sendMessage(this.currentTab.id, {
+                    action: 'getSpecialComments'
+                });
+                
+                if (contentResponse?.comments && contentResponse.comments.length > 0) {
+                    const formattedComments = this.formatHistoryComments(contentResponse.comments);
+                    this.comments = formattedComments;
+                    this.renderComments();
+                    console.log('[YouTube Special Comments] Fallback 2 successful: loaded', formattedComments.length, 'comments from content script');
+                    historyLoaded = true;
+                }
+            } catch (error) {
+                console.error('[YouTube Special Comments] Fallback 2 failed:', error);
+            }
+        }
+        
+        // 最終フォールバック: 空の状態で表示
+        if (!historyLoaded) {
+            console.log('[YouTube Special Comments] === All fallbacks failed, starting with empty comments ===');
+            this.comments = [];
+            this.renderComments();
+            
+            // 空の状態でも監視中であることを示すメッセージを表示
+            if (this.isMonitoring) {
+                console.log('[YouTube Special Comments] Monitoring is active but no history found - new comments will appear');
+            }
+        }
+    }
+    
+    formatHistoryComments(rawComments) {
+        return rawComments.map((comment, index) => {
+            try {
+                return this.formatComment(comment);
+            } catch (error) {
+                console.error(`[YouTube Special Comments] Error formatting comment ${index}:`, error);
+                return null;
+            }
+        }).filter(comment => comment !== null);
+    }
+    
+    async checkContentScriptStatus() {
+        try {
+            const response = await chrome.tabs.sendMessage(this.currentTab.id, {
+                action: 'getSpecialComments'
+            });
+            
+            if (response && response.liveChatId) {
+                this.updateStatus('ライブチャット検出済み');
+            } else {
+                this.updateStatus('ライブチャット未検出');
+            }
+        } catch (contentError) {
+            console.log('[YouTube Special Comments] Content script not available');
+            this.updateStatus('ライブチャット未検出');
         }
     }
     
@@ -229,7 +364,7 @@ class PopupController {
         } catch (error) {
             console.error('[YouTube Special Comments] Start monitoring error:', error);
             if (error.message.includes('Could not establish connection')) {
-                this.showError('Content scriptが読み込まれていません。ページを再読み込みしてください。');
+                this.showError('ページを再読み込みしてみてください。（Content scriptが読み込まれていません...）');
             } else {
                 this.showError('監視の開始に失敗しました: ' + error.message);
             }
@@ -260,7 +395,7 @@ class PopupController {
         } catch (error) {
             console.error('[YouTube Special Comments] Stop monitoring error:', error);
             if (error.message.includes('Could not establish connection')) {
-                this.showError('Content scriptとの通信に失敗しました。');
+                this.showError('ページを再読み込みしてみてください。（Content scriptが読み込まれていません...）');
                 // 強制的に停止状態にする
                 this.isMonitoring = false;
                 this.updateMonitoringButtonStates();
@@ -279,6 +414,10 @@ class PopupController {
     }
     
     addNewComments(newComments) {
+        console.log('[Popup] === addNewComments called ===');
+        console.log('[Popup] Received', newComments.length, 'new comments');
+        console.log('[Popup] Current comments count before adding:', this.comments.length);
+        
         const formattedComments = newComments.map(comment => this.formatComment(comment));
         
         // 重複チェック：既存のコメントと同じタイムスタンプ・メッセージ・ユーザー名のものを除外
@@ -296,8 +435,10 @@ class PopupController {
         
         if (this.comments.length > 100) {
             this.comments = this.comments.slice(-100);
+            console.log('[Popup] Trimmed comments to 100, current count:', this.comments.length);
         }
         
+        console.log('[Popup] Final comments count after adding:', this.comments.length);
         this.renderComments();
     }
     
@@ -334,14 +475,19 @@ class PopupController {
     }
     
     renderComments() {
+        console.log('[Popup] === renderComments called ===');
+        console.log('[Popup] Rendering', this.comments.length, 'comments');
+        
         this.elements.commentCount.textContent = `${this.comments.length}件`;
         
         if (this.comments.length === 0) {
+            console.log('[Popup] No comments to display, showing placeholder');
             this.elements.noComments.style.display = 'block';
             this.elements.commentsList.style.display = 'none';
             return;
         }
         
+        console.log('[Popup] Displaying comments list');
         this.elements.noComments.style.display = 'none';
         this.elements.commentsList.style.display = 'block';
         
@@ -359,6 +505,7 @@ class PopupController {
         `).join('');
         
         this.elements.commentsList.scrollTop = 0;
+        console.log('[Popup] Comments rendered successfully');
     }
     
     updateStatus(status) {
@@ -450,6 +597,93 @@ class PopupController {
             this.elements.commentsTitle.textContent = '全コメント履歴';
         } else {
             this.elements.commentsTitle.textContent = '特別コメント履歴';
+        }
+    }
+    
+    updateVideoIdDisplay() {
+        console.log('[YouTube Special Comments] Updating video ID display:', {
+            currentVideoId: this.currentVideoId,
+            monitoringVideoId: this.monitoringVideoId,
+            isMonitoring: this.isMonitoring
+        });
+        
+        // 現在のタブのVideo IDを表示
+        if (this.currentVideoId) {
+            this.elements.currentVideoId.textContent = this.currentVideoId;
+        } else {
+            this.elements.currentVideoId.textContent = '未検出';
+        }
+        
+        // 監視中のVideo IDを表示
+        if (this.monitoringVideoId) {
+            this.elements.monitoringVideoId.textContent = this.monitoringVideoId;
+        } else {
+            this.elements.monitoringVideoId.textContent = '未設定';
+        }
+        
+        // 切り替えボタンの表示/非表示を制御
+        if (this.currentVideoId && this.monitoringVideoId && 
+            this.currentVideoId !== this.monitoringVideoId) {
+            this.elements.switchToCurrentBtn.style.display = 'block';
+            console.log('[YouTube Special Comments] Switch button shown - different videos');
+        } else {
+            this.elements.switchToCurrentBtn.style.display = 'none';
+            if (this.currentVideoId === this.monitoringVideoId) {
+                console.log('[YouTube Special Comments] Switch button hidden - same video');
+            } else {
+                console.log('[YouTube Special Comments] Switch button hidden - missing video ID');
+            }
+        }
+    }
+    
+    async switchToCurrentTab() {
+        if (!this.currentVideoId) {
+            this.showError('現在のタブのVideo IDが検出されていません');
+            return;
+        }
+        
+        console.log('[YouTube Special Comments] Switching to current tab video:', this.currentVideoId);
+        this.showLoading(true);
+        
+        try {
+            // 現在の監視を停止
+            if (this.isMonitoring) {
+                await chrome.tabs.sendMessage(this.currentTab.id, {
+                    action: 'stopMonitoring'
+                });
+            }
+            
+            // 新しいVideo IDで監視を開始
+            const response = await chrome.tabs.sendMessage(this.currentTab.id, {
+                action: 'startMonitoring'
+            });
+            
+            console.log('[YouTube Special Comments] Switch response:', response);
+            
+            if (response && response.success) {
+                this.monitoringVideoId = this.currentVideoId;
+                this.isMonitoring = true;
+                this.updateMonitoringButtonStates();
+                this.updateStatus('監視中 (バックグラウンド)');
+                this.updateVideoIdDisplay();
+                
+                // 新しいVideo IDのコメント履歴をロード
+                await this.loadExistingComments();
+                
+                this.showError('');
+                this.showMessage('現在のタブに切り替えました', 'success');
+            } else {
+                this.showError('切り替えに失敗しました。ライブチャットが見つからない可能性があります。');
+            }
+        } catch (error) {
+            console.error('[YouTube Special Comments] Switch error:', error);
+            if (error.message.includes('Could not establish connection')) {
+                this.showError('ページを再読み込みしてみてください。（Content scriptが読み込まれていません...）');
+            } else {
+                this.showError('切り替えに失敗しました: ' + error.message);
+            }
+        } finally {
+            this.showLoading(false);
         }
     }
 }
