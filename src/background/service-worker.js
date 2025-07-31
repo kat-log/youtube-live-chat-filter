@@ -1,3 +1,106 @@
+// エラー解決データベース
+const ERROR_SOLUTIONS = {
+  // APIキー関連エラー
+  'API key not valid': {
+    title: 'APIキーが無効です',
+    message: 'YouTube Data API v3のAPIキーが正しくありません',
+    solution: 'Google Cloud ConsoleでAPIキーを確認し、YouTube Data API v3が有効になっていることを確認してください',
+    action: 'checkApiKey',
+    severity: 'high'
+  },
+  'API key not found': {
+    title: 'APIキーが設定されていません',
+    message: 'YouTube Data API v3のAPIキーが設定されていません',
+    solution: 'オプション画面を開いてAPIキーを設定してください',
+    action: 'setApiKey',
+    severity: 'high'
+  },
+  
+  // YouTube API制限エラー
+  'quotaExceeded': {
+    title: 'API使用量制限に達しました',
+    message: '1日のYouTube Data API使用量制限に達しました',
+    solution: '明日になったら再試行してください。または Google Cloud Console で制限を増やしてください',
+    action: 'waitOrUpgrade',
+    severity: 'medium'
+  },
+  'rateLimitExceeded': {
+    title: 'アクセス頻度制限です',
+    message: 'APIへのアクセスが頻繁すぎます',
+    solution: '1分待ってから再試行してください',
+    action: 'waitAndRetry',
+    severity: 'low'
+  },
+  
+  // ライブストリーム関連エラー
+  'liveChatDisabled': {
+    title: 'ライブチャットが無効です',
+    message: 'この配信はライブチャット機能が無効になっています',
+    solution: '配信者がライブチャットを有効にするまでお待ちください',
+    action: 'waitForChat',
+    severity: 'medium'
+  },
+  'liveChatNotFound': {
+    title: 'ライブチャットが見つかりません',
+    message: 'ライブチャットが存在しないか、配信が終了している可能性があります',
+    solution: 'ライブ配信中のページで再試行してください',
+    action: 'checkLiveStatus',
+    severity: 'medium'
+  },
+  'videoNotLive': {
+    title: 'ライブ配信中ではありません',
+    message: 'この動画は現在ライブ配信中ではありません',
+    solution: 'ライブ配信中の動画でのみ使用できます',
+    action: 'findLiveStream',
+    severity: 'medium'
+  },
+  
+  // ネットワーク・認証エラー
+  'NetworkError': {
+    title: 'ネットワークエラー',
+    message: 'インターネット接続に問題があります',
+    solution: 'インターネット接続を確認してから再試行してください',
+    action: 'checkConnection',
+    severity: 'high'
+  },
+  'Forbidden': {
+    title: 'アクセス権限エラー',
+    message: 'APIキーに適切な権限がありません',
+    solution: 'Google Cloud ConsoleでAPIキーの権限とYouTube Data API v3の有効化を確認してください',
+    action: 'checkPermissions',
+    severity: 'high'
+  }
+};
+
+// エラー分析と解決策提案機能
+function analyzeError(error) {
+  const errorMessage = error.message || error.toString();
+  console.log('[Background] Analyzing error:', errorMessage);
+  
+  // エラーメッセージから該当するエラーパターンを検索
+  for (const [pattern, solution] of Object.entries(ERROR_SOLUTIONS)) {
+    if (errorMessage.includes(pattern)) {
+      console.log('[Background] Found matching error pattern:', pattern);
+      return {
+        ...solution,
+        originalError: errorMessage,
+        pattern: pattern
+      };
+    }
+  }
+  
+  // マッチするパターンが見つからない場合のデフォルト
+  return {
+    title: '予期しないエラーが発生しました',
+    message: errorMessage,
+    solution: 'ページを再読み込みして再試行してください。問題が続く場合は、APIキーの設定を確認してください',
+    action: 'reload',
+    severity: 'medium',
+    originalError: errorMessage,
+    pattern: 'unknown'
+  };
+}
+
 // グローバル状態管理
 let monitoringState = {
   isMonitoring: false,
@@ -459,6 +562,13 @@ function startPollingLoop() {
     .catch(error => {
       console.error('[Background] Error in polling loop:', error);
       
+      // エラー分析と解決策提案
+      const errorAnalysis = analyzeError(error);
+      console.log('[Background] Error analysis:', errorAnalysis);
+      
+      // リアルタイムでポップアップにエラー通知
+      notifyPopupOfError(errorAnalysis);
+      
       // API制限エラーの場合は長めの間隔でリトライ
       const retryDelay = error.message.includes('quota') || error.message.includes('limit') ? 60000 : 15000;
       
@@ -582,7 +692,25 @@ async function getLiveChatIdFromVideo(videoId) {
     
   } catch (error) {
     console.error('[Background] Error getting live chat ID from video:', error);
+    
+    // エラー分析して詳細情報をポップアップに送信
+    const errorAnalysis = analyzeError(error);
+    notifyPopupOfError(errorAnalysis);
+    
     throw error;
+  }
+}
+
+// ポップアップにエラー詳細を通知する機能
+async function notifyPopupOfError(errorAnalysis) {
+  try {
+    await chrome.runtime.sendMessage({
+      action: 'showDetailedError',
+      errorInfo: errorAnalysis
+    });
+    console.log('[Background] Error details sent to popup');
+  } catch (error) {
+    console.log('[Background] Could not notify popup of error (popup not open)');
   }
 }
 

@@ -120,6 +120,21 @@
         </div>
 
         <div class="error-message" id="error-message" style="display: none;"></div>
+        
+        <div class="error-details" id="error-details" style="display: none;">
+            <div class="error-header">
+                <div class="error-icon">⚠️</div>
+                <div class="error-title" id="error-title">エラーが発生しました</div>
+            </div>
+            <div class="error-content">
+                <div class="error-description" id="error-description"></div>
+                <div class="error-solution" id="error-solution"></div>
+                <div class="error-actions" id="error-actions">
+                    <button id="retry-button" class="btn btn-primary btn-small">再試行</button>
+                    <button id="options-button" class="btn btn-secondary btn-small">設定画面</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="popup.js"></script>

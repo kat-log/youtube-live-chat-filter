@@ -57,7 +57,15 @@ class PopupController {
             
             loading: document.getElementById('loading'),
             errorMessage: document.getElementById('error-message'),
-            currentVideoId: document.getElementById('current-video-id')
+            currentVideoId: document.getElementById('current-video-id'),
+            
+            // 詳細エラー表示要素
+            errorDetails: document.getElementById('error-details'),
+            errorTitle: document.getElementById('error-title'),
+            errorDescription: document.getElementById('error-description'),
+            errorSolution: document.getElementById('error-solution'),
+            retryButton: document.getElementById('retry-button'),
+            optionsButton: document.getElementById('options-button')
         };
     }
     
@@ -83,15 +91,21 @@ class PopupController {
                 this.saveApiKey();
             }
         });
+        
+        // エラー詳細のボタンイベント
+        this.elements.retryButton.addEventListener('click', () => this.handleRetry());
+        this.elements.optionsButton.addEventListener('click', () => this.openOptionsPage());
     }
     
     setupMessageListener() {
-        chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+        chrome.runtime.onMessage.addListener((request, _sender, _sendResponse) => {
             console.log('[Popup] Received message:', request.action, 'with', request.comments?.length || 0, 'comments');
             if (request.action === 'newSpecialComments') {
                 this.addNewComments(request.comments);
             } else if (request.action === 'monitoringAutoStopped') {
                 this.handleAutoStop(request.reason);
+            } else if (request.action === 'showDetailedError') {
+                this.showDetailedError(request.errorInfo);
             }
         });
     }
@@ -794,6 +808,83 @@ class PopupController {
             errorElement.style.borderColor = '';
             errorElement.style.color = '';
         }, 5000);
+    }
+    
+    showDetailedError(errorInfo) {
+        console.log('[Popup] Showing detailed error:', errorInfo);
+        
+        // 通常のエラーメッセージを隠す
+        this.elements.errorMessage.style.display = 'none';
+        
+        // 詳細エラー情報を表示
+        this.elements.errorTitle.textContent = errorInfo.title || 'エラーが発生しました';
+        this.elements.errorDescription.textContent = errorInfo.message || errorInfo.originalError || '';
+        this.elements.errorSolution.textContent = errorInfo.solution || '設定を確認してください';
+        
+        // 重要度に応じたスタイル設定
+        this.elements.errorDetails.className = `error-details severity-${errorInfo.severity || 'medium'}`;
+        
+        // アクションボタンの表示制御
+        this.updateErrorActionButtons(errorInfo.action);
+        
+        // 詳細エラー表示を表示
+        this.elements.errorDetails.style.display = 'block';
+        
+        // 自動的に非表示にしない（ユーザーが解決するまで表示継続）
+    }
+    
+    hideDetailedError() {
+        this.elements.errorDetails.style.display = 'none';
+    }
+    
+    updateErrorActionButtons(action) {
+        // デフォルトでは両方のボタンを表示
+        this.elements.retryButton.style.display = 'inline-block';
+        this.elements.optionsButton.style.display = 'inline-block';
+        
+        // アクションに応じてボタンをカスタマイズ
+        switch (action) {
+            case 'setApiKey':
+            case 'checkApiKey':
+                this.elements.optionsButton.textContent = 'APIキー設定';
+                this.elements.retryButton.textContent = '再試行';
+                break;
+            case 'waitAndRetry':
+                this.elements.retryButton.textContent = '1分後に再試行';
+                this.elements.optionsButton.style.display = 'none';
+                break;
+            case 'checkConnection':
+                this.elements.retryButton.textContent = '接続確認';
+                this.elements.optionsButton.style.display = 'none';
+                break;
+            case 'reload':
+                this.elements.retryButton.textContent = 'ページ再読込';
+                this.elements.optionsButton.style.display = 'none';
+                break;
+            case 'waitForChat':
+            case 'findLiveStream':
+                this.elements.retryButton.textContent = '再確認';
+                this.elements.optionsButton.style.display = 'none';
+                break;
+            default:
+                this.elements.retryButton.textContent = '再試行';
+                this.elements.optionsButton.textContent = '設定画面';
+        }
+    }
+    
+    handleRetry() {
+        console.log('[Popup] Retry button clicked');
+        this.hideDetailedError();
+        
+        // 取得開始を再試行
+        if (!this.isMonitoring) {
+            this.startMonitoring();
+        }
+    }
+    
+    openOptionsPage() {
+        console.log('[Popup] Opening options page');
+        chrome.runtime.openOptionsPage();
     }
     
 }
