@@ -339,9 +339,17 @@ class PopupController {
         
         console.log('[YouTube Special Comments] Starting monitoring...');
         this.showLoading(true);
+        this.showError(''); // エラーメッセージをクリア
         
         try {
-            // まずcontent scriptが応答するかテスト
+            // APIキーの存在確認
+            const apiKeyResponse = await chrome.runtime.sendMessage({ action: 'getApiKey' });
+            if (!apiKeyResponse || !apiKeyResponse.apiKey) {
+                this.showError('YouTube Data APIキーが設定されていません。オプション画面で設定してください。');
+                return;
+            }
+
+            // content scriptが応答するかテスト
             const testResponse = await chrome.tabs.sendMessage(this.currentTab.id, {
                 action: 'getSpecialComments'
             });
@@ -364,10 +372,18 @@ class PopupController {
             }
         } catch (error) {
             console.error('[YouTube Special Comments] Start monitoring error:', error);
+            
+            // エラーメッセージの改善
             if (error.message.includes('Could not establish connection')) {
-                this.showError('ページを再読み込みしてみてください。（Content scriptが読み込まれていません...）');
+                this.showError('ページを再読み込みしてから再試行してください。');
+            } else if (error.message.includes('API key')) {
+                this.showError('APIキーが設定されていません。オプション画面で設定してください。');
+            } else if (error.message.includes('No active live chat')) {
+                this.showError('このビデオはライブ配信ではないか、チャットが無効になっています。');
+            } else if (error.message.includes('quota')) {
+                this.showError('YouTube API の使用量制限に達しました。しばらく待ってから再試行してください。');
             } else {
-                this.showError('監視の開始に失敗しました: ' + error.message);
+                this.showError(`監視の開始に失敗しました: ${error.message}`);
             }
         } finally {
             this.showLoading(false);

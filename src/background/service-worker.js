@@ -449,11 +449,15 @@ function startPollingLoop() {
     .catch(error => {
       console.error('[Background] Error in polling loop:', error);
       
-      // エラー時は少し長めの間隔でリトライ
+      // API制限エラーの場合は長めの間隔でリトライ
+      const retryDelay = error.message.includes('quota') || error.message.includes('limit') ? 60000 : 15000;
+      
+      // 監視中の場合のみリトライ
       if (monitoringState.isMonitoring) {
+        console.log(`[Background] Retrying in ${retryDelay/1000} seconds...`);
         monitoringState.pollingInterval = setTimeout(() => {
           startPollingLoop();
-        }, 10000);
+        }, retryDelay);
       }
     });
 }
