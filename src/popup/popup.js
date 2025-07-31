@@ -15,6 +15,8 @@ class PopupController {
         
         this.initializeElements();
         this.attachEventListeners();
+        // 初期状態ではAPIキーなしとして設定
+        this.updateMonitoringButtons(false);
         this.loadSavedApiKey();
         this.loadCommentFilters();
         this.checkCurrentTab();
@@ -570,12 +572,39 @@ class PopupController {
     updateMonitoringButtons(hasApiKey) {
         const isYouTubePage = this.currentTab && this.currentTab.url && this.currentTab.url.includes('youtube.com/watch');
         
-        this.elements.startMonitoringBtn.disabled = !hasApiKey || !isYouTubePage;
+        // 監視開始ボタンの状態とツールチップ
+        if (!hasApiKey) {
+            this.elements.startMonitoringBtn.disabled = true;
+            this.elements.startMonitoringBtn.title = 'APIキーを入力してください';
+        } else if (!isYouTubePage) {
+            this.elements.startMonitoringBtn.disabled = true;
+            this.elements.startMonitoringBtn.title = 'YouTubeのライブ配信ページで使用してください';
+        } else {
+            this.elements.startMonitoringBtn.disabled = false;
+            this.elements.startMonitoringBtn.title = '';
+        }
+        
+        // 監視停止ボタンは従来通り
         this.elements.stopMonitoringBtn.disabled = !hasApiKey || !isYouTubePage;
     }
     
     updateMonitoringButtonStates() {
-        this.elements.startMonitoringBtn.disabled = this.isMonitoring;
+        // 監視開始ボタン
+        if (this.isMonitoring) {
+            this.elements.startMonitoringBtn.disabled = true;
+            this.elements.startMonitoringBtn.title = '監視中です';
+        } else {
+            // 監視していない場合は通常のボタン状態ロジックを適用
+            // まずAPIキーを確認
+            chrome.runtime.sendMessage({ action: 'getApiKey' }).then(response => {
+                const hasApiKey = response && response.apiKey;
+                this.updateMonitoringButtons(hasApiKey);
+            }).catch(() => {
+                this.updateMonitoringButtons(false);
+            });
+        }
+        
+        // 監視停止ボタン
         this.elements.stopMonitoringBtn.disabled = !this.isMonitoring;
     }
     
