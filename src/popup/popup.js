@@ -15,8 +15,9 @@ class PopupController {
         
         this.initializeElements();
         this.attachEventListeners();
-        // 初期状態ではAPIキーなしとして設定
+        // 初期状態ではAPIキーなし、監視停止状態として設定
         this.updateMonitoringButtons(false);
+        this.updateMonitoringButtonStates(); // 監視状態に基づくボタン設定
         this.loadSavedApiKey();
         this.loadCommentFilters();
         this.checkCurrentTab();
@@ -584,8 +585,8 @@ class PopupController {
             this.elements.startMonitoringBtn.title = '';
         }
         
-        // 監視停止ボタンは従来通り
-        this.elements.stopMonitoringBtn.disabled = !hasApiKey || !isYouTubePage;
+        // 監視停止ボタンは監視状態のみで制御（APIキーやページに関係なく）
+        // この関数は監視状態以外の条件で呼ばれるため、停止ボタンはここでは触らない
     }
     
     updateMonitoringButtonStates() {
@@ -605,7 +606,13 @@ class PopupController {
         }
         
         // 監視停止ボタン
-        this.elements.stopMonitoringBtn.disabled = !this.isMonitoring;
+        if (this.isMonitoring) {
+            this.elements.stopMonitoringBtn.disabled = false;
+            this.elements.stopMonitoringBtn.title = '';
+        } else {
+            this.elements.stopMonitoringBtn.disabled = true;
+            this.elements.stopMonitoringBtn.title = '監視停止中です';
+        }
     }
     
     showLoading(show) {
