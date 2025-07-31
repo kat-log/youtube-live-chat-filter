@@ -810,16 +810,29 @@ class PopupController {
         }, 5000);
     }
     
+    // HTMLタグ除去ユーティリティ関数
+    stripHtmlTags(html) {
+        if (!html) return '';
+        const div = document.createElement('div');
+        div.innerHTML = html;
+        return div.textContent || div.innerText || '';
+    }
+    
     showDetailedError(errorInfo) {
         console.log('[Popup] Showing detailed error:', errorInfo);
         
         // 通常のエラーメッセージを隠す
         this.elements.errorMessage.style.display = 'none';
         
+        // HTMLタグを除去してから表示
+        const cleanTitle = this.stripHtmlTags(errorInfo.title || 'エラーが発生しました');
+        const cleanMessage = this.stripHtmlTags(errorInfo.message || errorInfo.originalError || '');
+        const cleanSolution = this.stripHtmlTags(errorInfo.solution || '設定を確認してください');
+        
         // 詳細エラー情報を表示
-        this.elements.errorTitle.textContent = errorInfo.title || 'エラーが発生しました';
-        this.elements.errorDescription.textContent = errorInfo.message || errorInfo.originalError || '';
-        this.elements.errorSolution.textContent = errorInfo.solution || '設定を確認してください';
+        this.elements.errorTitle.textContent = cleanTitle;
+        this.elements.errorDescription.textContent = cleanMessage;
+        this.elements.errorSolution.textContent = cleanSolution;
         
         // 重要度に応じたスタイル設定
         this.elements.errorDetails.className = `error-details severity-${errorInfo.severity || 'medium'}`;

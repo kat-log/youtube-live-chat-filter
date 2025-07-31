@@ -5,6 +5,39 @@ class OptionsController {
         this.loadSettings();
     }
     
+    // HTMLタグ除去ユーティリティ関数
+    stripHtmlTags(html) {
+        if (!html) return '';
+        const div = document.createElement('div');
+        div.innerHTML = html;
+        return div.textContent || div.innerText || '';
+    }
+    
+    // エラーメッセージ改善関数
+    improveErrorMessage(originalMessage) {
+        const cleanMessage = this.stripHtmlTags(originalMessage);
+        
+        // よくあるYouTube API エラーの日本語化
+        const errorMappings = {
+            'exceeded your quota': 'API使用量制限に達しました。明日再試行するか、Google Cloud Consoleで制限を増やしてください',
+            'quotaExceeded': 'API使用量制限に達しました',
+            'API key not valid': 'APIキーが無効です。Google Cloud ConsoleでAPIキーを確認してください',
+            'Access denied': 'アクセスが拒否されました。APIキーの権限を確認してください',
+            'Forbidden': 'アクセス権限がありません。APIキーとYouTube Data API v3の有効化を確認してください',
+            'Bad Request': 'リクエストが無効です。APIキーを確認してください',
+            'rateLimitExceeded': 'アクセス頻度制限に達しました。しばらく待ってから再試行してください'
+        };
+        
+        // エラーメッセージから該当するパターンを検索
+        for (const [pattern, japanese] of Object.entries(errorMappings)) {
+            if (cleanMessage.toLowerCase().includes(pattern.toLowerCase())) {
+                return japanese;
+            }
+        }
+        
+        return cleanMessage;
+    }
+    
     initializeElements() {
         this.elements = {
             apiKeyInput: document.getElementById('api-key'),
@@ -103,8 +136,9 @@ class OptionsController {
                 }
             } else {
                 const errorData = await response.json();
-                const errorMessage = errorData.error?.message || `HTTP ${response.status}`;
-                this.showToast(`API接続テスト失敗: ${errorMessage}`, 'error');
+                const rawMessage = errorData.error?.message || `HTTP ${response.status}`;
+                const cleanMessage = this.improveErrorMessage(rawMessage);
+                this.showToast(`API接続テスト失敗: ${cleanMessage}`, 'error');
             }
         } catch (error) {
             console.error('Error testing API:', error);

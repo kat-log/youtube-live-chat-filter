@@ -72,18 +72,56 @@ const ERROR_SOLUTIONS = {
   }
 };
 
+// HTMLタグ除去とエラーメッセージ改善ユーティリティ
+function stripHtmlTags(html) {
+  if (!html) return '';
+  // Service Workerではdocumentが使えないため、正規表現で処理
+  return html.replace(/<[^>]*>/g, '').trim();
+}
+
+function improveErrorMessage(originalMessage) {
+  const cleanMessage = stripHtmlTags(originalMessage);
+  
+  // よくあるYouTube API エラーの日本語化
+  const errorMappings = {
+    'exceeded your quota': 'API使用量制限に達しました',
+    'quotaExceeded': 'API使用量制限に達しました', 
+    'rateLimitExceeded': 'アクセス頻度制限に達しました',
+    'API key not valid': 'APIキーが無効です',
+    'Access denied': 'アクセスが拒否されました',
+    'Forbidden': 'アクセス権限がありません',
+    'Bad Request': 'リクエストが無効です',
+    'liveChatDisabled': 'ライブチャットが無効です',
+    'liveChatNotFound': 'ライブチャットが見つかりません',
+    'videoNotLive': 'ライブ配信中ではありません'
+  };
+  
+  // エラーメッセージから該当するパターンを検索
+  for (const [pattern, japanese] of Object.entries(errorMappings)) {
+    if (cleanMessage.toLowerCase().includes(pattern.toLowerCase())) {
+      return japanese;
+    }
+  }
+  
+  return cleanMessage;
+}
+
 // エラー分析と解決策提案機能
 function analyzeError(error) {
-  const errorMessage = error.message || error.toString();
-  console.log('[Background] Analyzing error:', errorMessage);
+  const rawErrorMessage = error.message || error.toString();
+  const cleanErrorMessage = improveErrorMessage(rawErrorMessage);
   
-  // エラーメッセージから該当するエラーパターンを検索
+  console.log('[Background] Analyzing error:', rawErrorMessage);
+  console.log('[Background] Cleaned error:', cleanErrorMessage);
+  
+  // クリーンアップされたメッセージでパターンマッチング
   for (const [pattern, solution] of Object.entries(ERROR_SOLUTIONS)) {
-    if (errorMessage.includes(pattern)) {
+    if (rawErrorMessage.includes(pattern) || cleanErrorMessage.includes(pattern)) {
       console.log('[Background] Found matching error pattern:', pattern);
       return {
         ...solution,
-        originalError: errorMessage,
+        message: cleanErrorMessage, // クリーンなメッセージを使用
+        originalError: rawErrorMessage,
         pattern: pattern
       };
     }
@@ -92,11 +130,11 @@ function analyzeError(error) {
   // マッチするパターンが見つからない場合のデフォルト
   return {
     title: '予期しないエラーが発生しました',
-    message: errorMessage,
+    message: cleanErrorMessage, // クリーンなメッセージを使用
     solution: 'ページを再読み込みして再試行してください。問題が続く場合は、APIキーの設定を確認してください',
     action: 'reload',
     severity: 'medium',
-    originalError: errorMessage,
+    originalError: rawErrorMessage,
     pattern: 'unknown'
   };
 }
