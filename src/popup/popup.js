@@ -866,6 +866,13 @@ class PopupController {
                 this.elements.retryButton.textContent = '1分後に再試行';
                 this.elements.optionsButton.style.display = 'none';
                 break;
+            case 'waitOrUpgrade':
+                this.elements.retryButton.textContent = '明日再試行';
+                this.elements.optionsButton.textContent = 'Cloud Console';
+                this.elements.optionsButton.onclick = () => {
+                    window.open('https://console.cloud.google.com/apis/api/youtube.googleapis.com/quotas', '_blank');
+                };
+                break;
             case 'checkConnection':
                 this.elements.retryButton.textContent = '接続確認';
                 this.elements.optionsButton.style.display = 'none';

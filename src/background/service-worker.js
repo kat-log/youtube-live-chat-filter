@@ -19,8 +19,15 @@ const ERROR_SOLUTIONS = {
   // YouTube API制限エラー
   'quotaExceeded': {
     title: 'API使用量制限に達しました',
-    message: '1日のYouTube Data API使用量制限に達しました',
-    solution: '明日になったら再試行してください。または Google Cloud Console で制限を増やしてください',
+    message: '1日のYouTube Data API使用量制限に達しました（1日10,000リクエスト制限）',
+    solution: '明日の00:00（太平洋標準時）にリセットされます。今すぐ使いたい場合はGoogle Cloud Consoleで制限を増やしてください',
+    action: 'waitOrUpgrade',
+    severity: 'medium'
+  },
+  'exceeded your quota': {
+    title: 'API使用量制限に達しました', 
+    message: '1日のYouTube Data API使用量制限に達しました（1日10,000リクエスト制限）',
+    solution: '明日の00:00（太平洋標準時）にリセットされます。今すぐ使いたい場合はGoogle Cloud Consoleで制限を増やしてください',
     action: 'waitOrUpgrade',
     severity: 'medium'
   },
@@ -114,13 +121,17 @@ function analyzeError(error) {
   console.log('[Background] Analyzing error:', rawErrorMessage);
   console.log('[Background] Cleaned error:', cleanErrorMessage);
   
-  // クリーンアップされたメッセージでパターンマッチング
+  // クリーンアップされたメッセージでパターンマッチング（大文字小文字を区別しない）
   for (const [pattern, solution] of Object.entries(ERROR_SOLUTIONS)) {
-    if (rawErrorMessage.includes(pattern) || cleanErrorMessage.includes(pattern)) {
+    const lowerPattern = pattern.toLowerCase();
+    const lowerRawMessage = rawErrorMessage.toLowerCase();
+    const lowerCleanMessage = cleanErrorMessage.toLowerCase();
+    
+    if (lowerRawMessage.includes(lowerPattern) || lowerCleanMessage.includes(lowerPattern)) {
       console.log('[Background] Found matching error pattern:', pattern);
       return {
         ...solution,
-        message: cleanErrorMessage, // クリーンなメッセージを使用
+        message: solution.message, // ERROR_SOLUTIONSで定義されたメッセージを使用
         originalError: rawErrorMessage,
         pattern: pattern
       };
@@ -129,10 +140,10 @@ function analyzeError(error) {
   
   // マッチするパターンが見つからない場合のデフォルト
   return {
-    title: '予期しないエラーが発生しました',
-    message: cleanErrorMessage, // クリーンなメッセージを使用
-    solution: 'ページを再読み込みして再試行してください。問題が続く場合は、APIキーの設定を確認してください',
-    action: 'reload',
+    title: '接続エラーが発生しました',
+    message: cleanErrorMessage || 'サーバーとの通信に問題が発生しました',
+    solution: 'インターネット接続を確認してから再試行してください。問題が続く場合は、APIキーの設定を確認してください',
+    action: 'checkConnection',
     severity: 'medium',
     originalError: rawErrorMessage,
     pattern: 'unknown'
