@@ -174,7 +174,7 @@ class PopupController {
                 this.updateMonitoringButtonStates();
                 
                 if (this.isMonitoring) {
-                    this.updateStatus('監視中 (バックグラウンド)');
+                    this.updateStatus('取得中 (バックグラウンド)');
                 } else {
                     this.updateStatus('停止済み');
                 }
@@ -370,10 +370,10 @@ class PopupController {
             if (response && response.success) {
                 this.isMonitoring = true;
                 this.updateMonitoringButtonStates();
-                this.updateStatus('監視中 (バックグラウンド)');
+                this.updateStatus('取得中 (バックグラウンド)');
                 this.showError('');
             } else {
-                this.showError('監視を開始できませんでした。ライブチャットが見つからない可能性があります。');
+                this.showError('取得を開始できませんでした。ライブチャットが見つからない可能性があります。');
             }
         } catch (error) {
             console.error('[YouTube Special Comments] Start monitoring error:', error);
@@ -388,7 +388,7 @@ class PopupController {
             } else if (error.message.includes('quota')) {
                 this.showError('YouTube API の使用量制限に達しました。しばらく待ってから再試行してください。');
             } else {
-                this.showError(`監視の開始に失敗しました: ${error.message}`);
+                this.showError(`取得の開始に失敗しました: ${error.message}`);
             }
         } finally {
             this.showLoading(false);
@@ -412,7 +412,7 @@ class PopupController {
                 this.updateStatus('停止済み');
                 this.showError('');
             } else {
-                this.showError('監視を停止できませんでした');
+                this.showError('取得を停止できませんでした');
             }
         } catch (error) {
             console.error('[YouTube Special Comments] Stop monitoring error:', error);
@@ -423,7 +423,7 @@ class PopupController {
                 this.updateMonitoringButtonStates();
                 this.updateStatus('停止済み');
             } else {
-                this.showError('監視の停止に失敗しました: ' + error.message);
+                this.showError('取得の停止に失敗しました: ' + error.message);
             }
         } finally {
             this.showLoading(false);
@@ -565,7 +565,7 @@ class PopupController {
     updateStatus(status) {
         this.elements.statusIndicator.textContent = status;
         
-        if (status.includes('監視中')) {
+        if (status.includes('取得中')) {
             this.elements.statusIndicator.className = 'status-indicator status-online';
         } else {
             this.elements.statusIndicator.className = 'status-indicator status-offline';
@@ -595,7 +595,7 @@ class PopupController {
         // 監視開始ボタン
         if (this.isMonitoring) {
             this.elements.startMonitoringBtn.disabled = true;
-            this.elements.startMonitoringBtn.title = '監視中です';
+            this.elements.startMonitoringBtn.title = '取得中です';
         } else {
             // 監視していない場合は通常のボタン状態ロジックを適用
             // まずAPIキーを確認
@@ -613,7 +613,7 @@ class PopupController {
             this.elements.stopMonitoringBtn.title = '';
         } else {
             this.elements.stopMonitoringBtn.disabled = true;
-            this.elements.stopMonitoringBtn.title = '監視停止中です';
+            this.elements.stopMonitoringBtn.title = '取得停止中です';
         }
     }
     
@@ -776,7 +776,7 @@ class PopupController {
         this.showError('');
         
         // 自動停止メッセージを表示
-        const message = `監視が自動停止されました: ${reason}`;
+        const message = `取得が自動停止されました: ${reason}`;
         this.showMessage(message, 'info');
         
         // エラーメッセージエリアを一時的に情報表示に使用
