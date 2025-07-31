@@ -211,6 +211,10 @@ body {
     background-color: #4caf50;
 }
 
+.role-normal {
+    background-color: #9e9e9e;
+}
+
 .description {
     color: #555;
     font-size: 14px;
