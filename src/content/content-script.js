@@ -25,6 +25,7 @@ class YouTubeLiveChatMonitor {
     
     // YouTube SPAの画面遷移を監視
     this.observePageChanges();
+    this.setupVisibilityMonitoring();
   }
   
   isYouTubeLivePage() {
@@ -307,6 +308,41 @@ YouTubeLiveChatMonitor.prototype.getLiveChatIdFromVideoId = async function(video
     console.error('[YouTube Special Comments] API error:', error.message);
     return false;
   }
+};
+
+// Page Visibility APIによる可視性監視
+YouTubeLiveChatMonitor.prototype.setupVisibilityMonitoring = function() {
+  // ページの可視性が変わった時の処理
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && this.isMonitoring) {
+      console.log('[YouTube Special Comments] Page became hidden, requesting auto-stop');
+      // background scriptに自動停止を要求
+      chrome.runtime.sendMessage({
+        action: 'requestAutoStop',
+        reason: 'ページが非表示になりました'
+      }).catch(error => {
+        console.log('[YouTube Special Comments] Failed to request auto-stop:', error.message);
+      });
+    } else if (document.visibilityState === 'visible') {
+      console.log('[YouTube Special Comments] Page became visible');
+      // ここで必要に応じて監視状態を確認・復元
+    }
+  });
+  
+  // ページアンロード時の処理
+  window.addEventListener('beforeunload', () => {
+    if (this.isMonitoring) {
+      console.log('[YouTube Special Comments] Page unloading, requesting auto-stop');
+      // 同期的に停止要求を送信
+      navigator.sendBeacon(
+        chrome.runtime.getURL(''), 
+        JSON.stringify({
+          action: 'requestAutoStop',
+          reason: 'ページが閉じられました'
+        })
+      );
+    }
+  });
 };
 
 // 初期化

@@ -90,6 +90,8 @@ class PopupController {
             console.log('[Popup] Received message:', request.action, 'with', request.comments?.length || 0, 'comments');
             if (request.action === 'newSpecialComments') {
                 this.addNewComments(request.comments);
+            } else if (request.action === 'monitoringAutoStopped') {
+                this.handleAutoStop(request.reason);
             }
         });
     }
@@ -755,6 +757,43 @@ class PopupController {
         } else {
             this.elements.currentVideoId.textContent = '未検出';
         }
+    }
+    
+    handleAutoStop(reason) {
+        console.log('[Popup] Monitoring auto-stopped:', reason);
+        
+        // 監視状態を更新
+        this.isMonitoring = false;
+        this.updateMonitoringButtonStates();
+        this.updateStatus('自動停止');
+        
+        // 自動停止の通知を表示
+        this.showAutoStopNotification(reason);
+    }
+    
+    showAutoStopNotification(reason) {
+        // 既存のエラーメッセージをクリア
+        this.showError('');
+        
+        // 自動停止メッセージを表示
+        const message = `監視が自動停止されました: ${reason}`;
+        this.showMessage(message, 'info');
+        
+        // エラーメッセージエリアを一時的に情報表示に使用
+        const errorElement = this.elements.errorMessage;
+        errorElement.textContent = `ℹ️ ${message}`;
+        errorElement.style.display = 'block';
+        errorElement.style.backgroundColor = '#e3f2fd';
+        errorElement.style.borderColor = '#1976d2';
+        errorElement.style.color = '#1976d2';
+        
+        // 5秒後に自動的に非表示
+        setTimeout(() => {
+            errorElement.style.display = 'none';
+            errorElement.style.backgroundColor = '';
+            errorElement.style.borderColor = '';
+            errorElement.style.color = '';
+        }, 5000);
     }
     
 }

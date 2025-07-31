@@ -73,6 +73,9 @@ async function initializeServiceWorker() {
 // Service Worker起動時に初期化を実行
 initializeServiceWorker();
 
+// タブ監視機能を設定
+setupTabMonitoring();
+
 chrome.runtime.onInstalled.addListener(async () => {
   console.log('[Background] YouTube Special Comments Filter installed');
   
@@ -181,6 +184,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       success: true, 
       videoId: monitoringState.currentVideoId 
     });
+    return true;
+  }
+  
+  if (request.action === 'requestAutoStop') {
+    autoStopMonitoring(request.reason || 'Content scriptからの要求')
+      .then(response => sendResponse(response))
+      .catch(error => sendResponse({ success: false, error: error.message }));
     return true;
   }
 });
@@ -705,5 +715,66 @@ async function getCommentsHistory(videoId = null) {
   } catch (error) {
     console.error('[Background] Error getting comments history:', error);
     return { success: true, comments: [] };
+  }
+}
+
+// タブ監視機能の設定
+function setupTabMonitoring() {
+  console.log('[Background] Setting up tab monitoring for auto-stop');
+  
+  // タブが切り替わった時
+  chrome.tabs.onActivated.addListener(async (activeInfo) => {
+    if (monitoringState.isMonitoring && monitoringState.tabId && 
+        monitoringState.tabId !== activeInfo.tabId) {
+      console.log('[Background] YouTube tab became inactive, auto-stopping monitoring');
+      await autoStopMonitoring('YouTubeタブが非アクティブになりました');
+    }
+  });
+  
+  // ウィンドウフォーカスが変わった時
+  chrome.windows.onFocusChanged.addListener(async (windowId) => {
+    if (windowId === chrome.windows.WINDOW_ID_NONE) {
+      // ブラウザからフォーカスが離れた
+      if (monitoringState.isMonitoring) {
+        console.log('[Background] Browser window lost focus, auto-stopping monitoring');
+        await autoStopMonitoring('ブラウザがバックグラウンドになりました');
+      }
+    }
+  });
+  
+  // タブが閉じられた時
+  chrome.tabs.onRemoved.addListener(async (tabId) => {
+    if (monitoringState.isMonitoring && monitoringState.tabId === tabId) {
+      console.log('[Background] YouTube tab was closed, auto-stopping monitoring');
+      await autoStopMonitoring('YouTubeタブが閉じられました');
+    }
+  });
+}
+
+// 自動監視停止機能
+async function autoStopMonitoring(reason) {
+  console.log('[Background] Auto-stopping monitoring:', reason);
+  
+  try {
+    // 通常の監視停止処理を実行
+    await stopBackgroundMonitoring();
+    
+    // 自動停止の理由をログに記録
+    console.log('[Background] Monitoring auto-stopped:', reason);
+    
+    // ポップアップが開いている場合に通知
+    try {
+      await chrome.runtime.sendMessage({
+        action: 'monitoringAutoStopped',
+        reason: reason
+      });
+    } catch (error) {
+      // ポップアップが開いていない場合はエラーを無視
+    }
+    
+    return { success: true, reason: reason };
+  } catch (error) {
+    console.error('[Background] Error during auto-stop:', error);
+    return { success: false, error: error.message };
   }
 }
