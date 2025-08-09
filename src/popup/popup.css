@@ -558,7 +558,7 @@ body {
     background-color: #e8f5e8;
     border: 1px solid #c8e6c9;
     color: #2e7d32;
-    padding: 12px 20px;
+    padding: 12px 24px;
     border-radius: 8px;
     font-size: 14px;
     font-weight: 500;
@@ -567,8 +567,10 @@ body {
     gap: 8px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
     animation: slideInFromTop 0.3s ease-out;
-    min-width: 200px;
+    min-width: 280px;
+    max-width: 360px;
     justify-content: center;
+    white-space: nowrap;
 }
 
 .success-overlay::before {
