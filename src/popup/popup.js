@@ -9,8 +9,8 @@ class PopupController {
         this.commentFilters = {
             owner: true,
             moderator: true,
-            sponsor: false,
-            normal: false
+            sponsor: true,
+            normal: true
         };
         
         this.initializeElements();
