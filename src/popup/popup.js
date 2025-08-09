@@ -57,6 +57,7 @@ class PopupController {
             
             loading: document.getElementById('loading'),
             errorMessage: document.getElementById('error-message'),
+            successMessage: document.getElementById('api-success-message'),
             currentVideoId: document.getElementById('current-video-id'),
             
             // 詳細エラー表示要素
@@ -646,6 +647,20 @@ class PopupController {
     
     showMessage(message, type = 'info') {
         console.log(`${type}: ${message}`);
+        
+        if (type === 'success') {
+            this.elements.successMessage.textContent = message;
+            this.elements.successMessage.style.display = 'block';
+            
+            // 2秒後に自動的に非表示
+            setTimeout(() => {
+                this.elements.successMessage.style.animation = 'fadeOut 0.3s ease-out';
+                setTimeout(() => {
+                    this.elements.successMessage.style.display = 'none';
+                    this.elements.successMessage.style.animation = '';
+                }, 300);
+            }, 2000);
+        }
     }
     
     escapeHtml(text) {
