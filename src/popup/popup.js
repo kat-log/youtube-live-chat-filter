@@ -57,7 +57,7 @@ class PopupController {
             
             loading: document.getElementById('loading'),
             errorMessage: document.getElementById('error-message'),
-            successMessage: document.getElementById('api-success-message'),
+            successMessage: document.getElementById('success-overlay'),
             currentVideoId: document.getElementById('current-video-id'),
             
             // 詳細エラー表示要素
@@ -650,11 +650,12 @@ class PopupController {
         
         if (type === 'success') {
             this.elements.successMessage.textContent = message;
-            this.elements.successMessage.style.display = 'block';
+            this.elements.successMessage.style.display = 'flex';
+            this.elements.successMessage.style.animation = 'slideInFromTop 0.3s ease-out';
             
             // 2秒後に自動的に非表示
             setTimeout(() => {
-                this.elements.successMessage.style.animation = 'fadeOut 0.3s ease-out';
+                this.elements.successMessage.style.animation = 'fadeOutUp 0.3s ease-out';
                 setTimeout(() => {
                     this.elements.successMessage.style.display = 'none';
                     this.elements.successMessage.style.animation = '';
