@@ -1,3 +1,38 @@
+// デバッグモードによる統一ログ関数
+let debugMode = false;
+
+// デバッグモード設定を取得
+async function loadDebugMode() {
+  try {
+    const result = await chrome.storage.local.get(['debugMode']);
+    debugMode = result.debugMode || false;
+  } catch (error) {
+    console.error('[Popup] Failed to load debug mode:', error);
+  }
+}
+
+// デバッグ用ログ関数
+function debugLog(prefix, ...args) {
+  if (debugMode) {
+    console.log(prefix, ...args);
+  }
+}
+
+function debugWarn(prefix, ...args) {
+  if (debugMode) {
+    console.warn(prefix, ...args);
+  }
+}
+
+function debugError(prefix, ...args) {
+  if (debugMode) {
+    console.error(prefix, ...args);
+  }
+}
+
+// 初期化時にデバッグモードを読み込み
+loadDebugMode();
+
 class PopupController {
     constructor() {
         this.isMonitoring = false;
@@ -15,7 +50,7 @@ class PopupController {
             normal: true
         };
         
-        console.log('[YouTube Special Comments] Popup controller starting...');
+        debugLog('[YouTube Special Comments] Popup controller starting...');
         this.initializeElements();
         this.attachEventListeners();
         
@@ -26,36 +61,36 @@ class PopupController {
     // Service Worker確認後の初期化プロセス
     async initializeWithServiceWorkerCheck() {
         try {
-            console.log('[YouTube Special Comments] 🚀 Starting comprehensive initialization process...');
+            debugLog('[YouTube Special Comments] 🚀 Starting comprehensive initialization process...');
             
             // Step 1: Service Worker準備確認
             this.showInitializationStatus('Step 1/3: Service Workerを確認中...');
             const workerReady = await this.waitForServiceWorker();
             
             if (workerReady) {
-                console.log('[YouTube Special Comments] ✅ Step 1 Complete: Service Worker ready');
+                debugLog('[YouTube Special Comments] ✅ Step 1 Complete: Service Worker ready');
             } else {
-                console.warn('[YouTube Special Comments] ⚠️ Step 1 Warning: Service Worker timeout, but continuing');
+                debugWarn('[YouTube Special Comments] ⚠️ Step 1 Warning: Service Worker timeout, but continuing');
             }
             
             // Step 2: 基本設定の初期化
             this.showInitializationStatus('Step 2/3: 設定を読み込み中...');
             await this.completeBasicInitialization();
-            console.log('[YouTube Special Comments] ✅ Step 2 Complete: Basic initialization done');
+            debugLog('[YouTube Special Comments] ✅ Step 2 Complete: Basic initialization done');
             
             // Step 3: Content Script状態確認と通信テスト
             this.showInitializationStatus('Step 3/3: Content Script通信テスト...');
             const contentScriptReady = await this.checkContentScriptInjection();
             
             if (contentScriptReady) {
-                console.log('[YouTube Special Comments] ✅ Step 3 Complete: Content Script communication established');
+                debugLog('[YouTube Special Comments] ✅ Step 3 Complete: Content Script communication established');
                 this.showInitializationStatus('初期化完了！');
                 await this.delay(500); // 成功メッセージを少し表示
             } else {
-                console.warn('[YouTube Special Comments] ⚠️ Step 3 Warning: Content Script issues detected');
+                debugWarn('[YouTube Special Comments] ⚠️ Step 3 Warning: Content Script issues detected');
             }
             
-            console.log('[YouTube Special Comments] 🎉 Full initialization process completed');
+            debugLog('[YouTube Special Comments] 🎉 Full initialization process completed');
             
         } catch (error) {
             console.error('[YouTube Special Comments] ❌ Critical initialization error:', error);

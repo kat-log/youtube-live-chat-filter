@@ -295,6 +295,52 @@ body {
     background-color: #2196f3;
 }
 
+/* デバッグモード用スイッチスタイル */
+.switch-container {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.debug-switch {
+    display: none;
+}
+
+.switch-label {
+    position: relative;
+    display: inline-block;
+    width: 48px;
+    height: 26px;
+    background-color: #ccc;
+    border-radius: 13px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+.switch-label:before {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 22px;
+    height: 22px;
+    background-color: white;
+    border-radius: 50%;
+    transition: transform 0.3s;
+}
+
+.debug-switch:checked + .switch-label {
+    background-color: #1976d2;
+}
+
+.debug-switch:checked + .switch-label:before {
+    transform: translateX(22px);
+}
+
+.switch-label:hover {
+    box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.1);
+}
+
 @media (max-width: 600px) {
     .container {
         margin: 0;

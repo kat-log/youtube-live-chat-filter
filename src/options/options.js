@@ -44,6 +44,7 @@ class OptionsController {
             toggleVisibilityBtn: document.getElementById('toggle-visibility'),
             saveSettingsBtn: document.getElementById('save-settings'),
             testApiBtn: document.getElementById('test-api'),
+            debugModeSwitch: document.getElementById('debug-mode'),
             toast: document.getElementById('toast')
         };
     }
@@ -52,6 +53,7 @@ class OptionsController {
         this.elements.toggleVisibilityBtn.addEventListener('click', () => this.toggleApiKeyVisibility());
         this.elements.saveSettingsBtn.addEventListener('click', () => this.saveSettings());
         this.elements.testApiBtn.addEventListener('click', () => this.testApiConnection());
+        this.elements.debugModeSwitch.addEventListener('change', () => this.saveSettings());
         
         this.elements.apiKeyInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
@@ -66,10 +68,19 @@ class OptionsController {
     
     async loadSettings() {
         try {
-            const response = await chrome.runtime.sendMessage({ action: 'getApiKey' });
-            if (response.apiKey) {
-                this.elements.apiKeyInput.value = response.apiKey;
+            const [apiResponse, debugResponse] = await Promise.all([
+                chrome.runtime.sendMessage({ action: 'getApiKey' }),
+                chrome.runtime.sendMessage({ action: 'getDebugMode' })
+            ]);
+            
+            if (apiResponse.apiKey) {
+                this.elements.apiKeyInput.value = apiResponse.apiKey;
             }
+            
+            if (debugResponse.debugMode !== undefined) {
+                this.elements.debugModeSwitch.checked = debugResponse.debugMode;
+            }
+            
             this.updateButtonStates();
         } catch (error) {
             console.error('Error loading settings:', error);
@@ -79,6 +90,7 @@ class OptionsController {
     
     async saveSettings() {
         const apiKey = this.elements.apiKeyInput.value.trim();
+        const debugMode = this.elements.debugModeSwitch.checked;
         
         if (!apiKey) {
             this.showToast('APIキーを入力してください', 'error');
@@ -90,12 +102,18 @@ class OptionsController {
         this.elements.saveSettingsBtn.textContent = '保存中...';
         
         try {
-            const response = await chrome.runtime.sendMessage({
-                action: 'saveApiKey',
-                apiKey: apiKey
-            });
+            const [apiResponse, debugResponse] = await Promise.all([
+                chrome.runtime.sendMessage({
+                    action: 'saveApiKey',
+                    apiKey: apiKey
+                }),
+                chrome.runtime.sendMessage({
+                    action: 'saveDebugMode',
+                    debugMode: debugMode
+                })
+            ]);
             
-            if (response.success) {
+            if (apiResponse.success && debugResponse.success) {
                 this.showToast('設定が保存されました', 'success');
             } else {
                 this.showToast('設定の保存に失敗しました', 'error');

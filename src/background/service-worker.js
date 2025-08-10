@@ -1,3 +1,39 @@
+// デバッグモードによる統一ログ関数
+let debugMode = false;
+
+// デバッグモード設定を取得
+async function loadDebugMode() {
+  try {
+    const result = await chrome.storage.local.get(['debugMode']);
+    debugMode = result.debugMode || false;
+  } catch (error) {
+    // ここだけは常に表示（設定読み込み失敗は重要）
+    console.error('[Background] Failed to load debug mode:', error);
+  }
+}
+
+// デバッグ用ログ関数
+function debugLog(prefix, ...args) {
+  if (debugMode) {
+    console.log(prefix, ...args);
+  }
+}
+
+function debugWarn(prefix, ...args) {
+  if (debugMode) {
+    console.warn(prefix, ...args);
+  }
+}
+
+function debugError(prefix, ...args) {
+  if (debugMode) {
+    console.error(prefix, ...args);
+  }
+}
+
+// 初期化時にデバッグモードを読み込み
+loadDebugMode();
+
 // エラー解決データベース
 const ERROR_SOLUTIONS = {
   // APIキー関連エラー
@@ -118,8 +154,8 @@ function analyzeError(error) {
   const rawErrorMessage = error.message || error.toString();
   const cleanErrorMessage = improveErrorMessage(rawErrorMessage);
   
-  console.log('[Background] Analyzing error:', rawErrorMessage);
-  console.log('[Background] Cleaned error:', cleanErrorMessage);
+  debugLog('[Background] Analyzing error:', rawErrorMessage);
+  debugLog('[Background] Cleaned error:', cleanErrorMessage);
   
   // クリーンアップされたメッセージでパターンマッチング（大文字小文字を区別しない）
   for (const [pattern, solution] of Object.entries(ERROR_SOLUTIONS)) {
@@ -128,7 +164,7 @@ function analyzeError(error) {
     const lowerCleanMessage = cleanErrorMessage.toLowerCase();
     
     if (lowerRawMessage.includes(lowerPattern) || lowerCleanMessage.includes(lowerPattern)) {
-      console.log('[Background] Found matching error pattern:', pattern);
+      debugLog('[Background] Found matching error pattern:', pattern);
       return {
         ...solution,
         message: solution.message, // ERROR_SOLUTIONSで定義されたメッセージを使用
@@ -173,16 +209,16 @@ async function saveCommentsHistory(videoId = null) {
   try {
     const targetVideoId = videoId || monitoringState.currentVideoId;
     if (!targetVideoId) {
-      console.warn('[Background] No video ID available for saving comments');
+      debugWarn('[Background] No video ID available for saving comments');
       return;
     }
     
     const commentsToSave = monitoringState.commentsHistory || [];
     const storageKey = `commentsHistory_${targetVideoId}`;
     
-    console.log('[Background] === Saving comments history ===');
-    console.log('[Background] Video ID:', targetVideoId);
-    console.log('[Background] Comments count:', commentsToSave.length);
+    debugLog('[Background] === Saving comments history ===');
+    debugLog('[Background] Video ID:', targetVideoId);
+    debugLog('[Background] Comments count:', commentsToSave.length);
     
     await chrome.storage.local.set({
       [storageKey]: commentsToSave
@@ -192,33 +228,33 @@ async function saveCommentsHistory(videoId = null) {
     const verification = await chrome.storage.local.get([storageKey]);
     const savedCount = verification[storageKey]?.length || 0;
     
-    console.log('[Background] Saved and verified', savedCount, 'comments for video', targetVideoId);
+    debugLog('[Background] Saved and verified', savedCount, 'comments for video', targetVideoId);
     
     if (savedCount !== commentsToSave.length) {
-      console.error('[Background] Save verification failed! Expected:', commentsToSave.length, 'Actual:', savedCount);
+      debugError('[Background] Save verification failed! Expected:', commentsToSave.length, 'Actual:', savedCount);
     }
     
   } catch (error) {
-    console.error('[Background] Failed to save comments history:', error);
+    debugError('[Background] Failed to save comments history:', error);
   }
 }
 
 // Service Worker起動時の初期化
 async function initializeServiceWorker() {
-  console.log('[Background] Initializing Service Worker');
+  debugLog('[Background] Initializing Service Worker');
   
   try {
     // 古い履歴形式から新しい形式へのマイグレーション
     const oldResult = await chrome.storage.local.get(['commentsHistory']);
     if (oldResult.commentsHistory && oldResult.commentsHistory.length > 0) {
-      console.log('[Background] Found old format history, migration may be needed');
+      debugLog('[Background] Found old format history, migration may be needed');
     }
     
     // 定期的なクリーンアップを実行
     cleanupOldCommentHistories();
     
   } catch (error) {
-    console.error('[Background] Error initializing service worker:', error);
+    debugError('[Background] Error initializing service worker:', error);
   }
 }
 
@@ -229,7 +265,7 @@ initializeServiceWorker();
 setupTabMonitoring();
 
 chrome.runtime.onInstalled.addListener(async (details) => {
-  console.log('[Background] YouTube Special Comments Filter installed/updated, reason:', details.reason);
+  debugLog('[Background] YouTube Special Comments Filter installed/updated, reason:', details.reason);
   
   // 自動Content Script再注入を実行
   await reinjectContentScripts(details.reason);
@@ -239,7 +275,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   const existingHistory = result.commentsHistory || [];
   monitoringState.commentsHistory = existingHistory;
   
-  console.log('[Background] Restored', existingHistory.length, 'comments from storage on install');
+  debugLog('[Background] Restored', existingHistory.length, 'comments from storage on install');
   
   // インストール時に監視状態をリセット（履歴は保持）
   chrome.storage.local.set({
@@ -253,7 +289,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 
 // Content Script自動再注入機能
 async function reinjectContentScripts(reason) {
-  console.log('[Background] 🔄 Starting content script re-injection for reason:', reason);
+  debugLog('[Background] 🔄 Starting content script re-injection for reason:', reason);
   
   try {
     // manifest.jsonからcontent_scriptsを取得
@@ -261,7 +297,7 @@ async function reinjectContentScripts(reason) {
     const contentScripts = manifest.content_scripts || [];
     
     if (contentScripts.length === 0) {
-      console.warn('[Background] No content scripts found in manifest');
+      debugWarn('[Background] No content scripts found in manifest');
       return;
     }
     
@@ -269,25 +305,25 @@ async function reinjectContentScripts(reason) {
     let totalTabsChecked = 0;
     
     for (const cs of contentScripts) {
-      console.log('[Background] Processing content script with matches:', cs.matches);
+      debugLog('[Background] Processing content script with matches:', cs.matches);
       
       // 対象URLにマッチするタブを取得
       const tabs = await chrome.tabs.query({ url: cs.matches });
       totalTabsChecked += tabs.length;
       
-      console.log('[Background] Found', tabs.length, 'tabs matching', cs.matches);
+      debugLog('[Background] Found', tabs.length, 'tabs matching', cs.matches);
       
       for (const tab of tabs) {
         try {
           // chrome:// や chrome-extension:// URLはスキップ
           if (tab.url.match(/(chrome|chrome-extension|chrome-devtools):\/\//gi)) {
-            console.log('[Background] Skipping system tab:', tab.url);
+            debugLog('[Background] Skipping system tab:', tab.url);
             continue;
           }
           
           // タブの読み込み状態を確認
           if (tab.status !== 'complete') {
-            console.log('[Background] Skipping incomplete tab:', tab.url);
+            debugLog('[Background] Skipping incomplete tab:', tab.url);
             continue;
           }
           
@@ -298,25 +334,25 @@ async function reinjectContentScripts(reason) {
           
           // JavaScriptファイルを注入
           if (cs.js && cs.js.length > 0) {
-            console.log('[Background] Injecting JS files into tab:', tab.id, 'URL:', tab.url);
+            debugLog('[Background] Injecting JS files into tab:', tab.id, 'URL:', tab.url);
             await chrome.scripting.executeScript({
               files: cs.js,
               target,
               injectImmediately: cs.run_at === 'document_start',
               world: cs.world || 'ISOLATED'
             });
-            console.log('[Background] ✅ Successfully injected JS files into tab:', tab.id);
+            debugLog('[Background] ✅ Successfully injected JS files into tab:', tab.id);
           }
           
           // CSSファイルを注入
           if (cs.css && cs.css.length > 0) {
-            console.log('[Background] Injecting CSS files into tab:', tab.id);
+            debugLog('[Background] Injecting CSS files into tab:', tab.id);
             await chrome.scripting.insertCSS({
               files: cs.css,
               target,
               origin: cs.origin || 'AUTHOR'
             });
-            console.log('[Background] ✅ Successfully injected CSS files into tab:', tab.id);
+            debugLog('[Background] ✅ Successfully injected CSS files into tab:', tab.id);
           }
           
           injectedTabsCount++;
@@ -325,18 +361,18 @@ async function reinjectContentScripts(reason) {
           await new Promise(resolve => setTimeout(resolve, 50));
           
         } catch (error) {
-          console.warn('[Background] ⚠️ Failed to inject into tab', tab.id, ':', error.message);
+          debugWarn('[Background] ⚠️ Failed to inject into tab', tab.id, ':', error.message);
           
           // 権限エラーの場合はログに記録
           if (error.message.includes('Cannot access contents')) {
-            console.log('[Background] Permission denied for tab:', tab.url);
+            debugLog('[Background] Permission denied for tab:', tab.url);
           }
         }
       }
     }
     
-    console.log('[Background] ✅ Content script re-injection completed');
-    console.log(`[Background] 📊 Stats: ${injectedTabsCount} successful injections out of ${totalTabsChecked} tabs`);
+    debugLog('[Background] ✅ Content script re-injection completed');
+    debugLog(`[Background] 📊 Stats: ${injectedTabsCount} successful injections out of ${totalTabsChecked} tabs`);
     
     // 注入結果をストレージに保存（診断用）
     await chrome.storage.local.set({
@@ -350,7 +386,7 @@ async function reinjectContentScripts(reason) {
     });
     
   } catch (error) {
-    console.error('[Background] ❌ Content script re-injection failed:', error);
+    debugError('[Background] ❌ Content script re-injection failed:', error);
     
     // エラー情報をストレージに保存
     await chrome.storage.local.set({
@@ -365,7 +401,7 @@ async function reinjectContentScripts(reason) {
 }
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  console.log('[Background] Received message:', request.action);
+  debugLog('[Background] Received message:', request.action);
   
   // Service Worker生存確認用のping
   if (request.action === 'ping') {
@@ -406,6 +442,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   
   if (request.action === 'saveApiKey') {
     chrome.storage.local.set({ youtubeApiKey: request.apiKey }, () => {
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+  
+  if (request.action === 'getDebugMode') {
+    chrome.storage.local.get(['debugMode'], (result) => {
+      sendResponse({ debugMode: result.debugMode || false });
+    });
+    return true;
+  }
+  
+  if (request.action === 'saveDebugMode') {
+    chrome.storage.local.set({ debugMode: request.debugMode }, () => {
+      debugMode = request.debugMode; // グローバル変数も更新
       sendResponse({ success: true });
     });
     return true;
@@ -545,13 +596,13 @@ async function fetchLiveChatMessages(liveChatId, pageToken = null) {
       }
     });
     
-    console.log('[Background] Individual filters applied:', {
+    debugLog('[Background] Individual filters applied:', {
       owner: commentFilters.owner,
       moderator: commentFilters.moderator, 
       sponsor: commentFilters.sponsor,
       normal: commentFilters.normal
     });
-    console.log('[Background] Returning', filteredComments.length, 'filtered comments out of', data.items.length, 'total');
+    debugLog('[Background] Returning', filteredComments.length, 'filtered comments out of', data.items.length, 'total');
     
     return {
       comments: filteredComments,
@@ -561,17 +612,17 @@ async function fetchLiveChatMessages(liveChatId, pageToken = null) {
     };
     
   } catch (error) {
-    console.error('[Background] Error fetching live chat messages:', error);
+    debugError('[Background] Error fetching live chat messages:', error);
     throw error;
   }
 }
 
 // Backgroundでの監視開始
 async function startBackgroundMonitoring(liveChatId, tabId, videoId) {
-  console.log('[Background] Starting background monitoring for liveChatId:', liveChatId, 'videoId:', videoId);
+  debugLog('[Background] Starting background monitoring for liveChatId:', liveChatId, 'videoId:', videoId);
   
   if (monitoringState.isMonitoring) {
-    console.log('[Background] Already monitoring, stopping previous session');
+    debugLog('[Background] Already monitoring, stopping previous session');
     await stopBackgroundMonitoring();
   }
   
@@ -580,16 +631,16 @@ async function startBackgroundMonitoring(liveChatId, tabId, videoId) {
   if (videoId && videoId === monitoringState.currentVideoId) {
     // 同じVideo IDの場合は既存履歴を保持
     existingHistory = monitoringState.commentsHistory || [];
-    console.log('[Background] Same video ID, preserving', existingHistory.length, 'existing comments');
+    debugLog('[Background] Same video ID, preserving', existingHistory.length, 'existing comments');
   } else if (videoId) {
     // 新しいVideo IDの場合は履歴をロード
     try {
       const storageKey = `commentsHistory_${videoId}`;
       const result = await chrome.storage.local.get([storageKey]);
       existingHistory = result[storageKey] || [];
-      console.log('[Background] Loaded', existingHistory.length, 'comments for video', videoId);
+      debugLog('[Background] Loaded', existingHistory.length, 'comments for video', videoId);
     } catch (error) {
-      console.error('[Background] Failed to load existing history:', error);
+      debugError('[Background] Failed to load existing history:', error);
     }
   }
   
@@ -613,7 +664,7 @@ async function startBackgroundMonitoring(liveChatId, tabId, videoId) {
     currentVideoId: videoId
   };
   
-  console.log('[Background] Monitoring state reset for video:', videoId, 'with', existingHistory.length, 'existing comments');
+  debugLog('[Background] Monitoring state reset for video:', videoId, 'with', existingHistory.length, 'existing comments');
   
   // 状態を永続化
   await chrome.storage.local.set({
@@ -632,7 +683,7 @@ async function startBackgroundMonitoring(liveChatId, tabId, videoId) {
 
 // Backgroundでの監視停止
 async function stopBackgroundMonitoring() {
-  console.log('[Background] Stopping background monitoring');
+  debugLog('[Background] Stopping background monitoring');
   
   monitoringState.isMonitoring = false;
   
@@ -661,13 +712,13 @@ async function getMonitoringState() {
   const result = await chrome.storage.local.get(['monitoringState']);
   const savedState = result.monitoringState || { isMonitoring: false };
   
-  console.log('[Background] getMonitoringState - Memory:', {
+  debugLog('[Background] getMonitoringState - Memory:', {
     isMonitoring: monitoringState.isMonitoring,
     currentVideoId: monitoringState.currentVideoId,
     liveChatId: monitoringState.liveChatId,
     commentsCount: monitoringState.commentsHistory.length
   });
-  console.log('[Background] getMonitoringState - Storage:', savedState);
+  debugLog('[Background] getMonitoringState - Storage:', savedState);
   
   return {
     success: true,
@@ -684,7 +735,7 @@ function startPollingLoop() {
     return;
   }
   
-  console.log('[Background] Polling for new messages...');
+  debugLog('[Background] Polling for new messages...');
   
   fetchLiveChatMessages(monitoringState.liveChatId, monitoringState.pageToken)
     .then(response => {
@@ -697,16 +748,16 @@ function startPollingLoop() {
         const newComments = response.comments.filter(comment => {
           const messageId = comment.id;
           if (monitoringState.processedMessageIds.has(messageId)) {
-            console.log('[Background] Duplicate comment filtered:', messageId);
+            debugLog('[Background] Duplicate comment filtered:', messageId);
             return false;
           }
           monitoringState.processedMessageIds.add(messageId);
-          console.log('[Background] New comment added:', messageId, comment.snippet.displayMessage.substring(0, 30));
+          debugLog('[Background] New comment added:', messageId, comment.snippet.displayMessage.substring(0, 30));
           return true;
         });
         
         if (newComments.length > 0) {
-          console.log('[Background] Found', newComments.length, 'new special comments');
+          debugLog('[Background] Found', newComments.length, 'new special comments');
           
           // コメント履歴に追加
           monitoringState.commentsHistory.push(...newComments);
@@ -724,7 +775,7 @@ function startPollingLoop() {
             action: 'newSpecialComments',
             comments: newComments
           }).catch(error => {
-            console.log('[Background] No popup to notify:', error.message);
+            debugLog('[Background] No popup to notify:', error.message);
           });
           
           // content scriptにも通知（あれば）
@@ -733,7 +784,7 @@ function startPollingLoop() {
               action: 'newSpecialComments',
               comments: newComments
             }).catch(error => {
-              console.log('[Background] Content script not available:', error.message);
+              debugLog('[Background] Content script not available:', error.message);
             });
           }
         }
@@ -755,11 +806,11 @@ function startPollingLoop() {
       
     })
     .catch(error => {
-      console.error('[Background] Error in polling loop:', error);
+      debugError('[Background] Error in polling loop:', error);
       
       // エラー分析と解決策提案
       const errorAnalysis = analyzeError(error);
-      console.log('[Background] Error analysis:', errorAnalysis);
+      debugLog('[Background] Error analysis:', errorAnalysis);
       
       // リアルタイムでポップアップにエラー通知
       notifyPopupOfError(errorAnalysis);
@@ -769,7 +820,7 @@ function startPollingLoop() {
       
       // 監視中の場合のみリトライ
       if (monitoringState.isMonitoring) {
-        console.log(`[Background] Retrying in ${retryDelay/1000} seconds...`);
+        debugLog(`[Background] Retrying in ${retryDelay/1000} seconds...`);
         monitoringState.pollingInterval = setTimeout(() => {
           startPollingLoop();
         }, retryDelay);
@@ -779,7 +830,7 @@ function startPollingLoop() {
 
 // サービスワーカーのライフサイクル管理
 chrome.runtime.onStartup.addListener(async () => {
-  console.log('[Background] Extension startup');
+  debugLog('[Background] Extension startup');
   // 保存された状態を復元
   const result = await chrome.storage.local.get(['monitoringState', 'commentFilters']);
   const savedState = result.monitoringState;
@@ -791,7 +842,7 @@ chrome.runtime.onStartup.addListener(async () => {
   };
   
   if (savedState && savedState.isMonitoring && savedState.liveChatId) {
-    console.log('[Background] Restoring monitoring state');
+    debugLog('[Background] Restoring monitoring state');
     
     // コメント履歴も復元
     const historyResult = await chrome.storage.local.get(['commentsHistory']);
@@ -807,20 +858,20 @@ chrome.runtime.onStartup.addListener(async () => {
       commentFilters: savedFilters,
       commentsHistory: commentsHistory
     };
-    console.log('[Background] Restored', commentsHistory.length, 'comments from storage');
-    console.log('[Background] Restored comment filters:', savedFilters);
+    debugLog('[Background] Restored', commentsHistory.length, 'comments from storage');
+    debugLog('[Background] Restored comment filters:', savedFilters);
     startPollingLoop();
   } else {
     // 監視していない場合でもフィルター設定は復元
     monitoringState.commentFilters = savedFilters;
-    console.log('[Background] Restored comment filters:', savedFilters);
+    debugLog('[Background] Restored comment filters:', savedFilters);
   }
 });
 
 // タブが閉じられたときの処理
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (monitoringState.tabId === tabId) {
-    console.log('[Background] Tab closed, but continuing monitoring');
+    debugLog('[Background] Tab closed, but continuing monitoring');
     // タブが閉じられても監視は継続
     monitoringState.tabId = null;
     // 履歴を保存
@@ -830,14 +881,14 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 // Service Worker停止前の処理
 chrome.runtime.onSuspend.addListener(() => {
-  console.log('[Background] Service Worker suspending, saving state');
+  debugLog('[Background] Service Worker suspending, saving state');
   // 履歴を確実に保存
   saveCommentsHistory();
 });
 
 // 拡張機能停止時の処理
 chrome.runtime.onSuspendCanceled.addListener(() => {
-  console.log('[Background] Service Worker suspend canceled');
+  debugLog('[Background] Service Worker suspend canceled');
 });
 
 // Video IDからLive Chat IDを取得
@@ -866,7 +917,7 @@ async function getLiveChatIdFromVideo(videoId) {
     
     if (data.items && data.items.length > 0) {
       const video = data.items[0];
-      console.log('[Background] Video data:', { 
+      debugLog('[Background] Video data:', { 
         id: video.id, 
         hasLiveStreamingDetails: !!video.liveStreamingDetails,
         liveStreamingDetails: video.liveStreamingDetails
@@ -874,19 +925,19 @@ async function getLiveChatIdFromVideo(videoId) {
       
       const liveStreamingDetails = video.liveStreamingDetails;
       if (liveStreamingDetails && liveStreamingDetails.activeLiveChatId) {
-        console.log('[Background] Live chat ID found via API:', liveStreamingDetails.activeLiveChatId);
+        debugLog('[Background] Live chat ID found via API:', liveStreamingDetails.activeLiveChatId);
         return { liveChatId: liveStreamingDetails.activeLiveChatId };
       } else {
-        console.log('[Background] Video is not currently live streaming or has no active live chat');
+        debugLog('[Background] Video is not currently live streaming or has no active live chat');
       }
     } else {
-      console.log('[Background] No video data found for ID:', videoId);
+      debugLog('[Background] No video data found for ID:', videoId);
     }
     
     return { liveChatId: null };
     
   } catch (error) {
-    console.error('[Background] Error getting live chat ID from video:', error);
+    debugError('[Background] Error getting live chat ID from video:', error);
     
     // エラー分析して詳細情報をポップアップに送信
     const errorAnalysis = analyzeError(error);
@@ -903,15 +954,15 @@ async function notifyPopupOfError(errorAnalysis) {
       action: 'showDetailedError',
       errorInfo: errorAnalysis
     });
-    console.log('[Background] Error details sent to popup');
+    debugLog('[Background] Error details sent to popup');
   } catch (error) {
-    console.log('[Background] Could not notify popup of error (popup not open)');
+    debugLog('[Background] Could not notify popup of error (popup not open)');
   }
 }
 
 // コメントフィルターを設定
 async function setCommentFilters(filters) {
-  console.log('[Background] Setting comment filters:', filters);
+  debugLog('[Background] Setting comment filters:', filters);
   
   await chrome.storage.local.set({ commentFilters: filters });
   monitoringState.commentFilters = filters;
@@ -935,13 +986,13 @@ async function getCommentFilters() {
 // 古いコメント履歴をクリーンアップ
 async function cleanupOldCommentHistories() {
   try {
-    console.log('[Background] Starting comments history cleanup');
+    debugLog('[Background] Starting comments history cleanup');
     
     // 全てのストレージキーを取得
     const allData = await chrome.storage.local.get();
     const historyKeys = Object.keys(allData).filter(key => key.startsWith('commentsHistory_'));
     
-    console.log('[Background] Found', historyKeys.length, 'comment history entries');
+    debugLog('[Background] Found', historyKeys.length, 'comment history entries');
     
     // 現在の日付から7日前を計算
     const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
@@ -966,32 +1017,32 @@ async function cleanupOldCommentHistories() {
       
       for (const key of keysToRemove) {
         await chrome.storage.local.remove(key);
-        console.log('[Background] Removed old history:', key);
+        debugLog('[Background] Removed old history:', key);
       }
       
-      console.log('[Background] Cleanup completed, removed', keysToRemove.length, 'old histories');
+      debugLog('[Background] Cleanup completed, removed', keysToRemove.length, 'old histories');
     } else {
-      console.log('[Background] No cleanup needed, within limit');
+      debugLog('[Background] No cleanup needed, within limit');
     }
     
   } catch (error) {
-    console.error('[Background] Error during cleanup:', error);
+    debugError('[Background] Error during cleanup:', error);
   }
 }
 
 // コメント履歴を取得（Video ID別）
 async function getCommentsHistory(videoId = null) {
   const targetVideoId = videoId || monitoringState.currentVideoId;
-  console.log('[Background] === getCommentsHistory called ===');
-  console.log('[Background] Target video ID:', targetVideoId);
-  console.log('[Background] Current monitoring state:', {
+  debugLog('[Background] === getCommentsHistory called ===');
+  debugLog('[Background] Target video ID:', targetVideoId);
+  debugLog('[Background] Current monitoring state:', {
     isMonitoring: monitoringState.isMonitoring,
     currentVideoId: monitoringState.currentVideoId,
     memoryCommentsCount: monitoringState.commentsHistory.length
   });
   
   if (!targetVideoId) {
-    console.log('[Background] No video ID provided, returning empty history');
+    debugLog('[Background] No video ID provided, returning empty history');
     return { success: true, comments: [] };
   }
   
@@ -1000,56 +1051,56 @@ async function getCommentsHistory(videoId = null) {
     
     // 現在監視中のVideo IDの場合は、メモリを優先してストレージをフォールバックとする
     if (targetVideoId === monitoringState.currentVideoId && monitoringState.isMonitoring) {
-      console.log('[Background] === Currently monitored video - using memory first ===');
+      debugLog('[Background] === Currently monitored video - using memory first ===');
       
       const memoryComments = monitoringState.commentsHistory || [];
-      console.log('[Background] Memory has', memoryComments.length, 'comments');
+      debugLog('[Background] Memory has', memoryComments.length, 'comments');
       
       if (memoryComments.length > 0) {
         // メモリにコメントがある場合はそれを使用し、ストレージも同期
         await saveCommentsHistory(targetVideoId);
-        console.log('[Background] Returning', memoryComments.length, 'comments from memory');
+        debugLog('[Background] Returning', memoryComments.length, 'comments from memory');
         return { success: true, comments: memoryComments };
       } else {
         // メモリが空の場合はストレージから復元を試行
-        console.log('[Background] Memory empty, checking storage for recovery');
+        debugLog('[Background] Memory empty, checking storage for recovery');
         const result = await chrome.storage.local.get([storageKey]);
         const storageHistory = result[storageKey] || [];
         
         if (storageHistory.length > 0) {
           // ストレージから復元してメモリにも保存
           monitoringState.commentsHistory = storageHistory;
-          console.log('[Background] Recovered', storageHistory.length, 'comments from storage to memory');
+          debugLog('[Background] Recovered', storageHistory.length, 'comments from storage to memory');
           return { success: true, comments: storageHistory };
         } else {
-          console.log('[Background] No comments found in memory or storage for monitored video');
+          debugLog('[Background] No comments found in memory or storage for monitored video');
           return { success: true, comments: [] };
         }
       }
     } else {
       // 別のVideo IDまたは監視停止中の場合は、ストレージから取得
-      console.log('[Background] === Non-monitored video or monitoring stopped - using storage ===');
+      debugLog('[Background] === Non-monitored video or monitoring stopped - using storage ===');
       const result = await chrome.storage.local.get([storageKey]);
       const history = result[storageKey] || [];
-      console.log('[Background] Retrieved', history.length, 'comments for video', targetVideoId, 'from storage');
+      debugLog('[Background] Retrieved', history.length, 'comments for video', targetVideoId, 'from storage');
       return { success: true, comments: history };
     }
     
   } catch (error) {
-    console.error('[Background] Error getting comments history:', error);
+    debugError('[Background] Error getting comments history:', error);
     return { success: true, comments: [] };
   }
 }
 
 // タブ監視機能の設定
 function setupTabMonitoring() {
-  console.log('[Background] Setting up tab monitoring for auto-stop');
+  debugLog('[Background] Setting up tab monitoring for auto-stop');
   
   // タブが切り替わった時
   chrome.tabs.onActivated.addListener(async (activeInfo) => {
     if (monitoringState.isMonitoring && monitoringState.tabId && 
         monitoringState.tabId !== activeInfo.tabId) {
-      console.log('[Background] YouTube tab became inactive, auto-stopping monitoring');
+      debugLog('[Background] YouTube tab became inactive, auto-stopping monitoring');
       await autoStopMonitoring('YouTubeタブが非アクティブになりました');
     }
   });
@@ -1059,7 +1110,7 @@ function setupTabMonitoring() {
     if (windowId === chrome.windows.WINDOW_ID_NONE) {
       // ブラウザからフォーカスが離れた
       if (monitoringState.isMonitoring) {
-        console.log('[Background] Browser window lost focus, auto-stopping monitoring');
+        debugLog('[Background] Browser window lost focus, auto-stopping monitoring');
         await autoStopMonitoring('ブラウザがバックグラウンドになりました');
       }
     }
@@ -1068,7 +1119,7 @@ function setupTabMonitoring() {
   // タブが閉じられた時
   chrome.tabs.onRemoved.addListener(async (tabId) => {
     if (monitoringState.isMonitoring && monitoringState.tabId === tabId) {
-      console.log('[Background] YouTube tab was closed, auto-stopping monitoring');
+      debugLog('[Background] YouTube tab was closed, auto-stopping monitoring');
       await autoStopMonitoring('YouTubeタブが閉じられました');
     }
   });
@@ -1076,14 +1127,14 @@ function setupTabMonitoring() {
 
 // 自動監視停止機能
 async function autoStopMonitoring(reason) {
-  console.log('[Background] Auto-stopping monitoring:', reason);
+  debugLog('[Background] Auto-stopping monitoring:', reason);
   
   try {
     // 通常の監視停止処理を実行
     await stopBackgroundMonitoring();
     
     // 自動停止の理由をログに記録
-    console.log('[Background] Monitoring auto-stopped:', reason);
+    debugLog('[Background] Monitoring auto-stopped:', reason);
     
     // ポップアップが開いている場合に通知
     try {
@@ -1097,14 +1148,14 @@ async function autoStopMonitoring(reason) {
     
     return { success: true, reason: reason };
   } catch (error) {
-    console.error('[Background] Error during auto-stop:', error);
+    debugError('[Background] Error during auto-stop:', error);
     return { success: false, error: error.message };
   }
 }
 
 // 診断情報取得機能
 async function getDiagnosticsInfo() {
-  console.log('[Background] Generating diagnostics information');
+  debugLog('[Background] Generating diagnostics information');
   
   try {
     const diagnostics = {
@@ -1135,7 +1186,7 @@ async function getDiagnosticsInfo() {
       const storageResult = await chrome.storage.local.get(['youtubeApiKey']);
       diagnostics.storage.hasApiKey = !!(storageResult.youtubeApiKey);
     } catch (error) {
-      console.error('[Background] Error checking API key:', error);
+      debugError('[Background] Error checking API key:', error);
       diagnostics.storage.hasApiKey = 'error';
     }
     
@@ -1152,15 +1203,15 @@ async function getDiagnosticsInfo() {
       }
       diagnostics.storage.totalStoredComments = totalComments;
     } catch (error) {
-      console.error('[Background] Error checking storage:', error);
+      debugError('[Background] Error checking storage:', error);
       diagnostics.storage.historyEntriesCount = 'error';
     }
     
-    console.log('[Background] Diagnostics generated:', diagnostics);
+    debugLog('[Background] Diagnostics generated:', diagnostics);
     return { success: true, diagnostics };
     
   } catch (error) {
-    console.error('[Background] Error generating diagnostics:', error);
+    debugError('[Background] Error generating diagnostics:', error);
     return { 
       success: false, 
       error: error.message,
