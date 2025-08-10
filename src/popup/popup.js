@@ -971,12 +971,13 @@ class PopupController {
         return element.scrollTop + element.clientHeight >= element.scrollHeight - threshold;
     }
 
-    renderComments(forceScrollToTop = false) {
+    renderComments(forceScrollToTop = false, forceScrollToBottom = false) {
         console.log('[Popup] === renderComments called ===');
         console.log('[Popup] Total comments:', this.comments.length);
         console.log('[Popup] Filter state:', this.commentFilters);
         console.log('[Popup] Selected user:', this.selectedUser);
         console.log('[Popup] Force scroll to top:', forceScrollToTop);
+        console.log('[Popup] Force scroll to bottom:', forceScrollToBottom);
         
         // スクロール位置を保存と一番下かどうかを確認（新しいコメント追加時のみ）
         const previousScrollTop = this.elements.commentsList.scrollTop;
@@ -1076,6 +1077,10 @@ class PopupController {
             // フィルター変更やクリア時は強制的にトップへ
             this.elements.commentsList.scrollTop = 0;
             console.log('[Popup] Scrolled to top (forced)');
+        } else if (forceScrollToBottom) {
+            // ユーザーフィルター時は強制的にボトムへ
+            this.elements.commentsList.scrollTop = this.elements.commentsList.scrollHeight;
+            console.log('[Popup] Scrolled to bottom (forced)');
         } else if (wasAtBottom) {
             // 一番下にいた場合は新しいコメント表示後も一番下を維持
             this.elements.commentsList.scrollTop = this.elements.commentsList.scrollHeight;
@@ -1514,14 +1519,14 @@ class PopupController {
         console.log('[YouTube Special Comments] Filtering by user:', username);
         this.selectedUser = username;
         this.updateUserFilterStatus();
-        this.renderComments(true); // ユーザーフィルター適用時はトップにスクロール
+        this.renderComments(false, true); // ユーザーフィルター適用時は一番下にスクロール
     }
     
     clearUserFilter() {
         console.log('[YouTube Special Comments] Clearing user filter');
         this.selectedUser = null;
         this.updateUserFilterStatus();
-        this.renderComments(true); // ユーザーフィルタークリア時はトップにスクロール
+        this.renderComments(false, true); // ユーザーフィルタークリア時は一番下にスクロール
     }
     
     updateUserFilterStatus() {
