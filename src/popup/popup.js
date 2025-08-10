@@ -900,7 +900,7 @@ class PopupController {
     
     clearComments() {
         this.comments = [];
-        this.renderComments();
+        this.renderComments(true); // コメントクリア時はトップにスクロール
     }
     
     addNewComments(newComments) {
@@ -964,11 +964,15 @@ class PopupController {
         };
     }
     
-    renderComments() {
+    renderComments(forceScrollToTop = false) {
         console.log('[Popup] === renderComments called ===');
         console.log('[Popup] Total comments:', this.comments.length);
         console.log('[Popup] Filter state:', this.commentFilters);
         console.log('[Popup] Selected user:', this.selectedUser);
+        console.log('[Popup] Force scroll to top:', forceScrollToTop);
+        
+        // スクロール位置を保存（新しいコメント追加時のみ）
+        const previousScrollTop = this.elements.commentsList.scrollTop;
         
         // 役割フィルターとユーザーフィルターの両方を適用
         const filteredComments = this.comments.filter(comment => {
@@ -1059,8 +1063,16 @@ class PopupController {
             });
         });
         
-        this.elements.commentsList.scrollTop = 0;
-        console.log('[Popup] Comments rendered successfully');
+        // スクロール位置の制御
+        if (forceScrollToTop) {
+            // フィルター変更やクリア時は強制的にトップへ
+            this.elements.commentsList.scrollTop = 0;
+        } else {
+            // 新しいコメント追加時は既存の位置を維持
+            this.elements.commentsList.scrollTop = previousScrollTop;
+        }
+        
+        console.log('[Popup] Comments rendered successfully, scroll position:', this.elements.commentsList.scrollTop);
     }
     
     updateStatus(status) {
@@ -1190,7 +1202,7 @@ class PopupController {
         this.elements.normalToggle.checked = this.commentFilters.normal;
         
         this.updatePresetButtons();
-        this.renderComments(); // フィルターが変更されたら再描画
+        this.renderComments(true); // フィルターが変更されたら再描画（トップにスクロール）
     }
     
     updatePresetButtons() {
@@ -1224,7 +1236,7 @@ class PopupController {
             }, 2);
             
             this.updatePresetButtons();
-            this.renderComments(); // フィルターが変更されたら再描画
+            this.renderComments(true); // フィルターが変更されたら再描画（トップにスクロール）
             
         } catch (error) {
             console.error('[YouTube Special Comments] Error saving comment filters:', error);
@@ -1488,14 +1500,14 @@ class PopupController {
         console.log('[YouTube Special Comments] Filtering by user:', username);
         this.selectedUser = username;
         this.updateUserFilterStatus();
-        this.renderComments();
+        this.renderComments(true); // ユーザーフィルター適用時はトップにスクロール
     }
     
     clearUserFilter() {
         console.log('[YouTube Special Comments] Clearing user filter');
         this.selectedUser = null;
         this.updateUserFilterStatus();
-        this.renderComments();
+        this.renderComments(true); // ユーザーフィルタークリア時はトップにスクロール
     }
     
     updateUserFilterStatus() {
