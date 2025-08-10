@@ -1500,8 +1500,13 @@ class PopupController {
     
     updateUserFilterStatus() {
         if (this.selectedUser) {
+            // まずユーザー名をセットしてからステータスバーを表示（ちらつき防止）
             this.elements.filteredUsername.textContent = this.selectedUser;
-            this.elements.userFilterStatus.style.display = 'flex';
+            
+            // レイアウト計算完了後に表示状態を変更
+            requestAnimationFrame(() => {
+                this.elements.userFilterStatus.style.display = 'flex';
+            });
         } else {
             this.elements.userFilterStatus.style.display = 'none';
         }

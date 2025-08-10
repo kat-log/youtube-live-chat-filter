@@ -776,7 +776,8 @@ body {
     justify-content: space-between;
     align-items: center;
     border-bottom: 1px solid #e0e0e0;
-    animation: slideInFromTop 0.3s ease-out;
+    animation: slideInFromTopInFlow 0.3s ease-out;
+    min-width: 200px; /* ちらつき防止のため最小幅を確保 */
 }
 
 .user-filter-info {
@@ -823,4 +824,16 @@ body {
 
 .btn-clear-filter:hover {
     background: #d32f2f;
+}
+
+/* ユーザーフィルター専用のスライドインアニメーション */
+@keyframes slideInFromTopInFlow {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
