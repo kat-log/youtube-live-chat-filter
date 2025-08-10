@@ -964,6 +964,13 @@ class PopupController {
         };
     }
     
+    // スクロール位置が一番下かどうかを判定
+    isAtBottom() {
+        const element = this.elements.commentsList;
+        const threshold = 5; // 5px以内の誤差を許容
+        return element.scrollTop + element.clientHeight >= element.scrollHeight - threshold;
+    }
+
     renderComments(forceScrollToTop = false) {
         console.log('[Popup] === renderComments called ===');
         console.log('[Popup] Total comments:', this.comments.length);
@@ -971,8 +978,9 @@ class PopupController {
         console.log('[Popup] Selected user:', this.selectedUser);
         console.log('[Popup] Force scroll to top:', forceScrollToTop);
         
-        // スクロール位置を保存（新しいコメント追加時のみ）
+        // スクロール位置を保存と一番下かどうかを確認（新しいコメント追加時のみ）
         const previousScrollTop = this.elements.commentsList.scrollTop;
+        const wasAtBottom = !forceScrollToTop && this.isAtBottom();
         
         // 役割フィルターとユーザーフィルターの両方を適用
         const filteredComments = this.comments.filter(comment => {
@@ -1067,9 +1075,15 @@ class PopupController {
         if (forceScrollToTop) {
             // フィルター変更やクリア時は強制的にトップへ
             this.elements.commentsList.scrollTop = 0;
+            console.log('[Popup] Scrolled to top (forced)');
+        } else if (wasAtBottom) {
+            // 一番下にいた場合は新しいコメント表示後も一番下を維持
+            this.elements.commentsList.scrollTop = this.elements.commentsList.scrollHeight;
+            console.log('[Popup] Scrolled to bottom (auto-follow)');
         } else {
-            // 新しいコメント追加時は既存の位置を維持
+            // 途中にいた場合は既存の位置を維持
             this.elements.commentsList.scrollTop = previousScrollTop;
+            console.log('[Popup] Maintained scroll position');
         }
         
         console.log('[Popup] Comments rendered successfully, scroll position:', this.elements.commentsList.scrollTop);
