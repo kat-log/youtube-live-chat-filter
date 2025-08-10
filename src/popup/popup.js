@@ -1029,9 +1029,9 @@ class PopupController {
         this.elements.noComments.style.display = 'none';
         this.elements.commentsList.style.display = 'block';
         
-        const reversedComments = [...filteredComments].reverse();
+        const commentsToDisplay = filteredComments;
         
-        this.elements.commentsList.innerHTML = reversedComments.map(comment => {
+        this.elements.commentsList.innerHTML = commentsToDisplay.map(comment => {
             const isSelected = this.selectedUser === comment.displayName;
             const authorClass = isSelected ? 'comment-author selected' : 'comment-author';
             
