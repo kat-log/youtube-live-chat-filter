@@ -470,9 +470,9 @@ class PopupController {
         
         this.comments.push(...uniqueComments);
         
-        if (this.comments.length > 100) {
-            this.comments = this.comments.slice(-100);
-            console.log('[Popup] Trimmed comments to 100, current count:', this.comments.length);
+        if (this.comments.length > 1000) {
+            this.comments = this.comments.slice(-1000);
+            console.log('[Popup] Trimmed comments to 1000, current count:', this.comments.length);
         }
         
         console.log('[Popup] Final comments count after adding:', this.comments.length);
