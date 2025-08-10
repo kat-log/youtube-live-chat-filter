@@ -50,6 +50,9 @@ class PopupController {
             normal: true
         };
         
+        // ユーザーフィルタリング用の状態
+        this.selectedUser = null; // 絞り込み対象のユーザー名（null = 全ユーザー表示）
+        
         debugLog('[YouTube Special Comments] Popup controller starting...');
         this.initializeElements();
         this.attachEventListeners();
@@ -503,7 +506,12 @@ class PopupController {
             errorDescription: document.getElementById('error-description'),
             errorSolution: document.getElementById('error-solution'),
             retryButton: document.getElementById('retry-button'),
-            optionsButton: document.getElementById('options-button')
+            optionsButton: document.getElementById('options-button'),
+            
+            // ユーザーフィルター関連要素
+            userFilterStatus: document.getElementById('user-filter-status'),
+            filteredUsername: document.getElementById('filtered-username'),
+            clearUserFilterBtn: document.getElementById('clear-user-filter')
         };
     }
     
@@ -534,6 +542,9 @@ class PopupController {
         // エラー詳細のボタンイベント
         this.elements.retryButton.addEventListener('click', () => this.handleRetry());
         this.elements.optionsButton.addEventListener('click', () => this.openOptionsPage());
+        
+        // ユーザーフィルター関連のイベント
+        this.elements.clearUserFilterBtn.addEventListener('click', () => this.clearUserFilter());
     }
     
     setupMessageListener() {
@@ -957,21 +968,33 @@ class PopupController {
         console.log('[Popup] === renderComments called ===');
         console.log('[Popup] Total comments:', this.comments.length);
         console.log('[Popup] Filter state:', this.commentFilters);
+        console.log('[Popup] Selected user:', this.selectedUser);
         
-        // フィルター適用
+        // 役割フィルターとユーザーフィルターの両方を適用
         const filteredComments = this.comments.filter(comment => {
+            // 役割フィルター
+            let roleMatch = false;
             switch (comment.roleClass) {
                 case 'role-owner':
-                    return this.commentFilters.owner;
+                    roleMatch = this.commentFilters.owner;
+                    break;
                 case 'role-moderator':
-                    return this.commentFilters.moderator;
+                    roleMatch = this.commentFilters.moderator;
+                    break;
                 case 'role-sponsor':
-                    return this.commentFilters.sponsor;
+                    roleMatch = this.commentFilters.sponsor;
+                    break;
                 case 'role-normal':
-                    return this.commentFilters.normal;
+                    roleMatch = this.commentFilters.normal;
+                    break;
                 default:
-                    return false;
+                    roleMatch = false;
             }
+            
+            // ユーザーフィルター
+            const userMatch = !this.selectedUser || comment.displayName === this.selectedUser;
+            
+            return roleMatch && userMatch;
         });
         
         console.log('[Popup] Filtered comments:', filteredComments.length);
@@ -1004,16 +1027,37 @@ class PopupController {
         
         const reversedComments = [...filteredComments].reverse();
         
-        this.elements.commentsList.innerHTML = reversedComments.map(comment => `
-            <div class="comment-item">
-                <div class="comment-header">
-                    <span class="comment-role ${comment.roleClass}">${comment.role}</span>
-                    <span class="comment-author">${this.escapeHtml(comment.displayName)}</span>
-                    <span class="comment-time">${comment.timestamp}</span>
+        this.elements.commentsList.innerHTML = reversedComments.map(comment => {
+            const isSelected = this.selectedUser === comment.displayName;
+            const authorClass = isSelected ? 'comment-author selected' : 'comment-author';
+            
+            return `
+                <div class="comment-item">
+                    <div class="comment-header">
+                        <span class="comment-role ${comment.roleClass}">${comment.role}</span>
+                        <span class="${authorClass}" data-username="${this.escapeHtml(comment.displayName)}">${this.escapeHtml(comment.displayName)}</span>
+                        <span class="comment-time">${comment.timestamp}</span>
+                    </div>
+                    <div class="comment-message">${this.escapeHtml(comment.message)}</div>
                 </div>
-                <div class="comment-message">${this.escapeHtml(comment.message)}</div>
-            </div>
-        `).join('');
+            `;
+        }).join('');
+        
+        // ユーザー名のクリックイベントを追加
+        this.elements.commentsList.querySelectorAll('.comment-author').forEach(element => {
+            element.addEventListener('click', (e) => {
+                const username = e.target.getAttribute('data-username');
+                if (username) {
+                    if (this.selectedUser === username) {
+                        // 既に選択済みのユーザーをクリックした場合は絞り込み解除
+                        this.clearUserFilter();
+                    } else {
+                        // 新しいユーザーで絞り込み
+                        this.filterByUser(username);
+                    }
+                }
+            });
+        });
         
         this.elements.commentsList.scrollTop = 0;
         console.log('[Popup] Comments rendered successfully');
@@ -1436,6 +1480,30 @@ class PopupController {
                 console.log(`[YouTube Special Comments] [Popup] Waiting ${delay}ms before retry...`);
                 await this.delay(delay);
             }
+        }
+    }
+    
+    // ユーザーフィルタリング機能
+    filterByUser(username) {
+        console.log('[YouTube Special Comments] Filtering by user:', username);
+        this.selectedUser = username;
+        this.updateUserFilterStatus();
+        this.renderComments();
+    }
+    
+    clearUserFilter() {
+        console.log('[YouTube Special Comments] Clearing user filter');
+        this.selectedUser = null;
+        this.updateUserFilterStatus();
+        this.renderComments();
+    }
+    
+    updateUserFilterStatus() {
+        if (this.selectedUser) {
+            this.elements.filteredUsername.textContent = this.selectedUser;
+            this.elements.userFilterStatus.style.display = 'flex';
+        } else {
+            this.elements.userFilterStatus.style.display = 'none';
         }
     }
     
