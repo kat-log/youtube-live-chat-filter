@@ -91,6 +91,7 @@
             <button id="start-monitoring" class="btn btn-success" disabled title="APIキーを入力してください">取得開始</button>
             <button id="stop-monitoring" class="btn btn-danger" disabled title="取得停止中です">取得停止</button>
             <button id="clear-comments" class="btn btn-secondary">履歴クリア</button>
+            <button id="fix-extension" class="btn btn-warning" style="display: none;" title="拡張機能の問題を修復します">修復</button>
         </div>
 
         <div class="comments-section">
@@ -117,6 +118,7 @@
         <div class="loading" id="loading" style="display: none;">
             <div class="spinner"></div>
             <span>読み込み中...</span>
+            <div id="initialization-status" class="initialization-status" style="display: none;"></div>
         </div>
 
         <div class="error-message" id="error-message" style="display: none;"></div>

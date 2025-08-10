@@ -4,6 +4,8 @@ class PopupController {
         this.comments = [];
         this.currentTab = null;
         this.currentVideoId = null;
+        this.serviceWorkerReady = false;
+        this.initializationComplete = false;
         
         // 個別フィルターの状態
         this.commentFilters = {
@@ -13,15 +15,413 @@ class PopupController {
             normal: true
         };
         
+        console.log('[YouTube Special Comments] Popup controller starting...');
         this.initializeElements();
         this.attachEventListeners();
-        // 初期状態ではAPIキーなし、監視停止状態として設定
+        
+        // Service Worker準備確認後に初期化を開始
+        this.initializeWithServiceWorkerCheck();
+    }
+    
+    // Service Worker確認後の初期化プロセス
+    async initializeWithServiceWorkerCheck() {
+        try {
+            console.log('[YouTube Special Comments] 🚀 Starting comprehensive initialization process...');
+            
+            // Step 1: Service Worker準備確認
+            this.showInitializationStatus('Step 1/3: Service Workerを確認中...');
+            const workerReady = await this.waitForServiceWorker();
+            
+            if (workerReady) {
+                console.log('[YouTube Special Comments] ✅ Step 1 Complete: Service Worker ready');
+            } else {
+                console.warn('[YouTube Special Comments] ⚠️ Step 1 Warning: Service Worker timeout, but continuing');
+            }
+            
+            // Step 2: 基本設定の初期化
+            this.showInitializationStatus('Step 2/3: 設定を読み込み中...');
+            await this.completeBasicInitialization();
+            console.log('[YouTube Special Comments] ✅ Step 2 Complete: Basic initialization done');
+            
+            // Step 3: Content Script状態確認と通信テスト
+            this.showInitializationStatus('Step 3/3: Content Script通信テスト...');
+            const contentScriptReady = await this.checkContentScriptInjection();
+            
+            if (contentScriptReady) {
+                console.log('[YouTube Special Comments] ✅ Step 3 Complete: Content Script communication established');
+                this.showInitializationStatus('初期化完了！');
+                await this.delay(500); // 成功メッセージを少し表示
+            } else {
+                console.warn('[YouTube Special Comments] ⚠️ Step 3 Warning: Content Script issues detected');
+            }
+            
+            console.log('[YouTube Special Comments] 🎉 Full initialization process completed');
+            
+        } catch (error) {
+            console.error('[YouTube Special Comments] ❌ Critical initialization error:', error);
+            this.showInitializationStatus('初期化エラーが発生しました');
+            
+            // フォールバック: 基本的な初期化のみ実行
+            await this.emergencyFallbackInitialization();
+            
+        } finally {
+            this.hideInitializationStatus();
+            this.initializationComplete = true;
+            
+            // 最終診断情報をログ出力
+            this.logInitializationSummary();
+        }
+    }
+    
+    // 基本設定の初期化（Content Scriptチェックを除く）
+    async completeBasicInitialization() {
+        // 初期状態設定
         this.updateMonitoringButtons(false);
-        this.updateMonitoringButtonStates(); // 監視状態に基づくボタン設定
-        this.loadSavedApiKey();
-        this.loadCommentFilters();
-        this.checkCurrentTab();
+        this.updateMonitoringButtonStates();
+        
+        // 非同期初期化タスクを並行実行
+        await Promise.all([
+            this.loadSavedApiKey(),
+            this.loadCommentFilters(),
+            this.checkCurrentTab()
+        ]);
+        
+        // メッセージリスナーを設定
         this.setupMessageListener();
+    }
+    
+    // 緊急時のフォールバック初期化
+    async emergencyFallbackInitialization() {
+        console.log('[YouTube Special Comments] 🆘 Running emergency fallback initialization');
+        
+        try {
+            this.updateMonitoringButtons(false);
+            this.updateMonitoringButtonStates();
+            this.setupMessageListener();
+            
+            // 最低限のタブ情報を設定
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            this.currentTab = tab;
+            
+            console.log('[YouTube Special Comments] ✅ Emergency fallback completed');
+        } catch (error) {
+            console.error('[YouTube Special Comments] ❌ Emergency fallback also failed:', error);
+            this.showError('拡張機能の初期化に失敗しました。ブラウザを再起動してください。');
+        }
+    }
+    
+    // 初期化サマリーをログ出力
+    logInitializationSummary() {
+        const summary = {
+            timestamp: new Date().toISOString(),
+            serviceWorkerReady: this.serviceWorkerReady,
+            initializationComplete: this.initializationComplete,
+            currentTab: this.currentTab ? {
+                id: this.currentTab.id,
+                url: this.currentTab.url,
+                isYouTube: this.currentTab.url.includes('youtube.com')
+            } : null,
+            apiKeyLoaded: !!this.elements.apiKeyInput.value,
+            filterSettings: this.commentFilters
+        };
+        
+        console.log('[YouTube Special Comments] 📋 Initialization Summary:', summary);
+    }
+    
+    // Service Worker準備状態確認
+    async waitForServiceWorker(maxAttempts = 8, delayMs = 300) {
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                console.log(`[YouTube Special Comments] Service worker check attempt ${attempt}/${maxAttempts}`);
+                
+                const response = await this.sendMessageWithTimeout({
+                    action: 'ping'
+                }, 2000);
+                
+                if (response && response.success) {
+                    console.log('[YouTube Special Comments] ✅ Service worker ping successful');
+                    this.serviceWorkerReady = true;
+                    return true;
+                }
+            } catch (error) {
+                console.log(`[YouTube Special Comments] Service worker ping failed (attempt ${attempt}):`, error.message);
+                
+                if (attempt < maxAttempts) {
+                    // 短い間隔で再試行
+                    await this.delay(delayMs);
+                }
+            }
+        }
+        
+        console.warn('[YouTube Special Comments] Service worker readiness check timeout');
+        return false;
+    }
+    
+    // タイムアウト付きメッセージ送信
+    async sendMessageWithTimeout(message, timeoutMs = 5000) {
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                reject(new Error(`Message timeout after ${timeoutMs}ms`));
+            }, timeoutMs);
+            
+            chrome.runtime.sendMessage(message, (response) => {
+                clearTimeout(timeout);
+                
+                if (chrome.runtime.lastError) {
+                    reject(new Error(chrome.runtime.lastError.message));
+                } else {
+                    resolve(response);
+                }
+            });
+        });
+    }
+    
+    // 遅延ユーティリティ
+    delay(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+    
+    
+    // Content Script注入状態の確認
+    async checkContentScriptInjection() {
+        if (!this.currentTab || !this.currentTab.url.includes('youtube.com/watch')) {
+            console.log('[YouTube Special Comments] Not a YouTube watch page, skipping content script check');
+            return true;
+        }
+        
+        console.log('[YouTube Special Comments] Checking content script injection status...');
+        
+        try {
+            // Content Scriptとの通信をテスト（タイムアウト短め）
+            const response = await this.sendTabMessageWithTimeout(this.currentTab.id, {
+                action: 'ping'
+            }, 1500);
+            
+            if (response) {
+                console.log('[YouTube Special Comments] ✅ Content script is properly injected');
+                return true;
+            } else {
+                throw new Error('No response from content script');
+            }
+        } catch (error) {
+            console.warn('[YouTube Special Comments] ⚠️ Content script not detected:', error.message);
+            
+            // 自動回復を試行
+            return await this.attemptContentScriptRecovery();
+        }
+    }
+    
+    // Content Script回復試行
+    async attemptContentScriptRecovery() {
+        console.log('[YouTube Special Comments] 🔄 Attempting content script recovery...');
+        this.showInitializationStatus('Content Scriptを修復中...');
+        
+        try {
+            // 1. Service Workerから最後の注入結果を確認
+            const injectionResult = await this.sendMessageWithRetry({
+                action: 'getLastInjectionResult'
+            }, 2);
+            
+            console.log('[YouTube Special Comments] Last injection result:', injectionResult);
+            
+            // 2. 手動でContent Script再注入を要求
+            console.log('[YouTube Special Comments] Requesting manual content script re-injection...');
+            const reinjectResponse = await this.sendMessageWithRetry({
+                action: 'reinjectContentScripts'
+            }, 2);
+            
+            if (reinjectResponse && reinjectResponse.success) {
+                console.log('[YouTube Special Comments] ✅ Content script re-injection requested successfully');
+                
+                // 3. 再注入後の確認（少し待ってから）
+                await this.delay(2000);
+                return await this.verifyContentScriptAfterRecovery();
+            } else {
+                throw new Error('Re-injection request failed');
+            }
+        } catch (error) {
+            console.error('[YouTube Special Comments] ❌ Content script recovery failed:', error);
+            this.showContentScriptError();
+            return false;
+        }
+    }
+    
+    // 回復後のContent Script確認
+    async verifyContentScriptAfterRecovery() {
+        console.log('[YouTube Special Comments] Verifying content script after recovery...');
+        
+        try {
+            const response = await this.sendTabMessageWithTimeout(this.currentTab.id, {
+                action: 'ping'
+            }, 2000);
+            
+            if (response) {
+                console.log('[YouTube Special Comments] ✅ Content script recovery successful!');
+                this.hideInitializationStatus();
+                return true;
+            } else {
+                throw new Error('Still no response after recovery');
+            }
+        } catch (error) {
+            console.warn('[YouTube Special Comments] ⚠️ Content script still not responding after recovery');
+            this.showContentScriptError();
+            return false;
+        }
+    }
+    
+    // Content Script問題の表示
+    showContentScriptError() {
+        this.showError('拡張機能が正常に読み込まれていません。修復ボタンをクリックしてください。');
+        
+        // 修復ボタンを表示
+        this.elements.fixExtensionBtn.style.display = 'inline-block';
+        
+        // 詳細なエラー情報を表示
+        this.showDetailedError({
+            title: 'Content Script読み込みエラー',
+            message: '拡張機能のContent Scriptが正常に読み込まれていません',
+            solution: '「修復」ボタンで自動修復を試すか、このタブを再読み込みしてください。',
+            action: 'reload',
+            severity: 'high'
+        });
+    }
+    
+    // 拡張機能修復機能
+    async fixExtension() {
+        console.log('[YouTube Special Comments] 🔧 Starting extension repair process...');
+        this.elements.fixExtensionBtn.disabled = true;
+        this.elements.fixExtensionBtn.textContent = '修復中...';
+        this.showInitializationStatus('拡張機能を修復中...');
+        
+        try {
+            // Step 1: Content Script再注入を要求
+            console.log('[YouTube Special Comments] Step 1: Requesting content script re-injection');
+            this.showInitializationStatus('Content Scriptを再注入中...');
+            
+            const reinjectResponse = await this.sendMessageWithRetry({
+                action: 'reinjectContentScripts'
+            }, 3);
+            
+            if (!reinjectResponse || !reinjectResponse.success) {
+                throw new Error('Content script re-injection failed');
+            }
+            
+            // Step 2: 注入完了を待機
+            console.log('[YouTube Special Comments] Step 2: Waiting for injection to complete');
+            this.showInitializationStatus('注入完了を待機中...');
+            await this.delay(3000); // 注入処理の完了を待つ
+            
+            // Step 3: Content Script通信テスト
+            console.log('[YouTube Special Comments] Step 3: Testing content script communication');
+            this.showInitializationStatus('通信をテスト中...');
+            
+            const testResponse = await this.sendTabMessageWithTimeout(this.currentTab.id, {
+                action: 'ping'
+            }, 3000);
+            
+            if (testResponse && testResponse.success) {
+                console.log('[YouTube Special Comments] ✅ Extension repair successful!');
+                this.showInitializationStatus('修復完了！');
+                
+                // 成功時の処理
+                this.hideDetailedError();
+                this.showError('');
+                this.elements.fixExtensionBtn.style.display = 'none';
+                this.showMessage('拡張機能を修復しました！', 'success');
+                
+                // 初期化プロセスを完了
+                await this.delay(1000);
+                
+            } else {
+                throw new Error('Content script still not responding after repair');
+            }
+            
+        } catch (error) {
+            console.error('[YouTube Special Comments] ❌ Extension repair failed:', error);
+            this.showInitializationStatus('修復失敗');
+            
+            // 失敗時のフォールバック: タブ再読み込みを提案
+            this.showDetailedError({
+                title: '修復失敗',
+                message: '自動修復に失敗しました',
+                solution: 'このタブを手動で再読み込みしてください。Ctrl+F5 または Cmd+R を押してください。',
+                action: 'reload',
+                severity: 'high'
+            });
+            
+            // タブ再読み込み用のボタンテキストを変更
+            this.elements.fixExtensionBtn.textContent = 'タブを再読み込み';
+            this.elements.fixExtensionBtn.disabled = false;
+            this.elements.fixExtensionBtn.onclick = () => this.reloadCurrentTab();
+            
+        } finally {
+            await this.delay(1000);
+            this.hideInitializationStatus();
+            
+            // 通常の修復ボタン状態に戻す
+            if (this.elements.fixExtensionBtn.textContent === '修復中...') {
+                this.elements.fixExtensionBtn.textContent = '修復';
+                this.elements.fixExtensionBtn.disabled = false;
+            }
+        }
+    }
+    
+    // タブ再読み込み機能
+    async reloadCurrentTab() {
+        console.log('[YouTube Special Comments] Reloading current tab...');
+        
+        try {
+            await chrome.tabs.reload(this.currentTab.id);
+            console.log('[YouTube Special Comments] Tab reload initiated');
+            
+            // ポップアップを閉じる（タブ再読み込み後にユーザーが再度開く）
+            window.close();
+        } catch (error) {
+            console.error('[YouTube Special Comments] Failed to reload tab:', error);
+            this.showError('タブの再読み込みに失敗しました。手動でページを更新してください。');
+        }
+    }
+    
+    // タイムアウト付きタブメッセージ送信（より短いタイムアウト）
+    async sendTabMessageWithTimeout(tabId, message, timeoutMs = 2000) {
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                reject(new Error(`Tab message timeout after ${timeoutMs}ms`));
+            }, timeoutMs);
+            
+            chrome.tabs.sendMessage(tabId, message, (response) => {
+                clearTimeout(timeout);
+                
+                if (chrome.runtime.lastError) {
+                    reject(new Error(chrome.runtime.lastError.message));
+                } else {
+                    resolve(response);
+                }
+            });
+        });
+    }
+    
+    // 初期化状態表示
+    showInitializationStatus(message) {
+        // 既存のローディング表示を使用
+        this.showLoading(true);
+        
+        // カスタムステータスメッセージがあれば表示
+        const statusElement = document.getElementById('initialization-status');
+        if (statusElement) {
+            statusElement.textContent = message;
+            statusElement.style.display = 'block';
+        }
+    }
+    
+    // 初期化状態表示を隠す
+    hideInitializationStatus() {
+        this.showLoading(false);
+        
+        const statusElement = document.getElementById('initialization-status');
+        if (statusElement) {
+            statusElement.style.display = 'none';
+        }
     }
     
     initializeElements() {
@@ -32,6 +432,7 @@ class PopupController {
             startMonitoringBtn: document.getElementById('start-monitoring'),
             stopMonitoringBtn: document.getElementById('stop-monitoring'),
             clearCommentsBtn: document.getElementById('clear-comments'),
+            fixExtensionBtn: document.getElementById('fix-extension'),
             
             // 個別フィルタートグル
             ownerToggle: document.getElementById('owner-toggle'),
@@ -75,6 +476,7 @@ class PopupController {
         this.elements.startMonitoringBtn.addEventListener('click', () => this.startMonitoring());
         this.elements.stopMonitoringBtn.addEventListener('click', () => this.stopMonitoring());
         this.elements.clearCommentsBtn.addEventListener('click', () => this.clearComments());
+        this.elements.fixExtensionBtn.addEventListener('click', () => this.fixExtension());
         
         // 個別フィルタートグル
         this.elements.ownerToggle.addEventListener('change', () => this.onFilterToggleChange('owner'));
@@ -113,13 +515,17 @@ class PopupController {
     
     async loadSavedApiKey() {
         try {
-            const response = await chrome.runtime.sendMessage({ action: 'getApiKey' });
-            if (response.apiKey) {
+            const response = await this.sendMessageWithRetry({ action: 'getApiKey' }, 3);
+            if (response && response.apiKey) {
                 this.elements.apiKeyInput.value = response.apiKey;
                 this.updateMonitoringButtons(true);
+                console.log('[YouTube Special Comments] ✅ API key loaded successfully');
+            } else {
+                console.log('[YouTube Special Comments] No API key found in storage');
             }
         } catch (error) {
-            console.error('Error loading API key:', error);
+            console.error('[YouTube Special Comments] Error loading API key:', error);
+            this.showError('APIキーの読み込みに失敗しました。ページを再読み込みしてください。');
         }
     }
     
@@ -218,9 +624,9 @@ class PopupController {
     async getCurrentVideoId() {
         // Content scriptから取得を試行
         try {
-            const response = await chrome.tabs.sendMessage(this.currentTab.id, {
+            const response = await this.sendTabMessageWithRetry(this.currentTab.id, {
                 action: 'getSpecialComments'
-            });
+            }, 2);
             
             if (response && response.videoId) {
                 console.log('[YouTube Special Comments] Video ID from content script:', response.videoId);
@@ -245,9 +651,9 @@ class PopupController {
     
     async getBackgroundMonitoringState() {
         try {
-            const response = await chrome.runtime.sendMessage({
+            const response = await this.sendMessageWithRetry({
                 action: 'getMonitoringState'
-            });
+            }, 2);
             
             return response || { success: false };
         } catch (error) {
@@ -269,10 +675,10 @@ class PopupController {
         // プライマリ取得を試行
         let historyLoaded = false;
         try {
-            const historyResponse = await chrome.runtime.sendMessage({
+            const historyResponse = await this.sendMessageWithRetry({
                 action: 'getCommentsHistory',
                 videoId: targetVideoId
-            });
+            }, 2);
             
             console.log('[YouTube Special Comments] History response for', targetVideoId + ':', {
                 success: historyResponse?.success,
@@ -294,9 +700,9 @@ class PopupController {
         if (!historyLoaded) {
             console.log('[YouTube Special Comments] === Fallback 1: Getting comments from content script ===');
             try {
-                const contentResponse = await chrome.tabs.sendMessage(this.currentTab.id, {
+                const contentResponse = await this.sendTabMessageWithRetry(this.currentTab.id, {
                     action: 'getSpecialComments'
-                });
+                }, 2);
                 
                 if (contentResponse?.comments && contentResponse.comments.length > 0) {
                     const formattedComments = this.formatHistoryComments(contentResponse.comments);
@@ -336,9 +742,9 @@ class PopupController {
     
     async checkContentScriptStatus() {
         try {
-            const response = await chrome.tabs.sendMessage(this.currentTab.id, {
+            const response = await this.sendTabMessageWithRetry(this.currentTab.id, {
                 action: 'getSpecialComments'
-            });
+            }, 2);
             
             if (response && response.liveChatId) {
                 this.updateStatus('ライブチャット検出済み');
@@ -363,22 +769,22 @@ class PopupController {
         
         try {
             // APIキーの存在確認
-            const apiKeyResponse = await chrome.runtime.sendMessage({ action: 'getApiKey' });
+            const apiKeyResponse = await this.sendMessageWithRetry({ action: 'getApiKey' }, 2);
             if (!apiKeyResponse || !apiKeyResponse.apiKey) {
                 this.showError('YouTube Data APIキーが設定されていません。オプション画面で設定してください。');
                 return;
             }
 
             // content scriptが応答するかテスト
-            const testResponse = await chrome.tabs.sendMessage(this.currentTab.id, {
+            const testResponse = await this.sendTabMessageWithRetry(this.currentTab.id, {
                 action: 'getSpecialComments'
-            });
+            }, 3);
             
             console.log('[YouTube Special Comments] Content script test response:', testResponse);
             
-            const response = await chrome.tabs.sendMessage(this.currentTab.id, {
+            const response = await this.sendTabMessageWithRetry(this.currentTab.id, {
                 action: 'startMonitoring'
-            });
+            }, 3);
             
             console.log('[YouTube Special Comments] Start monitoring response:', response);
             
@@ -415,9 +821,9 @@ class PopupController {
         this.showLoading(true);
         
         try {
-            const response = await chrome.tabs.sendMessage(this.currentTab.id, {
+            const response = await this.sendTabMessageWithRetry(this.currentTab.id, {
                 action: 'stopMonitoring'
-            });
+            }, 3);
             
             console.log('[YouTube Special Comments] Stop monitoring response:', response);
             
@@ -614,7 +1020,7 @@ class PopupController {
         } else {
             // 監視していない場合は通常のボタン状態ロジックを適用
             // まずAPIキーを確認
-            chrome.runtime.sendMessage({ action: 'getApiKey' }).then(response => {
+            this.sendMessageWithRetry({ action: 'getApiKey' }, 1).then(response => {
                 const hasApiKey = response && response.apiKey;
                 this.updateMonitoringButtons(hasApiKey);
             }).catch(() => {
@@ -672,7 +1078,7 @@ class PopupController {
     
     async loadCommentFilters() {
         try {
-            const response = await chrome.runtime.sendMessage({ action: 'getCommentFilters' });
+            const response = await this.sendMessageWithRetry({ action: 'getCommentFilters' }, 2);
             if (response && response.success) {
                 this.commentFilters = response.filters;
                 this.updateFilterUI();
@@ -719,10 +1125,10 @@ class PopupController {
         console.log('[YouTube Special Comments] Filter changed:', filterType, '=', this.commentFilters[filterType]);
         
         try {
-            await chrome.runtime.sendMessage({
+            await this.sendMessageWithRetry({
                 action: 'setCommentFilters',
                 filters: this.commentFilters
-            });
+            }, 2);
             
             this.updatePresetButtons();
             this.renderComments(); // フィルターが変更されたら再描画
@@ -763,10 +1169,10 @@ class PopupController {
         }
         
         try {
-            await chrome.runtime.sendMessage({
+            await this.sendMessageWithRetry({
                 action: 'setCommentFilters',
                 filters: this.commentFilters
-            });
+            }, 2);
             
             this.updateFilterUI();
             
@@ -921,6 +1327,102 @@ class PopupController {
     openOptionsPage() {
         console.log('[Popup] Opening options page');
         chrome.runtime.openOptionsPage();
+    }
+    
+    // リトライ機能付きメッセージ送信（Popupバージョン）
+    async sendMessageWithRetry(message, maxRetries = 3, baseDelay = 1000) {
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                console.log(`[YouTube Special Comments] [Popup] Sending message attempt ${attempt}/${maxRetries}:`, message.action);
+                
+                const response = await this.sendMessageWithTimeout(message, 5000);
+                console.log(`[YouTube Special Comments] [Popup] ✅ Message successful on attempt ${attempt}`);
+                return response;
+                
+            } catch (error) {
+                console.warn(`[YouTube Special Comments] [Popup] Message failed on attempt ${attempt}:`, error.message);
+                
+                // Extension context invalidated の場合は特別処理
+                if (error.message.includes('Extension context invalidated')) {
+                    console.error('[YouTube Special Comments] [Popup] 🔄 Extension context invalidated - attempting recovery');
+                    
+                    // Service Worker再接続を試行
+                    await this.delay(1000);
+                    const recovered = await this.waitForServiceWorker(5);
+                    
+                    if (!recovered && attempt === maxRetries) {
+                        this.showError('拡張機能の接続が失われました。ページを再読み込みしてください。');
+                        throw new Error('Extension context invalidated and recovery failed. Please reload the page.');
+                    }
+                    continue;
+                }
+                
+                // "Could not establish connection" の場合も再接続試行
+                if (error.message.includes('Could not establish connection')) {
+                    console.warn('[YouTube Special Comments] [Popup] 🔄 Connection lost - attempting recovery');
+                    
+                    if (attempt === 1) {
+                        this.showInitializationStatus('拡張機能に再接続中...');
+                    }
+                    
+                    await this.delay(1000);
+                    const recovered = await this.waitForServiceWorker(3);
+                    
+                    if (recovered) {
+                        console.log('[YouTube Special Comments] [Popup] ✅ Connection recovered');
+                        this.hideInitializationStatus();
+                    }
+                }
+                
+                if (attempt === maxRetries) {
+                    // 最終的にエラーになった場合、ユーザーフレンドリーなメッセージを表示
+                    if (error.message.includes('Could not establish connection')) {
+                        this.showError('ページを再読み込みしてから再試行してください。');
+                    }
+                    throw error;
+                }
+                
+                // 指数バックオフで待機
+                const delay = baseDelay * Math.pow(2, attempt - 1);
+                console.log(`[YouTube Special Comments] [Popup] Waiting ${delay}ms before retry...`);
+                await this.delay(delay);
+            }
+        }
+    }
+    
+    // リトライ機能付きタブメッセージ送信
+    async sendTabMessageWithRetry(tabId, message, maxRetries = 3) {
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                console.log(`[YouTube Special Comments] [Popup] Sending tab message attempt ${attempt}/${maxRetries}:`, message.action);
+                
+                const response = await new Promise((resolve, reject) => {
+                    chrome.tabs.sendMessage(tabId, message, (response) => {
+                        if (chrome.runtime.lastError) {
+                            reject(new Error(chrome.runtime.lastError.message));
+                        } else {
+                            resolve(response);
+                        }
+                    });
+                });
+                
+                console.log(`[YouTube Special Comments] [Popup] ✅ Tab message successful on attempt ${attempt}`);
+                return response;
+                
+            } catch (error) {
+                console.warn(`[YouTube Special Comments] [Popup] Tab message failed on attempt ${attempt}:`, error.message);
+                
+                // Content Scriptが準備できていない可能性
+                if (error.message.includes('Could not establish connection')) {
+                    console.log('[YouTube Special Comments] [Popup] Content script not ready, waiting...');
+                    await this.delay(1000 * attempt); // 段階的に遅延を増加
+                }
+                
+                if (attempt === maxRetries) {
+                    throw error;
+                }
+            }
+        }
     }
     
 }

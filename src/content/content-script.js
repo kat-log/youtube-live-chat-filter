@@ -8,11 +8,147 @@ class YouTubeLiveChatMonitor {
     this.initRetryCount = 0;
     this.maxInitRetries = 10;
     this.currentVideoId = null;
+    this.serviceWorkerReady = false;
+    this.initializationDelayMs = 2000; // Service Worker初期化待機時間
     
     console.log('[YouTube Special Comments] Content script initialized');
+    
+    // Service Workerの初期化を待ってから開始
+    this.waitForServiceWorkerAndInit();
+  }
+  
+  // Service Worker初期化待機とContent Script初期化
+  async waitForServiceWorkerAndInit() {
+    console.log('[YouTube Special Comments] Waiting for service worker initialization...');
+    
+    // 診断情報をログ出力
+    this.logDiagnosticInfo();
+    
+    // Service Workerの準備を確認
+    const isReady = await this.waitForServiceWorker();
+    
+    if (isReady) {
+      console.log('[YouTube Special Comments] ✅ Service Worker ready, proceeding with initialization');
+    } else {
+      console.warn('[YouTube Special Comments] ⚠️ Service Worker not fully ready, but continuing...');
+    }
+    
+    // 初期化を実行
     this.init();
   }
   
+  // 診断情報をログ出力
+  logDiagnosticInfo() {
+    const diagnostics = {
+      timestamp: new Date().toISOString(),
+      contentScript: {
+        url: window.location.href,
+        userAgent: navigator.userAgent,
+        extensionId: chrome.runtime.id,
+        documentState: document.readyState,
+        videoIdFromURL: this.extractVideoId()
+      },
+      browser: {
+        chromeVersion: navigator.userAgent.match(/Chrome\/([0-9.]+)/)?.[1] || 'unknown',
+        platform: navigator.platform,
+        language: navigator.language
+      }
+    };
+    
+    console.log('[YouTube Special Comments] 🔍 Content Script Diagnostics:', diagnostics);
+    
+    // ページ固有の情報もログ
+    const youtubeInfo = this.getYouTubePageInfo();
+    if (youtubeInfo) {
+      console.log('[YouTube Special Comments] 📺 YouTube Page Info:', youtubeInfo);
+    }
+  }
+  
+  // YouTube ページ固有の診断情報を取得
+  getYouTubePageInfo() {
+    try {
+      const info = {
+        isWatchPage: this.isYouTubeLivePage(),
+        hasYouTubeMetadata: !!document.querySelector('meta[property="og:site_name"][content="YouTube"]'),
+        hasVideoPlayer: !!document.querySelector('#movie_player'),
+        hasChatFrame: !!document.querySelector('iframe[src*="live_chat"]'),
+        videoElements: document.querySelectorAll('video').length,
+        scriptElements: document.querySelectorAll('script').length
+      };
+      
+      // メタデータからビデオIDを取得試行
+      const metaOgUrl = document.querySelector('meta[property="og:url"]');
+      if (metaOgUrl) {
+        const metaUrl = metaOgUrl.getAttribute('content');
+        const videoIdMatch = metaUrl.match(/[?&]v=([^&]+)/);
+        info.metaVideoId = videoIdMatch ? videoIdMatch[1] : null;
+      }
+      
+      return info;
+    } catch (error) {
+      console.warn('[YouTube Special Comments] Failed to gather YouTube page info:', error);
+      return null;
+    }
+  }
+  
+  // Service Workerの準備状態を確認
+  async waitForServiceWorker(maxAttempts = 10, delayMs = 500) {
+    console.log('[YouTube Special Comments] Checking service worker readiness...');
+    
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        console.log(`[YouTube Special Comments] Service worker check attempt ${attempt}/${maxAttempts}`);
+        
+        // Service Workerにping送信
+        const response = await this.sendMessageWithTimeout({
+          action: 'ping'
+        }, 3000);
+        
+        if (response) {
+          console.log('[YouTube Special Comments] ✅ Service worker is ready');
+          this.serviceWorkerReady = true;
+          return true;
+        }
+      } catch (error) {
+        console.log(`[YouTube Special Comments] Service worker not ready (attempt ${attempt}): ${error.message}`);
+        
+        if (attempt < maxAttempts) {
+          // 指数バックオフでリトライ間隔を増加
+          const waitTime = delayMs * Math.pow(1.5, attempt - 1);
+          console.log(`[YouTube Special Comments] Waiting ${waitTime}ms before next attempt...`);
+          await this.delay(waitTime);
+        }
+      }
+    }
+    
+    console.warn('[YouTube Special Comments] ⚠️ Service worker readiness timeout, proceeding anyway');
+    return false;
+  }
+  
+  // タイムアウト付きメッセージ送信
+  async sendMessageWithTimeout(message, timeoutMs = 5000) {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error(`Message timeout after ${timeoutMs}ms`));
+      }, timeoutMs);
+      
+      chrome.runtime.sendMessage(message, (response) => {
+        clearTimeout(timeout);
+        
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+        } else {
+          resolve(response);
+        }
+      });
+    });
+  }
+  
+  // 遅延ユーティリティ
+  delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
   init() {
     this.setupMessageListener();
     
@@ -77,6 +213,19 @@ class YouTubeLiveChatMonitor {
     chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
       console.log('[Content Script] Received message:', request.action);
       
+      // Content Script生存確認用のping
+      if (request.action === 'ping') {
+        sendResponse({ 
+          success: true, 
+          timestamp: Date.now(),
+          url: window.location.href,
+          videoId: this.extractVideoId(),
+          serviceWorkerReady: this.serviceWorkerReady,
+          liveChatId: this.liveChatId
+        });
+        return true;
+      }
+      
       if (request.action === 'startMonitoring') {
         this.startBackgroundMonitoring();
         sendResponse({ success: true });
@@ -107,7 +256,7 @@ class YouTubeLiveChatMonitor {
   async startBackgroundMonitoring() {
     // APIキーの事前チェック
     try {
-      const apiKeyResponse = await chrome.runtime.sendMessage({ action: 'getApiKey' });
+      const apiKeyResponse = await this.sendMessageWithRetry({ action: 'getApiKey' }, 2);
       if (!apiKeyResponse || !apiKeyResponse.apiKey) {
         console.error('[Content Script] API key not configured');
         throw new Error('YouTube Data API key is not configured. Please set it in the extension options.');
@@ -133,18 +282,18 @@ class YouTubeLiveChatMonitor {
     console.log('[Content Script] Starting background monitoring with liveChatId:', this.liveChatId);
     
     try {
-      const response = await chrome.runtime.sendMessage({
+      const response = await this.sendMessageWithRetry({
         action: 'startBackgroundMonitoring',
         liveChatId: this.liveChatId,
         videoId: this.currentVideoId
-      });
+      }, 3);
       
-      if (response.success) {
+      if (response && response.success) {
         this.isMonitoring = true;
         console.log('[Content Script] Background monitoring started');
       } else {
-        console.error('[Content Script] Failed to start background monitoring:', response.error);
-        throw new Error(response.error || 'Failed to start monitoring');
+        console.error('[Content Script] Failed to start background monitoring:', response?.error || 'Unknown error');
+        throw new Error(response?.error || 'Failed to start monitoring');
       }
     } catch (error) {
       console.error('[Content Script] Error starting background monitoring:', error);
@@ -156,15 +305,15 @@ class YouTubeLiveChatMonitor {
     console.log('[Content Script] Stopping background monitoring');
     
     try {
-      const response = await chrome.runtime.sendMessage({
+      const response = await this.sendMessageWithRetry({
         action: 'stopBackgroundMonitoring'
-      });
+      }, 3);
       
-      if (response.success) {
+      if (response && response.success) {
         this.isMonitoring = false;
         console.log('[Content Script] Background monitoring stopped');
       } else {
-        console.error('[Content Script] Failed to stop background monitoring:', response.error);
+        console.error('[Content Script] Failed to stop background monitoring:', response?.error || 'Unknown error');
       }
     } catch (error) {
       console.error('[Content Script] Error stopping background monitoring:', error);
@@ -292,10 +441,10 @@ YouTubeLiveChatMonitor.prototype.extractVideoId = function() {
 
 YouTubeLiveChatMonitor.prototype.getLiveChatIdFromVideoId = async function(videoId) {
   try {
-    const response = await chrome.runtime.sendMessage({
+    const response = await this.sendMessageWithRetry({
       action: 'getLiveChatIdFromVideo',
       videoId: videoId
-    });
+    }, 3);
     
     if (response && response.liveChatId) {
       this.liveChatId = response.liveChatId;
@@ -307,6 +456,52 @@ YouTubeLiveChatMonitor.prototype.getLiveChatIdFromVideoId = async function(video
   } catch (error) {
     console.error('[YouTube Special Comments] API error:', error.message);
     return false;
+  }
+};
+
+// リトライ機能付きメッセージ送信
+YouTubeLiveChatMonitor.prototype.sendMessageWithRetry = async function(message, maxRetries = 3, baseDelay = 1000) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`[YouTube Special Comments] Sending message attempt ${attempt}/${maxRetries}:`, message.action);
+      
+      const response = await this.sendMessageWithTimeout(message, 5000);
+      console.log(`[YouTube Special Comments] ✅ Message successful on attempt ${attempt}`);
+      return response;
+      
+    } catch (error) {
+      console.warn(`[YouTube Special Comments] Message failed on attempt ${attempt}:`, error.message);
+      
+      // Extension context invalidated の場合は特別処理
+      if (error.message.includes('Extension context invalidated')) {
+        console.error('[YouTube Special Comments] 🔄 Extension context invalidated - attempting recovery');
+        
+        // Service Worker再接続を試行
+        await this.delay(1000);
+        const recovered = await this.waitForServiceWorker(5, 1000);
+        
+        if (!recovered && attempt === maxRetries) {
+          throw new Error('Extension context invalidated and recovery failed. Please reload the page.');
+        }
+        continue;
+      }
+      
+      // "Could not establish connection" の場合も再接続試行
+      if (error.message.includes('Could not establish connection')) {
+        console.warn('[YouTube Special Comments] 🔄 Connection lost - attempting recovery');
+        await this.delay(1000);
+        await this.waitForServiceWorker(3, 1000);
+      }
+      
+      if (attempt === maxRetries) {
+        throw error;
+      }
+      
+      // 指数バックオフで待機
+      const delay = baseDelay * Math.pow(2, attempt - 1);
+      console.log(`[YouTube Special Comments] Waiting ${delay}ms before retry...`);
+      await this.delay(delay);
+    }
   }
 };
 

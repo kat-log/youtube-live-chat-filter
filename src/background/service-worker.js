@@ -228,8 +228,11 @@ initializeServiceWorker();
 // タブ監視機能を設定
 setupTabMonitoring();
 
-chrome.runtime.onInstalled.addListener(async () => {
-  console.log('[Background] YouTube Special Comments Filter installed');
+chrome.runtime.onInstalled.addListener(async (details) => {
+  console.log('[Background] YouTube Special Comments Filter installed/updated, reason:', details.reason);
+  
+  // 自動Content Script再注入を実行
+  await reinjectContentScripts(details.reason);
   
   // ストレージから既存の履歴を復元
   const result = await chrome.storage.local.get(['commentsHistory']);
@@ -248,8 +251,151 @@ chrome.runtime.onInstalled.addListener(async () => {
   });
 });
 
+// Content Script自動再注入機能
+async function reinjectContentScripts(reason) {
+  console.log('[Background] 🔄 Starting content script re-injection for reason:', reason);
+  
+  try {
+    // manifest.jsonからcontent_scriptsを取得
+    const manifest = chrome.runtime.getManifest();
+    const contentScripts = manifest.content_scripts || [];
+    
+    if (contentScripts.length === 0) {
+      console.warn('[Background] No content scripts found in manifest');
+      return;
+    }
+    
+    let injectedTabsCount = 0;
+    let totalTabsChecked = 0;
+    
+    for (const cs of contentScripts) {
+      console.log('[Background] Processing content script with matches:', cs.matches);
+      
+      // 対象URLにマッチするタブを取得
+      const tabs = await chrome.tabs.query({ url: cs.matches });
+      totalTabsChecked += tabs.length;
+      
+      console.log('[Background] Found', tabs.length, 'tabs matching', cs.matches);
+      
+      for (const tab of tabs) {
+        try {
+          // chrome:// や chrome-extension:// URLはスキップ
+          if (tab.url.match(/(chrome|chrome-extension|chrome-devtools):\/\//gi)) {
+            console.log('[Background] Skipping system tab:', tab.url);
+            continue;
+          }
+          
+          // タブの読み込み状態を確認
+          if (tab.status !== 'complete') {
+            console.log('[Background] Skipping incomplete tab:', tab.url);
+            continue;
+          }
+          
+          const target = {
+            tabId: tab.id,
+            allFrames: cs.all_frames || false
+          };
+          
+          // JavaScriptファイルを注入
+          if (cs.js && cs.js.length > 0) {
+            console.log('[Background] Injecting JS files into tab:', tab.id, 'URL:', tab.url);
+            await chrome.scripting.executeScript({
+              files: cs.js,
+              target,
+              injectImmediately: cs.run_at === 'document_start',
+              world: cs.world || 'ISOLATED'
+            });
+            console.log('[Background] ✅ Successfully injected JS files into tab:', tab.id);
+          }
+          
+          // CSSファイルを注入
+          if (cs.css && cs.css.length > 0) {
+            console.log('[Background] Injecting CSS files into tab:', tab.id);
+            await chrome.scripting.insertCSS({
+              files: cs.css,
+              target,
+              origin: cs.origin || 'AUTHOR'
+            });
+            console.log('[Background] ✅ Successfully injected CSS files into tab:', tab.id);
+          }
+          
+          injectedTabsCount++;
+          
+          // 小さな遅延を入れて負荷を分散
+          await new Promise(resolve => setTimeout(resolve, 50));
+          
+        } catch (error) {
+          console.warn('[Background] ⚠️ Failed to inject into tab', tab.id, ':', error.message);
+          
+          // 権限エラーの場合はログに記録
+          if (error.message.includes('Cannot access contents')) {
+            console.log('[Background] Permission denied for tab:', tab.url);
+          }
+        }
+      }
+    }
+    
+    console.log('[Background] ✅ Content script re-injection completed');
+    console.log(`[Background] 📊 Stats: ${injectedTabsCount} successful injections out of ${totalTabsChecked} tabs`);
+    
+    // 注入結果をストレージに保存（診断用）
+    await chrome.storage.local.set({
+      lastInjectionResult: {
+        timestamp: Date.now(),
+        reason,
+        injectedTabs: injectedTabsCount,
+        totalTabs: totalTabsChecked,
+        success: true
+      }
+    });
+    
+  } catch (error) {
+    console.error('[Background] ❌ Content script re-injection failed:', error);
+    
+    // エラー情報をストレージに保存
+    await chrome.storage.local.set({
+      lastInjectionResult: {
+        timestamp: Date.now(),
+        reason,
+        error: error.message,
+        success: false
+      }
+    });
+  }
+}
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log('[Background] Received message:', request.action);
+  
+  // Service Worker生存確認用のping
+  if (request.action === 'ping') {
+    sendResponse({ success: true, timestamp: Date.now() });
+    return true;
+  }
+  
+  // 診断情報を取得
+  if (request.action === 'getDiagnostics') {
+    getDiagnosticsInfo()
+      .then(response => sendResponse(response))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+  
+  // 手動Content Script再注入
+  if (request.action === 'reinjectContentScripts') {
+    reinjectContentScripts('manual')
+      .then(() => sendResponse({ success: true }))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+  
+  // 最後の注入結果を取得
+  if (request.action === 'getLastInjectionResult') {
+    chrome.storage.local.get(['lastInjectionResult'], (result) => {
+      sendResponse(result.lastInjectionResult || null);
+    });
+    return true;
+  }
   
   if (request.action === 'getApiKey') {
     chrome.storage.local.get(['youtubeApiKey'], (result) => {
@@ -953,5 +1099,76 @@ async function autoStopMonitoring(reason) {
   } catch (error) {
     console.error('[Background] Error during auto-stop:', error);
     return { success: false, error: error.message };
+  }
+}
+
+// 診断情報取得機能
+async function getDiagnosticsInfo() {
+  console.log('[Background] Generating diagnostics information');
+  
+  try {
+    const diagnostics = {
+      timestamp: new Date().toISOString(),
+      serviceWorker: {
+        isActive: true,
+        startTime: Date.now(),
+        version: chrome.runtime.getManifest().version
+      },
+      monitoring: {
+        isMonitoring: monitoringState.isMonitoring,
+        liveChatId: monitoringState.liveChatId ? 'present' : 'missing',
+        currentVideoId: monitoringState.currentVideoId || 'none',
+        commentsCount: monitoringState.commentsHistory.length,
+        tabId: monitoringState.tabId || 'none'
+      },
+      storage: {
+        hasApiKey: false,
+        commentFiltersCount: Object.keys(monitoringState.commentFilters).length
+      },
+      performance: {
+        processedMessagesCount: monitoringState.processedMessageIds.size
+      }
+    };
+    
+    // APIキーの存在確認
+    try {
+      const storageResult = await chrome.storage.local.get(['youtubeApiKey']);
+      diagnostics.storage.hasApiKey = !!(storageResult.youtubeApiKey);
+    } catch (error) {
+      console.error('[Background] Error checking API key:', error);
+      diagnostics.storage.hasApiKey = 'error';
+    }
+    
+    // ストレージ使用量確認
+    try {
+      const storageData = await chrome.storage.local.get();
+      const historyKeys = Object.keys(storageData).filter(key => key.startsWith('commentsHistory_'));
+      diagnostics.storage.historyEntriesCount = historyKeys.length;
+      
+      let totalComments = 0;
+      for (const key of historyKeys) {
+        const comments = storageData[key] || [];
+        totalComments += comments.length;
+      }
+      diagnostics.storage.totalStoredComments = totalComments;
+    } catch (error) {
+      console.error('[Background] Error checking storage:', error);
+      diagnostics.storage.historyEntriesCount = 'error';
+    }
+    
+    console.log('[Background] Diagnostics generated:', diagnostics);
+    return { success: true, diagnostics };
+    
+  } catch (error) {
+    console.error('[Background] Error generating diagnostics:', error);
+    return { 
+      success: false, 
+      error: error.message,
+      basicInfo: {
+        timestamp: new Date().toISOString(),
+        serviceWorkerActive: true,
+        monitoringState: monitoringState.isMonitoring
+      }
+    };
   }
 }
