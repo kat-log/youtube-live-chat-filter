@@ -762,9 +762,9 @@ function startPollingLoop() {
           // コメント履歴に追加
           monitoringState.commentsHistory.push(...newComments);
           
-          // 履歴サイズを制限（1000件まで）
-          if (monitoringState.commentsHistory.length > 1000) {
-            monitoringState.commentsHistory = monitoringState.commentsHistory.slice(-1000);
+          // 履歴サイズを制限（10000件まで）
+          if (monitoringState.commentsHistory.length > 10000) {
+            monitoringState.commentsHistory = monitoringState.commentsHistory.slice(-10000);
           }
           
           // 履歴を永続化（即座にかつ定期的に）

@@ -362,8 +362,8 @@ class YouTubeLiveChatMonitor {
     
     this.specialComments.push(...newComments);
     
-    if (this.specialComments.length > 1000) {
-      this.specialComments = this.specialComments.slice(-1000);
+    if (this.specialComments.length > 10000) {
+      this.specialComments = this.specialComments.slice(-10000);
     }
     
     // popupに通知（開いている場合）
