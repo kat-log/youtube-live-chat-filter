@@ -494,6 +494,7 @@ class PopupController {
             loading: document.getElementById('loading'),
             errorMessage: document.getElementById('error-message'),
             successMessage: document.getElementById('success-overlay'),
+            errorOverlay: document.getElementById('error-overlay'),
             currentVideoId: document.getElementById('current-video-id'),
             
             // 詳細エラー表示要素
@@ -567,7 +568,7 @@ class PopupController {
     async saveApiKey() {
         const apiKey = this.elements.apiKeyInput.value.trim();
         if (!apiKey) {
-            this.showError('APIキーを入力してください');
+            this.showMessage('APIキーを入力してください', 'error');
             return;
         }
         
@@ -1102,6 +1103,19 @@ class PopupController {
                     this.elements.successMessage.style.animation = '';
                 }, 300);
             }, 2000);
+        } else if (type === 'error') {
+            this.elements.errorOverlay.textContent = message;
+            this.elements.errorOverlay.style.display = 'flex';
+            this.elements.errorOverlay.style.animation = 'slideInFromTop 0.3s ease-out';
+            
+            // 3秒後に自動的に非表示（エラーメッセージは少し長めに表示）
+            setTimeout(() => {
+                this.elements.errorOverlay.style.animation = 'fadeOutUp 0.3s ease-out';
+                setTimeout(() => {
+                    this.elements.errorOverlay.style.display = 'none';
+                    this.elements.errorOverlay.style.animation = '';
+                }, 300);
+            }, 3000);
         }
     }
     
