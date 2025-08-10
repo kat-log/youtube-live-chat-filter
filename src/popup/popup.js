@@ -642,7 +642,7 @@ class PopupController {
                 this.updateMonitoringButtonStates();
                 
                 if (this.isMonitoring) {
-                    this.updateStatus('取得中 (バックグラウンド)');
+                    this.updateStatus('取得中');
                 } else {
                     this.updateStatus('停止済み');
                 }
@@ -838,7 +838,7 @@ class PopupController {
             if (response && response.success) {
                 this.isMonitoring = true;
                 this.updateMonitoringButtonStates();
-                this.updateStatus('取得中 (バックグラウンド)');
+                this.updateStatus('取得中');
                 this.showError('');
             } else {
                 this.showError('取得を開始できませんでした。ライブチャットが見つからない可能性があります。');
