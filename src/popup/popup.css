@@ -595,6 +595,10 @@ body {
     display: flex;
     align-items: center;
     gap: 8px;
+    min-width: 280px;
+    max-width: 360px;
+    justify-content: center;
+    white-space: nowrap;
 }
 
 .error-overlay::before {
