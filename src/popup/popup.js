@@ -1221,7 +1221,7 @@ class PopupController {
         this.elements.normalToggle.checked = this.commentFilters.normal;
         
         this.updatePresetButtons();
-        this.renderComments(true); // フィルターが変更されたら再描画（トップにスクロール）
+        this.renderComments(false, true); // フィルターが変更されたら再描画（一番下にスクロール）
     }
     
     updatePresetButtons() {
@@ -1255,7 +1255,7 @@ class PopupController {
             }, 2);
             
             this.updatePresetButtons();
-            this.renderComments(true); // フィルターが変更されたら再描画（トップにスクロール）
+            this.renderComments(false, true); // フィルターが変更されたら再描画（一番下にスクロール）
             
         } catch (error) {
             console.error('[YouTube Special Comments] Error saving comment filters:', error);
