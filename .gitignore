@@ -38,3 +38,8 @@ build/
 # Temporary files
 *.tmp
 temp/
+
+# Archive files
+*.zip
+*.tar.gz
+*.rar
