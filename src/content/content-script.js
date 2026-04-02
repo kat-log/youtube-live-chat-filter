@@ -543,23 +543,6 @@ YouTubeLiveChatMonitor.prototype.sendMessageWithRetry = async function(message, 
 
 // Page Visibility APIによる可視性監視
 YouTubeLiveChatMonitor.prototype.setupVisibilityMonitoring = function() {
-  // ページの可視性が変わった時の処理
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden' && this.isMonitoring) {
-      debugLog('[YouTube Special Comments] Page became hidden, requesting auto-stop');
-      // background scriptに自動停止を要求
-      chrome.runtime.sendMessage({
-        action: 'requestAutoStop',
-        reason: 'ページが非表示になりました'
-      }).catch(error => {
-        debugLog('[YouTube Special Comments] Failed to request auto-stop:', error.message);
-      });
-    } else if (document.visibilityState === 'visible') {
-      debugLog('[YouTube Special Comments] Page became visible');
-      // ここで必要に応じて監視状態を確認・復元
-    }
-  });
-  
   // ページアンロード時の処理
   window.addEventListener('beforeunload', () => {
     if (this.isMonitoring) {

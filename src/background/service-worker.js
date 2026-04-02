@@ -1096,26 +1096,6 @@ async function getCommentsHistory(videoId = null) {
 function setupTabMonitoring() {
   debugLog('[Background] Setting up tab monitoring for auto-stop');
   
-  // タブが切り替わった時
-  chrome.tabs.onActivated.addListener(async (activeInfo) => {
-    if (monitoringState.isMonitoring && monitoringState.tabId && 
-        monitoringState.tabId !== activeInfo.tabId) {
-      debugLog('[Background] YouTube tab became inactive, auto-stopping monitoring');
-      await autoStopMonitoring('YouTubeタブが非アクティブになりました');
-    }
-  });
-  
-  // ウィンドウフォーカスが変わった時
-  chrome.windows.onFocusChanged.addListener(async (windowId) => {
-    if (windowId === chrome.windows.WINDOW_ID_NONE) {
-      // ブラウザからフォーカスが離れた
-      if (monitoringState.isMonitoring) {
-        debugLog('[Background] Browser window lost focus, auto-stopping monitoring');
-        await autoStopMonitoring('ブラウザがバックグラウンドになりました');
-      }
-    }
-  });
-  
   // タブが閉じられた時
   chrome.tabs.onRemoved.addListener(async (tabId) => {
     if (monitoringState.isMonitoring && monitoringState.tabId === tabId) {
