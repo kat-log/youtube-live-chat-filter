@@ -264,8 +264,17 @@ class YouTubeLiveChatMonitor {
       }
       
       if (request.action === 'startMonitoring') {
-        this.startBackgroundMonitoring();
-        sendResponse({ success: true });
+        if (request.chatMode === 'dom') {
+          chrome.runtime.sendMessage(
+            { action: 'startDomMonitoring', videoId: this.currentVideoId },
+            r => sendResponse(r)
+          );
+        } else {
+          this.startBackgroundMonitoring()
+            .then(r => sendResponse(r))
+            .catch(e => sendResponse({ success: false, error: e.message }));
+        }
+        return true;
       } else if (request.action === 'stopMonitoring') {
         this.stopBackgroundMonitoring();
         sendResponse({ success: true });
