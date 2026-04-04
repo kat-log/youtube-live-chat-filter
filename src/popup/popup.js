@@ -1018,7 +1018,23 @@ class PopupController {
         }
     }
     
-    clearComments() {
+    async clearComments() {
+        try {
+            await this.sendMessageWithRetry({
+                action: 'clearCommentsHistory',
+                videoId: this.currentVideoId
+            }, 2);
+        } catch (e) {
+            console.warn('[Popup] Failed to clear storage history:', e);
+        }
+        // content script のキャッシュもクリア
+        try {
+            await this.sendTabMessageWithRetry(this.currentTab.id, {
+                action: 'clearSpecialComments'
+            }, 1);
+        } catch (e) {
+            // content script が存在しない場合は無視
+        }
         this.comments = [];
         this.renderComments(true); // コメントクリア時はトップにスクロール
     }
