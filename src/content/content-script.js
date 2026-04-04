@@ -288,6 +288,9 @@ class YouTubeLiveChatMonitor {
       } else if (request.action === 'newSpecialComments') {
         // background scriptからの新しいコメント通知
         this.addNewComments(request.comments);
+      } else if (request.action === 'clearSpecialComments') {
+        this.specialComments = [];
+        sendResponse({ success: true });
       } else if (request.action === 'getLiveChatId') {
         // popupからlive chat IDを要求された場合
         if (!this.liveChatId) {
@@ -439,6 +442,7 @@ YouTubeLiveChatMonitor.prototype.observePageChanges = function() {
       this.liveChatId = null;
       this.currentVideoId = null;
       this.initRetryCount = 0;
+      this.specialComments = [];
       
       // 新しいページをチェック
       setTimeout(() => {

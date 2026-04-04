@@ -543,6 +543,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
   
+  if (request.action === 'clearCommentsHistory') {
+    (async () => {
+      const videoId = request.videoId || monitoringState.currentVideoId;
+      if (videoId) {
+        const storageKey = `commentsHistory_${videoId}`;
+        await chrome.storage.local.remove(storageKey);
+      }
+      if (!request.videoId || request.videoId === monitoringState.currentVideoId) {
+        monitoringState.commentsHistory = [];
+      }
+      sendResponse({ success: true });
+    })().catch(error => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
   if (request.action === 'getMonitoringVideoId') {
     sendResponse({ 
       success: true, 
