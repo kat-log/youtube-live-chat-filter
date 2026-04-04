@@ -5,7 +5,9 @@
       "WebFetch(domain:developers.google.com)",
       "WebSearch",
       "WebFetch(domain:stackoverflow.com)",
-      "Bash(rsvg-convert:*)"
+      "Bash(rsvg-convert:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ],
     "deny": []
   }

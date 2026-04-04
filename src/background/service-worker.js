@@ -201,7 +201,8 @@ let monitoringState = {
     normal: true
   },
   commentsHistory: [], // 現在監視中のVideo IDの履歴
-  currentVideoId: null
+  currentVideoId: null,
+  chatMode: 'api' // 'api' | 'dom'
 };
 
 // コメント履歴をストレージに保存（Video ID別）
@@ -556,6 +557,19 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       .catch(error => sendResponse({ success: false, error: error.message }));
     return true;
   }
+
+  if (request.action === 'startDomMonitoring') {
+    startDomMonitoring(sender.tab?.id || request.tabId, request.videoId)
+      .then(r => sendResponse(r))
+      .catch(e => sendResponse({ success: false, error: e.message }));
+    return true;
+  }
+
+  if (request.action === 'domChatMessages') {
+    handleDomChatMessages(request.messages);
+    sendResponse({ success: true });
+    return true;
+  }
 });
 
 async function fetchLiveChatMessages(liveChatId, pageToken = null) {
@@ -709,9 +723,10 @@ async function startBackgroundMonitoring(liveChatId, tabId, videoId) {
 // Backgroundでの監視停止
 async function stopBackgroundMonitoring() {
   debugLog('[Background] Stopping background monitoring');
-  
+
   monitoringState.isMonitoring = false;
-  
+  monitoringState.chatMode = 'api';
+
   if (monitoringState.pollingInterval) {
     clearTimeout(monitoringState.pollingInterval);
     monitoringState.pollingInterval = null;
@@ -752,7 +767,8 @@ async function getMonitoringState() {
     isMonitoring: monitoringState.isMonitoring || savedState.isMonitoring,
     liveChatId: monitoringState.liveChatId || savedState.liveChatId,
     tabId: monitoringState.tabId || savedState.tabId,
-    currentVideoId: monitoringState.currentVideoId
+    currentVideoId: monitoringState.currentVideoId,
+    chatMode: monitoringState.chatMode || 'api'
   };
 }
 
@@ -855,6 +871,96 @@ function startPollingLoop() {
     });
 }
 
+// DOM モードでの監視開始
+async function startDomMonitoring(tabId, videoId) {
+  debugLog('[Background] Starting DOM monitoring for videoId:', videoId, 'tabId:', tabId);
+
+  if (monitoringState.isMonitoring) {
+    debugLog('[Background] Already monitoring, stopping previous session');
+    await stopBackgroundMonitoring();
+  }
+
+  // Video ID が同じ場合は既存履歴を保持
+  let existingHistory = [];
+  if (videoId && videoId === monitoringState.currentVideoId) {
+    existingHistory = monitoringState.commentsHistory || [];
+  } else if (videoId) {
+    try {
+      const storageKey = `commentsHistory_${videoId}`;
+      const result = await chrome.storage.local.get([storageKey]);
+      existingHistory = result[storageKey] || [];
+    } catch (error) {
+      debugError('[Background] Failed to load existing history:', error);
+    }
+  }
+
+  const currentFilters = monitoringState.commentFilters || {
+    owner: true,
+    moderator: true,
+    sponsor: true,
+    normal: true
+  };
+
+  monitoringState = {
+    isMonitoring: true,
+    liveChatId: null,
+    pageToken: null,
+    tabId: tabId,
+    pollingInterval: null,
+    processedMessageIds: new Set(),
+    commentFilters: currentFilters,
+    commentsHistory: existingHistory,
+    currentVideoId: videoId,
+    chatMode: 'dom'
+  };
+
+  await chrome.storage.local.set({
+    monitoringState: {
+      isMonitoring: true,
+      liveChatId: null,
+      tabId: tabId
+    }
+  });
+
+  updateBadge(true);
+  return { success: true };
+}
+
+// DOM モードのメッセージ処理
+function handleDomChatMessages(messages) {
+  if (!monitoringState.isMonitoring || monitoringState.chatMode !== 'dom') return;
+
+  const filters = monitoringState.commentFilters;
+  const newMessages = messages.filter(msg => {
+    if (monitoringState.processedMessageIds.has(msg.id)) return false;
+    monitoringState.processedMessageIds.add(msg.id);
+    if (msg.role === 'owner')     return filters.owner;
+    if (msg.role === 'moderator') return filters.moderator;
+    if (msg.role === 'member')    return filters.sponsor;
+    return filters.normal;
+  });
+
+  if (!newMessages.length) return;
+
+  monitoringState.commentsHistory.push(...newMessages);
+  if (monitoringState.commentsHistory.length > 10000)
+    monitoringState.commentsHistory = monitoringState.commentsHistory.slice(-10000);
+  if (monitoringState.processedMessageIds.size > 1000) {
+    const arr = Array.from(monitoringState.processedMessageIds);
+    monitoringState.processedMessageIds = new Set(arr.slice(-500));
+  }
+
+  saveCommentsHistory();
+
+  chrome.runtime.sendMessage({ action: 'newSpecialComments', comments: newMessages }).catch(() => {});
+  if (monitoringState.tabId) {
+    chrome.tabs.sendMessage(monitoringState.tabId, {
+      action: 'newSpecialComments',
+      comments: newMessages
+    }).catch(() => {});
+  }
+}
+
 // サービスワーカーのライフサイクル管理
 chrome.runtime.onStartup.addListener(async () => {
   debugLog('[Background] Extension startup');
@@ -922,10 +1028,15 @@ chrome.runtime.onSuspendCanceled.addListener(() => {
 // Video IDからLive Chat IDを取得
 async function getLiveChatIdFromVideo(videoId) {
   try {
-    const result = await chrome.storage.local.get(['youtubeApiKey']);
+    const result = await chrome.storage.local.get(['youtubeApiKey', 'chatMode']);
     const apiKey = result.youtubeApiKey;
-    
+
+    // DOMモードではAPIキー不要なのでスキップ
     if (!apiKey) {
+      if (result.chatMode === 'dom' || monitoringState.chatMode === 'dom') {
+        debugLog('[Background] DOM mode: skipping API key check for getLiveChatIdFromVideo');
+        return { liveChatId: null };
+      }
       throw new Error('API key not found');
     }
     

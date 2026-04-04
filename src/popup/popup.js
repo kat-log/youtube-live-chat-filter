@@ -56,6 +56,9 @@ class PopupController {
         // キーワード検索フィルタリング用の状態
         this.searchKeyword = '';
         this._searchDebounceTimer = null;
+
+        // 取得モード
+        this.chatMode = 'api';
         
         debugLog('[YouTube Special Comments] Popup controller starting...');
         this.initializeElements();
@@ -125,6 +128,7 @@ class PopupController {
         await Promise.all([
             this.loadSavedApiKey(),
             this.loadCommentFilters(),
+            this.loadChatMode(),
             this.checkCurrentTab()
         ]);
         
@@ -519,7 +523,12 @@ class PopupController {
             searchFilterBar: document.getElementById('search-filter-bar'),
             searchKeywordInput: document.getElementById('search-keyword-input'),
             clearSearchBtn: document.getElementById('clear-search-btn'),
-            searchMatchCount: document.getElementById('search-match-count')
+            searchMatchCount: document.getElementById('search-match-count'),
+
+            // モード選択
+            chatModeToggle: document.getElementById('chat-mode-toggle'),
+            domModeHelp: document.getElementById('dom-mode-help'),
+            apiKeySection: document.getElementById('api-key-section')
         };
     }
     
@@ -557,6 +566,9 @@ class PopupController {
         // キーワード検索関連のイベント
         this.elements.searchKeywordInput.addEventListener('input', () => this.onSearchInput());
         this.elements.clearSearchBtn.addEventListener('click', () => this.clearSearch());
+
+        // モード切替
+        this.elements.chatModeToggle.addEventListener('change', () => this.onChatModeChange());
     }
     
     setupMessageListener() {
@@ -567,11 +579,62 @@ class PopupController {
             } else if (request.action === 'monitoringAutoStopped') {
                 this.handleAutoStop(request.reason);
             } else if (request.action === 'showDetailedError') {
+                // DOMモードではAPIキー関連エラーを表示しない
+                if (this.chatMode === 'dom' && request.errorInfo?.action === 'setApiKey') {
+                    return;
+                }
                 this.showDetailedError(request.errorInfo);
             }
         });
     }
     
+    async loadChatMode() {
+        try {
+            const result = await chrome.storage.local.get(['chatMode']);
+            this.chatMode = result.chatMode || 'api';
+            this.updateChatModeUI();
+            this.updateMonitoringButtonStates();
+            // DOMモードで開いた場合はAPIキー関連エラーを消去
+            if (this.chatMode === 'dom') {
+                this.hideDetailedError();
+                this.showError('');
+            }
+        } catch (error) {
+            console.error('[YouTube Special Comments] Error loading chat mode:', error);
+        }
+    }
+
+    updateChatModeUI() {
+        if (this.elements.chatModeToggle) {
+            this.elements.chatModeToggle.value = this.chatMode;
+        }
+        const isDom = this.chatMode === 'dom';
+        if (this.elements.domModeHelp) {
+            this.elements.domModeHelp.style.display = isDom ? 'block' : 'none';
+        }
+        if (this.elements.apiKeySection) {
+            this.elements.apiKeySection.style.display = isDom ? 'none' : 'block';
+        }
+    }
+
+    async onChatModeChange() {
+        if (this.isMonitoring) {
+            this.showMessage('取得中はモードを切り替えられません。取得を停止してから変更してください。', 'error');
+            // トグルを元の値に戻す
+            this.elements.chatModeToggle.value = this.chatMode;
+            return;
+        }
+        this.chatMode = this.elements.chatModeToggle.value;
+        await chrome.storage.local.set({ chatMode: this.chatMode });
+        this.updateChatModeUI();
+        this.updateMonitoringButtonStates();
+        // DOMモードに切り替えた場合はAPIキー関連エラーを消去
+        if (this.chatMode === 'dom') {
+            this.hideDetailedError();
+            this.showError('');
+        }
+    }
+
     async loadSavedApiKey() {
         try {
             const response = await this.sendMessageWithRetry({ action: 'getApiKey' }, 3);
@@ -651,10 +714,16 @@ class PopupController {
             // Step 3: 監視状態を更新
             if (monitoringState.success) {
                 this.isMonitoring = monitoringState.isMonitoring;
+                // chatMode は監視中の場合のみバックグラウンドと同期する
+                // （非監視時は chrome.storage.local の値を優先する）
+                if (monitoringState.isMonitoring && monitoringState.chatMode) {
+                    this.chatMode = monitoringState.chatMode;
+                    this.updateChatModeUI();
+                }
                 this.updateMonitoringButtonStates();
-                
+
                 if (this.isMonitoring) {
-                    this.updateStatus('取得中');
+                    this.updateStatus(this.chatMode === 'dom' ? '取得中（DOMモード）' : '取得中');
                 } else {
                     this.updateStatus('停止済み');
                 }
@@ -827,6 +896,26 @@ class PopupController {
         this.showError(''); // エラーメッセージをクリア
         
         try {
+            if (this.chatMode === 'dom') {
+                // DOM モード：APIキーチェック不要、直接 background へ委譲
+                const response = await this.sendTabMessageWithRetry(this.currentTab.id, {
+                    action: 'startMonitoring',
+                    chatMode: 'dom'
+                }, 3);
+
+                console.log('[YouTube Special Comments] Start DOM monitoring response:', response);
+
+                if (response && response.success) {
+                    this.isMonitoring = true;
+                    this.updateMonitoringButtonStates();
+                    this.updateStatus('取得中（DOMモード）');
+                    this.showError('');
+                } else {
+                    this.showError('DOMモードでの取得開始に失敗しました。');
+                }
+                return;
+            }
+
             // APIキーの存在確認
             const apiKeyResponse = await this.sendMessageWithRetry({ action: 'getApiKey' }, 2);
             if (!apiKeyResponse || !apiKeyResponse.apiKey) {
@@ -838,9 +927,9 @@ class PopupController {
             const testResponse = await this.sendTabMessageWithRetry(this.currentTab.id, {
                 action: 'getSpecialComments'
             }, 3);
-            
+
             console.log('[YouTube Special Comments] Content script test response:', testResponse);
-            
+
             const response = await this.sendTabMessageWithRetry(this.currentTab.id, {
                 action: 'startMonitoring'
             }, 3);
@@ -945,12 +1034,30 @@ class PopupController {
     }
     
     formatComment(comment) {
+        // DOM モード：authorDetails がなく role/displayName/message を持つ
+        if (comment.role && comment.displayName && comment.message && !comment.authorDetails) {
+            const map = {
+                owner:     ['配信者',     'role-owner'],
+                moderator: ['モデレーター', 'role-moderator'],
+                member:    ['メンバー',    'role-sponsor']
+            };
+            const [role, roleClass] = map[comment.role] || ['一般', 'role-normal'];
+            return {
+                role,
+                roleClass,
+                displayName: comment.displayName,
+                message: comment.message,
+                timestamp: new Date(comment.publishedAt).toLocaleTimeString('ja-JP'),
+                profileImageUrl: null
+            };
+        }
+
         const authorDetails = comment.authorDetails;
         const snippet = comment.snippet;
-        
+
         let role = '';
         let roleClass = '';
-        
+
         if (authorDetails.isChatOwner) {
             role = '配信者';
             roleClass = 'role-owner';
@@ -1128,9 +1235,11 @@ class PopupController {
     
     updateMonitoringButtons(hasApiKey) {
         const isYouTubePage = this.currentTab && this.currentTab.url && this.currentTab.url.includes('youtube.com/watch');
-        
+        // DOMモードはAPIキー不要
+        const effectiveHasApiKey = this.chatMode === 'dom' ? true : hasApiKey;
+
         // 監視開始ボタンの状態とツールチップ
-        if (!hasApiKey) {
+        if (!effectiveHasApiKey) {
             this.elements.startMonitoringBtn.disabled = true;
             this.elements.startMonitoringBtn.title = 'APIキーを入力してください';
         } else if (!isYouTubePage) {
@@ -1152,13 +1261,18 @@ class PopupController {
             this.elements.startMonitoringBtn.title = '取得中です';
         } else {
             // 監視していない場合は通常のボタン状態ロジックを適用
-            // まずAPIキーを確認
-            this.sendMessageWithRetry({ action: 'getApiKey' }, 1).then(response => {
-                const hasApiKey = response && response.apiKey;
-                this.updateMonitoringButtons(hasApiKey);
-            }).catch(() => {
-                this.updateMonitoringButtons(false);
-            });
+            if (this.chatMode === 'dom') {
+                // DOMモードはAPIキー不要
+                this.updateMonitoringButtons(true);
+            } else {
+                // まずAPIキーを確認
+                this.sendMessageWithRetry({ action: 'getApiKey' }, 1).then(response => {
+                    const hasApiKey = response && response.apiKey;
+                    this.updateMonitoringButtons(hasApiKey);
+                }).catch(() => {
+                    this.updateMonitoringButtons(false);
+                });
+            }
         }
         
         // 監視停止ボタン

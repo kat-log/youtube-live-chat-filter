@@ -17,6 +17,12 @@
       "matches": ["*://*.youtube.com/watch*"],
       "js": ["content/content-script.js"],
       "run_at": "document_end"
+    },
+    {
+      "matches": ["https://www.youtube.com/live_chat*"],
+      "js": ["content/dom-chat.js"],
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ],
 
