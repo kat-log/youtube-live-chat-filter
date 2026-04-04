@@ -464,7 +464,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   
   if (request.action === 'getAutoStart') {
     chrome.storage.local.get(['autoStart'], (result) => {
-      sendResponse({ autoStart: result.autoStart || false });
+      sendResponse({ autoStart: result.autoStart ?? true });
     });
     return true;
   }
