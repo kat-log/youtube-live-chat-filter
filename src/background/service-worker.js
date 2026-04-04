@@ -631,6 +631,16 @@ async function fetchLiveChatMessages(liveChatId, pageToken = null) {
   }
 }
 
+// アイコンバッジ更新
+function updateBadge(isMonitoring) {
+  if (isMonitoring) {
+    chrome.action.setBadgeText({ text: 'ON' });
+    chrome.action.setBadgeBackgroundColor({ color: '#00AA00' });
+  } else {
+    chrome.action.setBadgeText({ text: '' });
+  }
+}
+
 // Backgroundでの監視開始
 async function startBackgroundMonitoring(liveChatId, tabId, videoId) {
   debugLog('[Background] Starting background monitoring for liveChatId:', liveChatId, 'videoId:', videoId);
@@ -690,8 +700,9 @@ async function startBackgroundMonitoring(liveChatId, tabId, videoId) {
   });
   
   // 監視開始
+  updateBadge(true);
   startPollingLoop();
-  
+
   return { success: true };
 }
 
@@ -717,7 +728,9 @@ async function stopBackgroundMonitoring() {
       tabId: null
     }
   });
-  
+
+  updateBadge(false);
+
   return { success: true };
 }
 
@@ -874,6 +887,7 @@ chrome.runtime.onStartup.addListener(async () => {
     };
     debugLog('[Background] Restored', commentsHistory.length, 'comments from storage');
     debugLog('[Background] Restored comment filters:', savedFilters);
+    updateBadge(true);
     startPollingLoop();
   } else {
     // 監視していない場合でもフィルター設定は復元
