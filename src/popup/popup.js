@@ -135,6 +135,9 @@ class PopupController {
         
         // メッセージリスナーを設定
         this.setupMessageListener();
+
+        // DOMモード自動取得
+        await this.tryDomAutoStart();
     }
     
     // 緊急時のフォールバック初期化
@@ -904,6 +907,22 @@ class PopupController {
         }
     }
     
+    async tryDomAutoStart() {
+        if (this.isMonitoring) return;
+        if (this.chatMode !== 'dom') return;
+        if (!this.currentTab || !this.currentTab.url.includes('youtube.com/watch')) return;
+
+        try {
+            const response = await this.sendMessageWithRetry({ action: 'getAutoStart' }, 2);
+            if (!response?.autoStart) return;
+
+            debugLog('[YouTube Special Comments] DOM mode auto-start: starting monitoring');
+            await this.startMonitoring();
+        } catch (error) {
+            debugLog('[YouTube Special Comments] DOM mode auto-start failed silently:', error.message);
+        }
+    }
+
     async startMonitoring() {
         if (!this.currentTab || !this.currentTab.url.includes('youtube.com/watch')) {
             this.showError('YouTubeのライブ配信ページで使用してください');
