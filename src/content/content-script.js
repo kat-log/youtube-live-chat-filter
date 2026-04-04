@@ -187,14 +187,15 @@ class YouTubeLiveChatMonitor {
 
   init() {
     this.setupMessageListener();
-    
+
     if (this.isYouTubeLivePage()) {
       debugLog('[YouTube Special Comments] YouTube watch page detected');
       this.extractLiveChatId();
+      this.tryDomModeAutoStart();
     } else {
       this.waitForYouTubeLive();
     }
-    
+
     // YouTube SPAの画面遷移を監視
     this.observePageChanges();
     this.setupVisibilityMonitoring();
@@ -448,6 +449,7 @@ YouTubeLiveChatMonitor.prototype.observePageChanges = function() {
       setTimeout(() => {
         if (this.isYouTubeLivePage()) {
           this.extractLiveChatId();
+          this.tryDomModeAutoStart();
         }
       }, 1000);
     }
@@ -486,6 +488,31 @@ YouTubeLiveChatMonitor.prototype.extractVideoId = function() {
   }
   
   return null;
+};
+
+
+YouTubeLiveChatMonitor.prototype.tryDomModeAutoStart = async function() {
+  if (this.isMonitoring) return;
+
+  try {
+    const modeResponse = await this.sendMessageWithRetry(
+      { action: 'getChatMode' }, 2
+    );
+    if (modeResponse?.chatMode !== 'dom') return;
+
+    const autoStartResponse = await this.sendMessageWithRetry(
+      { action: 'getAutoStart' }, 2
+    );
+    if (!autoStartResponse?.autoStart) return;
+
+    const videoId = this.extractVideoId();
+    if (!videoId) return;
+
+    debugLog('[YouTube Special Comments] DOM mode auto-start (background): starting monitoring');
+    chrome.runtime.sendMessage({ action: 'startDomMonitoring', videoId });
+  } catch (error) {
+    debugLog('[YouTube Special Comments] DOM mode auto-start failed silently:', error.message);
+  }
 };
 
 

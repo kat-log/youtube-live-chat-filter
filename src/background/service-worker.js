@@ -463,6 +463,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
   
+  if (request.action === 'getChatMode') {
+    chrome.storage.local.get(['chatMode'], (result) => {
+      sendResponse({ chatMode: result.chatMode || 'dom' });
+    });
+    return true;
+  }
+
   if (request.action === 'getAutoStart') {
     chrome.storage.local.get(['autoStart'], (result) => {
       sendResponse({ autoStart: result.autoStart ?? true });
