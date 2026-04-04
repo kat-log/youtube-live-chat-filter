@@ -837,3 +837,83 @@ body {
         transform: translateY(0);
     }
 }
+
+/* キーワード検索バー */
+.search-filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: #f9f9f9;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.search-input-wrapper {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 16px;
+    padding: 4px 8px;
+    gap: 6px;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.search-input-wrapper:focus-within {
+    border-color: #1976d2;
+    box-shadow: 0 0 0 2px rgba(25, 118, 210, 0.15);
+}
+
+.search-icon {
+    font-size: 13px;
+    flex-shrink: 0;
+    line-height: 1;
+}
+
+.search-keyword-input {
+    flex: 1;
+    border: none;
+    outline: none;
+    font-size: 13px;
+    color: #333;
+    background: transparent;
+    min-width: 0;
+}
+
+.search-keyword-input::placeholder {
+    color: #aaa;
+}
+
+.btn-clear-search {
+    background: none;
+    border: none;
+    color: #999;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+    padding: 0 2px;
+    line-height: 1;
+    transition: color 0.2s;
+    flex-shrink: 0;
+}
+
+.btn-clear-search:hover {
+    color: #f44336;
+}
+
+.search-match-count {
+    font-size: 11px;
+    color: #1976d2;
+    font-weight: 600;
+    white-space: nowrap;
+    flex-shrink: 0;
+    background: #e3f2fd;
+    padding: 2px 7px;
+    border-radius: 10px;
+}
+
+.search-input-wrapper.is-active {
+    border-color: #1976d2;
+    background: #f0f7ff;
+}
