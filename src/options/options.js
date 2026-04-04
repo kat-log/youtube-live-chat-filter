@@ -45,6 +45,7 @@ class OptionsController {
             saveSettingsBtn: document.getElementById('save-settings'),
             testApiBtn: document.getElementById('test-api'),
             debugModeSwitch: document.getElementById('debug-mode'),
+            autoStartSwitch: document.getElementById('auto-start'),
             toast: document.getElementById('toast')
         };
     }
@@ -54,6 +55,7 @@ class OptionsController {
         this.elements.saveSettingsBtn.addEventListener('click', () => this.saveSettings());
         this.elements.testApiBtn.addEventListener('click', () => this.testApiConnection());
         this.elements.debugModeSwitch.addEventListener('change', () => this.saveSettings());
+        this.elements.autoStartSwitch.addEventListener('change', () => this.saveAutoStart());
         
         this.elements.apiKeyInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
@@ -68,17 +70,22 @@ class OptionsController {
     
     async loadSettings() {
         try {
-            const [apiResponse, debugResponse] = await Promise.all([
+            const [apiResponse, debugResponse, autoStartResponse] = await Promise.all([
                 chrome.runtime.sendMessage({ action: 'getApiKey' }),
-                chrome.runtime.sendMessage({ action: 'getDebugMode' })
+                chrome.runtime.sendMessage({ action: 'getDebugMode' }),
+                chrome.runtime.sendMessage({ action: 'getAutoStart' })
             ]);
-            
+
             if (apiResponse.apiKey) {
                 this.elements.apiKeyInput.value = apiResponse.apiKey;
             }
-            
+
             if (debugResponse.debugMode !== undefined) {
                 this.elements.debugModeSwitch.checked = debugResponse.debugMode;
+            }
+
+            if (autoStartResponse && autoStartResponse.autoStart !== undefined) {
+                this.elements.autoStartSwitch.checked = autoStartResponse.autoStart;
             }
             
             this.updateButtonStates();
@@ -128,6 +135,17 @@ class OptionsController {
         }
     }
     
+    async saveAutoStart() {
+        try {
+            await chrome.runtime.sendMessage({
+                action: 'saveAutoStart',
+                autoStart: this.elements.autoStartSwitch.checked
+            });
+        } catch (error) {
+            console.error('Error saving auto-start setting:', error);
+        }
+    }
+
     async testApiConnection() {
         const apiKey = this.elements.apiKeyInput.value.trim();
         

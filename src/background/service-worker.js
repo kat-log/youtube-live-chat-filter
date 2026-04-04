@@ -462,6 +462,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
   
+  if (request.action === 'getAutoStart') {
+    chrome.storage.local.get(['autoStart'], (result) => {
+      sendResponse({ autoStart: result.autoStart || false });
+    });
+    return true;
+  }
+
+  if (request.action === 'saveAutoStart') {
+    chrome.storage.local.set({ autoStart: request.autoStart }, () => {
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+
   if (request.action === 'fetchLiveChatMessages') {
     fetchLiveChatMessages(request.liveChatId, request.pageToken)
       .then(response => sendResponse(response))

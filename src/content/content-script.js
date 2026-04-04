@@ -222,6 +222,7 @@ class YouTubeLiveChatMonitor {
       const apiSuccess = await this.getLiveChatIdFromVideoId(this.currentVideoId);
       if (apiSuccess && this.liveChatId) {
         debugLog('[YouTube Special Comments] ✅ Live chat ID obtained:', this.liveChatId);
+        await this.tryAutoStart();
         return;
       } else {
         debugLog('[YouTube Special Comments] ❌ No active live chat found for this video');
@@ -472,6 +473,32 @@ YouTubeLiveChatMonitor.prototype.extractVideoId = function() {
   }
   
   return null;
+};
+
+
+YouTubeLiveChatMonitor.prototype.tryAutoStart = async function() {
+  if (this.isMonitoring) return; // 二重起動防止
+
+  try {
+    const autoStartResponse = await this.sendMessageWithRetry(
+      { action: 'getAutoStart' }, 2
+    );
+    if (!autoStartResponse?.autoStart) return;
+
+    const apiKeyResponse = await this.sendMessageWithRetry(
+      { action: 'getApiKey' }, 2
+    );
+    if (!apiKeyResponse?.apiKey) {
+      debugLog('[YouTube Special Comments] Auto-start skipped: API key not set');
+      return;
+    }
+
+    debugLog('[YouTube Special Comments] Auto-start: starting monitoring');
+    await this.startBackgroundMonitoring();
+  } catch (error) {
+    // サイレントに失敗（自動開始のエラーはユーザーに見せない）
+    debugLog('[YouTube Special Comments] Auto-start failed silently:', error.message);
+  }
 };
 
 
