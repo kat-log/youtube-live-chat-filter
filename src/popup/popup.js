@@ -951,15 +951,15 @@ class PopupController {
             if (!response?.autoStart) return;
 
             debugLog('[YouTube Special Comments] DOM mode auto-start: starting monitoring');
-            await this.startMonitoring();
+            await this.startMonitoring(true); // suppressErrors: 初期化フローのStep 3でエラーハンドリングするため
         } catch (error) {
             debugLog('[YouTube Special Comments] DOM mode auto-start failed silently:', error.message);
         }
     }
 
-    async startMonitoring() {
+    async startMonitoring(suppressErrors = false) {
         if (!this.currentTab || !this.currentTab.url.includes('youtube.com/watch')) {
-            this.showError('YouTubeのライブ配信ページで使用してください');
+            if (!suppressErrors) this.showError('YouTubeのライブ配信ページで使用してください');
             return;
         }
         
@@ -1022,18 +1022,20 @@ class PopupController {
             }
         } catch (error) {
             console.error('[YouTube Special Comments] Start monitoring error:', error);
-            
-            // エラーメッセージの改善
-            if (error.message.includes('Could not establish connection')) {
-                this.showContentScriptError();
-            } else if (error.message.includes('API key')) {
-                this.showError('APIキーが設定されていません。オプション画面で設定してください。');
-            } else if (error.message.includes('No active live chat')) {
-                this.showError('このビデオはライブ配信ではないか、チャットが無効になっています。');
-            } else if (error.message.includes('quota')) {
-                this.showError('YouTube API の使用量制限に達しました。しばらく待ってから再試行してください。');
-            } else {
-                this.showError(`取得の開始に失敗しました: ${error.message}`);
+
+            if (!suppressErrors) {
+                // エラーメッセージの改善
+                if (error.message.includes('Could not establish connection')) {
+                    this.showContentScriptError();
+                } else if (error.message.includes('API key')) {
+                    this.showError('APIキーが設定されていません。オプション画面で設定してください。');
+                } else if (error.message.includes('No active live chat')) {
+                    this.showError('このビデオはライブ配信ではないか、チャットが無効になっています。');
+                } else if (error.message.includes('quota')) {
+                    this.showError('YouTube API の使用量制限に達しました。しばらく待ってから再試行してください。');
+                } else {
+                    this.showError(`取得の開始に失敗しました: ${error.message}`);
+                }
             }
         } finally {
             this.showLoading(false);
