@@ -7,7 +7,11 @@
       "WebFetch(domain:stackoverflow.com)",
       "Bash(rsvg-convert:*)",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(gh issue create --title 'fix: インストール直後の初回利用でcontent scriptが未注入のためエラーになる問題' --body ':*)",
+      "Bash(gh issue:*)",
+      "Bash(gh repo:*)",
+      "Bash(git remote:*)"
     ],
     "deny": []
   }
