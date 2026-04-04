@@ -7,6 +7,20 @@ const seenIds = new Set();
 function attachObserver() {
   const itemList = document.querySelector('yt-live-chat-item-list-renderer #items');
   if (!itemList) { setTimeout(attachObserver, 500); return; }
+
+  // 監視開始時点で既に表示されているメッセージを一括取得
+  const existingMessages = [];
+  for (const node of itemList.children) {
+    if (node.tagName?.toLowerCase() === 'yt-live-chat-text-message-renderer') {
+      const msg = extractMessage(node);
+      if (msg && !seenIds.has(msg.id)) {
+        seenIds.add(msg.id);
+        existingMessages.push(msg);
+      }
+    }
+  }
+  if (existingMessages.length > 0) sendMessages(existingMessages);
+
   new MutationObserver(handleMutations).observe(itemList, { childList: true });
 }
 
