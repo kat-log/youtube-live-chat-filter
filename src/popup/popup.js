@@ -599,7 +599,7 @@ class PopupController {
     async loadChatMode() {
         try {
             const result = await chrome.storage.local.get(['chatMode', 'domModeNeedsReload']);
-            this.chatMode = result.chatMode || 'api';
+            this.chatMode = result.chatMode || 'dom';
             this.domModeNeedsReload = result.domModeNeedsReload || false;
             this.updateChatModeUI();
             this.updateMonitoringButtonStates();
@@ -638,10 +638,7 @@ class PopupController {
         }
         this.chatMode = this.elements.chatModeToggle.value;
         await chrome.storage.local.set({ chatMode: this.chatMode });
-        // DOMモードに切り替えた場合はリロード必須フラグをセット
         if (this.chatMode === 'dom') {
-            this.domModeNeedsReload = true;
-            await chrome.storage.local.set({ domModeNeedsReload: true });
             this.hideDetailedError();
             this.showError('');
         }
@@ -1259,13 +1256,6 @@ class PopupController {
         const isYouTubePage = this.currentTab && this.currentTab.url && this.currentTab.url.includes('youtube.com/watch');
         // DOMモードはAPIキー不要
         const effectiveHasApiKey = this.chatMode === 'dom' ? true : hasApiKey;
-
-        // DOMモードでリロードが必要な場合は開始ボタンを無効化
-        if (this.chatMode === 'dom' && this.domModeNeedsReload) {
-            this.elements.startMonitoringBtn.disabled = true;
-            this.elements.startMonitoringBtn.title = 'ページをリロードしてください';
-            return;
-        }
 
         // 監視開始ボタンの状態とツールチップ
         if (!effectiveHasApiKey) {
