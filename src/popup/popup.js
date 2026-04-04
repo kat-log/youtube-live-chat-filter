@@ -52,6 +52,10 @@ class PopupController {
         
         // ユーザーフィルタリング用の状態
         this.selectedUser = null; // 絞り込み対象のユーザー名（null = 全ユーザー表示）
+
+        // キーワード検索フィルタリング用の状態
+        this.searchKeyword = '';
+        this._searchDebounceTimer = null;
         
         debugLog('[YouTube Special Comments] Popup controller starting...');
         this.initializeElements();
@@ -511,7 +515,11 @@ class PopupController {
             // ユーザーフィルター関連要素
             userFilterStatus: document.getElementById('user-filter-status'),
             filteredUsername: document.getElementById('filtered-username'),
-            clearUserFilterBtn: document.getElementById('clear-user-filter')
+            clearUserFilterBtn: document.getElementById('clear-user-filter'),
+            searchFilterBar: document.getElementById('search-filter-bar'),
+            searchKeywordInput: document.getElementById('search-keyword-input'),
+            clearSearchBtn: document.getElementById('clear-search-btn'),
+            searchMatchCount: document.getElementById('search-match-count')
         };
     }
     
@@ -545,6 +553,10 @@ class PopupController {
         
         // ユーザーフィルター関連のイベント
         this.elements.clearUserFilterBtn.addEventListener('click', () => this.clearUserFilter());
+
+        // キーワード検索関連のイベント
+        this.elements.searchKeywordInput.addEventListener('input', () => this.onSearchInput());
+        this.elements.clearSearchBtn.addEventListener('click', () => this.clearSearch());
     }
     
     setupMessageListener() {
@@ -1007,7 +1019,16 @@ class PopupController {
             // ユーザーフィルター
             const userMatch = !this.selectedUser || comment.displayName === this.selectedUser;
             
-            return roleMatch && userMatch;
+            // キーワード検索フィルター（大文字小文字を区別しない）
+            let keywordMatch = true;
+            if (this.searchKeyword.length > 0) {
+                const kw = this.searchKeyword.toLowerCase();
+                keywordMatch =
+                    (comment.displayName || '').toLowerCase().includes(kw) ||
+                    (comment.message || '').toLowerCase().includes(kw);
+            }
+
+            return roleMatch && userMatch && keywordMatch;
         });
         
         console.log('[Popup] Filtered comments:', filteredComments.length);
@@ -1022,6 +1043,7 @@ class PopupController {
         
         // コメント数表示を更新
         this.elements.totalCount.textContent = `${filteredComments.length}件`;
+        this.updateSearchMatchCount(filteredComments.length);
         this.elements.ownerCount.textContent = `配信者: ${counts.owner}`;
         this.elements.moderatorCount.textContent = `モデレーター: ${counts.moderator}`;
         this.elements.sponsorCount.textContent = `メンバー: ${counts.sponsor}`;
@@ -1527,6 +1549,34 @@ class PopupController {
         this.selectedUser = null;
         this.updateUserFilterStatus();
         this.renderComments(false, true); // ユーザーフィルタークリア時は一番下にスクロール
+    }
+
+    onSearchInput() {
+        const value = this.elements.searchKeywordInput.value;
+        this.searchKeyword = value;
+        this.elements.clearSearchBtn.style.display = value.length > 0 ? 'inline-block' : 'none';
+        const wrapper = this.elements.searchKeywordInput.closest('.search-input-wrapper');
+        wrapper.classList.toggle('is-active', value.length > 0);
+        clearTimeout(this._searchDebounceTimer);
+        this._searchDebounceTimer = setTimeout(() => this.renderComments(false, false), 150);
+    }
+
+    clearSearch() {
+        this.searchKeyword = '';
+        this.elements.searchKeywordInput.value = '';
+        this.elements.clearSearchBtn.style.display = 'none';
+        this.elements.searchMatchCount.style.display = 'none';
+        this.elements.searchKeywordInput.closest('.search-input-wrapper').classList.remove('is-active');
+        this.renderComments(false, false);
+    }
+
+    updateSearchMatchCount(matchCount) {
+        if (this.searchKeyword.length > 0) {
+            this.elements.searchMatchCount.textContent = `${matchCount}件一致`;
+            this.elements.searchMatchCount.style.display = 'inline-block';
+        } else {
+            this.elements.searchMatchCount.style.display = 'none';
+        }
     }
     
     updateUserFilterStatus() {

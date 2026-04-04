@@ -116,7 +116,24 @@
                 </div>
                 <button id="clear-user-filter" class="btn-clear-filter">×</button>
             </div>
-            
+
+            <!-- キーワード検索フォーム -->
+            <div class="search-filter-bar" id="search-filter-bar">
+                <div class="search-input-wrapper">
+                    <span class="search-icon">🔍</span>
+                    <input
+                        type="text"
+                        id="search-keyword-input"
+                        class="search-keyword-input"
+                        placeholder="キーワードで絞り込み..."
+                        autocomplete="off"
+                        spellcheck="false"
+                    >
+                    <button id="clear-search-btn" class="btn-clear-search" style="display: none;" title="検索をクリア">×</button>
+                </div>
+                <span id="search-match-count" class="search-match-count" style="display: none;"></span>
+            </div>
+
             <div id="no-comments" class="no-comments">
                 まだコメントがありません
             </div>
