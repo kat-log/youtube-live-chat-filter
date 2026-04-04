@@ -60,6 +60,9 @@ class PopupController {
         // 取得モード
         this.chatMode = 'api';
         this.domModeNeedsReload = false;
+
+        // 自動スクロール追従フラグ（ユーザーが意図的に上スクロールしていない限りtrue）
+        this.autoScroll = true;
         
         debugLog('[YouTube Special Comments] Popup controller starting...');
         this.initializeElements();
@@ -614,6 +617,11 @@ class PopupController {
         if (this.elements.reloadPageForDomBtn) {
             this.elements.reloadPageForDomBtn.addEventListener('click', () => this.reloadPageForDom());
         }
+
+        // コメントリストのスクロールイベント（自動追従フラグの更新）
+        this.elements.commentsList.addEventListener('scroll', () => {
+            this.autoScroll = this.isAtBottom();
+        });
     }
     
     setupMessageListener() {
@@ -1196,9 +1204,8 @@ class PopupController {
         console.log('[Popup] Force scroll to top:', forceScrollToTop);
         console.log('[Popup] Force scroll to bottom:', forceScrollToBottom);
         
-        // スクロール位置を保存と一番下かどうかを確認（新しいコメント追加時のみ）
+        // スクロール位置を保存
         const previousScrollTop = this.elements.commentsList.scrollTop;
-        const wasAtBottom = !forceScrollToTop && this.isAtBottom();
         
         // 役割フィルターとユーザーフィルターの両方を適用
         const filteredComments = this.comments.filter(comment => {
@@ -1308,15 +1315,17 @@ class PopupController {
             // ユーザーフィルター時は強制的にボトムへ
             this.elements.commentsList.scrollTop = this.elements.commentsList.scrollHeight;
             console.log('[Popup] Scrolled to bottom (forced)');
-        } else if (wasAtBottom) {
-            // 一番下にいた場合は新しいコメント表示後も一番下を維持
+        } else if (!forceScrollToTop && this.autoScroll) {
+            // 自動追従モードの場合は新しいコメント表示後も一番下を維持
             this.elements.commentsList.scrollTop = this.elements.commentsList.scrollHeight;
             console.log('[Popup] Scrolled to bottom (auto-follow)');
         } else {
-            // 途中にいた場合は既存の位置を維持
+            // ユーザーが上にスクロール中は位置を維持
             this.elements.commentsList.scrollTop = previousScrollTop;
             console.log('[Popup] Maintained scroll position');
         }
+        // スクロール後に autoScroll フラグを再同期
+        this.autoScroll = this.isAtBottom();
         
         console.log('[Popup] Comments rendered successfully, scroll position:', this.elements.commentsList.scrollTop);
     }
