@@ -923,6 +923,19 @@ async function startDomMonitoring(tabId, videoId) {
   });
 
   updateBadge(true);
+
+  // SPA遷移後はmanifestの自動注入が走らないため、明示的に注入する
+  // window.__domChatInitialized ガードにより二重注入は無害
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tabId, allFrames: true },
+      files: ['content/dom-chat.js']
+    });
+    debugLog('[Background] dom-chat.js injected into tab:', tabId);
+  } catch (e) {
+    debugLog('[Background] dom-chat.js injection skipped:', e.message);
+  }
+
   return { success: true };
 }
 
