@@ -95,6 +95,9 @@ class PopupController {
             
             if (contentScriptReady) {
                 debugLog('[YouTube Special Comments] ✅ Step 3 Complete: Content Script communication established');
+                // Step 2で表示されていたエラーパネルをクリア
+                this.hideDetailedError();
+                this.elements.fixExtensionContainer.style.display = 'none';
                 this.showInitializationStatus('初期化完了！');
                 await this.delay(500); // 成功メッセージを少し表示
             } else {
@@ -234,6 +237,12 @@ class PopupController {
     
     // Content Script注入状態の確認
     async checkContentScriptInjection() {
+        // 既に監視中であればcontent scriptは動作している
+        if (this.isMonitoring) {
+            console.log('[YouTube Special Comments] Already monitoring, skipping content script check');
+            return true;
+        }
+
         if (!this.currentTab || !this.currentTab.url.includes('youtube.com/watch')) {
             console.log('[YouTube Special Comments] Not a YouTube watch page, skipping content script check');
             return true;
@@ -282,10 +291,23 @@ class PopupController {
             
             if (reinjectResponse && reinjectResponse.success) {
                 console.log('[YouTube Special Comments] ✅ Content script re-injection requested successfully');
-                
-                // 3. 再注入後の確認（少し待ってから）
-                await this.delay(2000);
-                return await this.verifyContentScriptAfterRecovery();
+
+                // 3. 再注入後の確認（待機時間を延長: 2秒→3秒）
+                await this.delay(3000);
+
+                // pingリトライ（最大3回、1秒間隔）
+                for (let attempt = 1; attempt <= 3; attempt++) {
+                    const verified = await this.verifyContentScriptAfterRecovery();
+                    if (verified) return true;
+                    if (attempt < 3) {
+                        console.log(`[YouTube Special Comments] Ping attempt ${attempt} failed, retrying in 1s...`);
+                        await this.delay(1000);
+                    }
+                }
+
+                // 3回試みても応答なし → リロードボタン表示
+                this.showContentScriptError();
+                return false;
             } else {
                 throw new Error('Re-injection request failed');
             }
@@ -308,29 +330,34 @@ class PopupController {
             if (response) {
                 console.log('[YouTube Special Comments] ✅ Content script recovery successful!');
                 this.hideInitializationStatus();
+                this.hideDetailedError();
+                this.elements.fixExtensionContainer.style.display = 'none';
                 return true;
             } else {
                 throw new Error('Still no response after recovery');
             }
         } catch (error) {
             console.warn('[YouTube Special Comments] ⚠️ Content script still not responding after recovery');
-            this.showContentScriptError();
+            // showContentScriptError()は呼び出し元(attemptContentScriptRecovery)で制御
             return false;
         }
     }
     
     // Content Script問題の表示
     showContentScriptError() {
-        this.showError('拡張機能が正常に読み込まれていません。修復ボタンをクリックしてください。');
-        
-        // 修復ボタンを表示
-        this.elements.fixExtensionBtn.style.display = 'inline-block';
-        
+        this.showError('初回インストール後はページのリロードが必要です。以下のボタンで再読み込みしてください。');
+
+        // ボタンをリロードとして設定
+        const btn = this.elements.fixExtensionBtn;
+        btn.textContent = 'ページを再読み込み';
+        btn.dataset.action = 'reload';
+        this.elements.fixExtensionContainer.style.display = 'block';
+
         // 詳細なエラー情報を表示
         this.showDetailedError({
-            title: 'Content Script読み込みエラー',
-            message: '拡張機能のContent Scriptが正常に読み込まれていません',
-            solution: '「修復」ボタンで自動修復を試すか、このタブを再読み込みしてください。',
+            title: '初回インストール後のリロードが必要です',
+            message: 'インストール直後は既存のタブにContent Scriptが読み込まれていません',
+            solution: '「ページを再読み込み」ボタンで現在のタブを更新すると解決します。2回目以降は自動的に動作します。',
             action: 'reload',
             severity: 'high'
         });
@@ -376,7 +403,7 @@ class PopupController {
                 // 成功時の処理
                 this.hideDetailedError();
                 this.showError('');
-                this.elements.fixExtensionBtn.style.display = 'none';
+                this.elements.fixExtensionContainer.style.display = 'none';
                 this.showMessage('拡張機能を修復しました！', 'success');
                 
                 // 初期化プロセスを完了
@@ -483,6 +510,7 @@ class PopupController {
             stopMonitoringBtn: document.getElementById('stop-monitoring'),
             clearCommentsBtn: document.getElementById('clear-comments'),
             fixExtensionBtn: document.getElementById('fix-extension'),
+            fixExtensionContainer: document.getElementById('fix-extension-container'),
             
             // 個別フィルタートグル
             ownerToggle: document.getElementById('owner-toggle'),
@@ -543,7 +571,13 @@ class PopupController {
         this.elements.startMonitoringBtn.addEventListener('click', () => this.startMonitoring());
         this.elements.stopMonitoringBtn.addEventListener('click', () => this.stopMonitoring());
         this.elements.clearCommentsBtn.addEventListener('click', () => this.clearComments());
-        this.elements.fixExtensionBtn.addEventListener('click', () => this.fixExtension());
+        this.elements.fixExtensionBtn.addEventListener('click', () => {
+            if (this.elements.fixExtensionBtn.dataset.action === 'reload') {
+                this.reloadCurrentTab();
+            } else {
+                this.fixExtension();
+            }
+        });
         
         // 個別フィルタートグル
         this.elements.ownerToggle.addEventListener('change', () => this.onFilterToggleChange('owner'));
@@ -948,6 +982,8 @@ class PopupController {
                     this.updateMonitoringButtonStates();
                     this.updateStatus('取得中（DOMモード）');
                     this.showError('');
+                    this.hideDetailedError();
+                    this.elements.fixExtensionContainer.style.display = 'none';
                 } else {
                     this.showError('DOMモードでの取得開始に失敗しました。');
                 }
@@ -979,6 +1015,8 @@ class PopupController {
                 this.updateMonitoringButtonStates();
                 this.updateStatus('取得中');
                 this.showError('');
+                this.hideDetailedError();
+                this.elements.fixExtensionContainer.style.display = 'none';
             } else {
                 this.showError('取得を開始できませんでした。ライブチャットが見つからない可能性があります。');
             }
@@ -987,7 +1025,7 @@ class PopupController {
             
             // エラーメッセージの改善
             if (error.message.includes('Could not establish connection')) {
-                this.showError('ページを再読み込みしてから再試行してください。');
+                this.showContentScriptError();
             } else if (error.message.includes('API key')) {
                 this.showError('APIキーが設定されていません。オプション画面で設定してください。');
             } else if (error.message.includes('No active live chat')) {
