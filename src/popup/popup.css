@@ -98,6 +98,29 @@ body {
     padding: 6px 8px;
 }
 
+.dom-reload-notice {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: #fff3cd;
+    border: 1px solid #ffc107;
+    border-radius: 4px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    font-size: 12px;
+    color: #856404;
+}
+
+.dom-reload-notice .dom-reload-text {
+    flex: 1;
+}
+
+.dom-reload-notice .btn-sm {
+    padding: 3px 8px;
+    font-size: 11px;
+    white-space: nowrap;
+}
+
 .api-key-section {
     background: white;
     border-radius: 8px;
