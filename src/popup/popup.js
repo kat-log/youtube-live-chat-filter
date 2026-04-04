@@ -263,7 +263,7 @@ class PopupController {
                 throw new Error('No response from content script');
             }
         } catch (error) {
-            console.warn('[YouTube Special Comments] ⚠️ Content script not detected:', error.message);
+            console.log('[YouTube Special Comments] Content script not detected (expected on first use):', error.message);
             
             // 自動回復を試行
             return await this.attemptContentScriptRecovery();
@@ -841,7 +841,7 @@ class PopupController {
             
             return response || { success: false };
         } catch (error) {
-            console.error('[YouTube Special Comments] Error getting monitoring state:', error);
+            console.log('[YouTube Special Comments] Error getting monitoring state:', error.message);
             return { success: false };
         }
     }
@@ -877,7 +877,7 @@ class PopupController {
                 historyLoaded = true;
             }
         } catch (error) {
-            console.error('[YouTube Special Comments] Primary history loading failed:', error);
+            console.log('[YouTube Special Comments] Primary history loading failed:', error.message);
         }
         
         // フォールバック1: Content scriptから直接コメントを取得
@@ -896,7 +896,7 @@ class PopupController {
                     historyLoaded = true;
                 }
             } catch (error) {
-                console.error('[YouTube Special Comments] Fallback 1 failed:', error);
+                console.log('[YouTube Special Comments] Fallback 1: content script not ready, continuing with empty state');
             }
         }
         
@@ -1021,7 +1021,11 @@ class PopupController {
                 this.showError('取得を開始できませんでした。ライブチャットが見つからない可能性があります。');
             }
         } catch (error) {
-            console.error('[YouTube Special Comments] Start monitoring error:', error);
+            if (suppressErrors || error.message.includes('Could not establish connection')) {
+                console.log('[YouTube Special Comments] Start monitoring: content script not ready (expected on first use):', error.message);
+            } else {
+                console.error('[YouTube Special Comments] Start monitoring error:', error);
+            }
 
             if (!suppressErrors) {
                 // エラーメッセージの改善
@@ -1821,7 +1825,7 @@ class PopupController {
                 return response;
                 
             } catch (error) {
-                console.warn(`[YouTube Special Comments] [Popup] Tab message failed on attempt ${attempt}:`, error.message);
+                console.log(`[YouTube Special Comments] [Popup] Tab message failed on attempt ${attempt}:`, error.message);
                 
                 // Content Scriptが準備できていない可能性
                 if (error.message.includes('Could not establish connection')) {
