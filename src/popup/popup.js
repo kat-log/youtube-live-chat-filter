@@ -108,7 +108,23 @@ class PopupController {
             }
             
             debugLog('[YouTube Special Comments] 🎉 Full initialization process completed');
-            
+
+            // 初期化完了後の最終状態同期：
+            // content script が自律的に監視を開始した場合（再注入後の tryDomModeAutoStart）に
+            // popup の isMonitoring フラグをバックグラウンドの実態と合わせる
+            if (!this.isMonitoring) {
+                const finalState = await this.getBackgroundMonitoringState();
+                if (finalState.success && finalState.isMonitoring) {
+                    this.isMonitoring = true;
+                    if (finalState.chatMode) {
+                        this.chatMode = finalState.chatMode;
+                        this.updateChatModeUI();
+                    }
+                    this.updateMonitoringButtonStates();
+                    this.updateStatus(this.chatMode === 'dom' ? '取得中（DOMモード）' : '取得中');
+                }
+            }
+
         } catch (error) {
             console.error('[YouTube Special Comments] ❌ Critical initialization error:', error);
             this.showInitializationStatus('初期化エラーが発生しました');
