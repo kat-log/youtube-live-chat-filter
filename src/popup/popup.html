@@ -19,10 +19,12 @@
         <div class="mode-selector-section">
             <div class="mode-selector">
                 <label class="mode-label">取得モード:</label>
-                <select id="chat-mode-toggle" class="mode-select">
-                    <option value="api">APIモード</option>
-                    <option value="dom">DOMモード（APIキー不要）</option>
-                </select>
+                <div class="mode-select-wrapper" id="mode-select-wrapper">
+                    <select id="chat-mode-toggle" class="mode-select">
+                        <option value="api">APIモード</option>
+                        <option value="dom">DOMモード（APIキー不要）</option>
+                    </select>
+                </div>
             </div>
             <p class="mode-help-text" id="dom-mode-help" style="display:none">
                 DOMモード：APIキー不要でライブチャットのDOMを直接監視します。

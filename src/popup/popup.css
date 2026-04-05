@@ -74,8 +74,55 @@ body {
     white-space: nowrap;
 }
 
-.mode-select {
+.mode-select-wrapper {
     flex: 1;
+    position: relative;
+}
+
+.mode-select-wrapper.monitoring {
+    cursor: not-allowed;
+}
+
+.mode-select-wrapper.monitoring .mode-select {
+    pointer-events: none;
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.mode-select-wrapper.monitoring:hover::after {
+    content: '取得中はモードを切り替えられません';
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: #333;
+    color: white;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    white-space: normal;
+    word-break: break-word;
+    max-width: 200px;
+    text-align: center;
+    z-index: 1000;
+    margin-bottom: 5px;
+    pointer-events: none;
+}
+
+.mode-select-wrapper.monitoring:hover::before {
+    content: '';
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: #333;
+    z-index: 1000;
+    pointer-events: none;
+}
+
+.mode-select {
+    width: 100%;
     padding: 6px 8px;
     border: 1px solid #ccc;
     border-radius: 4px;
