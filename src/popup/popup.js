@@ -578,6 +578,7 @@ class PopupController {
 
             // モード選択
             chatModeToggle: document.getElementById('chat-mode-toggle'),
+            modeSelectWrapper: document.getElementById('mode-select-wrapper'),
             domModeHelp: document.getElementById('dom-mode-help'),
             apiKeySection: document.getElementById('api-key-section'),
             domModeReloadNotice: document.getElementById('dom-mode-reload-notice'),
@@ -1378,6 +1379,11 @@ class PopupController {
     }
     
     updateMonitoringButtonStates() {
+        // モードセレクターのロック
+        if (this.elements.modeSelectWrapper) {
+            this.elements.modeSelectWrapper.classList.toggle('monitoring', this.isMonitoring);
+        }
+
         // 監視開始ボタン
         if (this.isMonitoring) {
             this.elements.startMonitoringBtn.disabled = true;
