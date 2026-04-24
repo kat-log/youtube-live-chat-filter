@@ -46,6 +46,7 @@ class OptionsController {
             testApiBtn: document.getElementById('test-api'),
             debugModeSwitch: document.getElementById('debug-mode'),
             autoStartSwitch: document.getElementById('auto-start'),
+            themeToggle: document.getElementById('theme-toggle'),
             toast: document.getElementById('toast')
         };
     }
@@ -56,6 +57,7 @@ class OptionsController {
         this.elements.testApiBtn.addEventListener('click', () => this.testApiConnection());
         this.elements.debugModeSwitch.addEventListener('change', () => this.saveSettings());
         this.elements.autoStartSwitch.addEventListener('change', () => this.saveAutoStart());
+        this.elements.themeToggle.addEventListener('change', () => this.saveTheme());
         
         this.elements.apiKeyInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
@@ -70,10 +72,11 @@ class OptionsController {
     
     async loadSettings() {
         try {
-            const [apiResponse, debugResponse, autoStartResponse] = await Promise.all([
+            const [apiResponse, debugResponse, autoStartResponse, themeResult] = await Promise.all([
                 chrome.runtime.sendMessage({ action: 'getApiKey' }),
                 chrome.runtime.sendMessage({ action: 'getDebugMode' }),
-                chrome.runtime.sendMessage({ action: 'getAutoStart' })
+                chrome.runtime.sendMessage({ action: 'getAutoStart' }),
+                chrome.storage.local.get(['theme'])
             ]);
 
             if (apiResponse.apiKey) {
@@ -87,7 +90,9 @@ class OptionsController {
             if (autoStartResponse && autoStartResponse.autoStart !== undefined) {
                 this.elements.autoStartSwitch.checked = autoStartResponse.autoStart;
             }
-            
+
+            this.elements.themeToggle.checked = (themeResult.theme === 'dark');
+
             this.updateButtonStates();
         } catch (error) {
             console.error('Error loading settings:', error);
@@ -143,6 +148,15 @@ class OptionsController {
             });
         } catch (error) {
             console.error('Error saving auto-start setting:', error);
+        }
+    }
+
+    async saveTheme() {
+        try {
+            const theme = this.elements.themeToggle.checked ? 'dark' : 'light';
+            await chrome.storage.local.set({ theme });
+        } catch (error) {
+            console.error('Error saving theme setting:', error);
         }
     }
 

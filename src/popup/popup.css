@@ -38,6 +38,33 @@
 }
 
 /* ═══════════════════════════════════════════
+   Light Theme Overrides
+   ═══════════════════════════════════════════ */
+[data-theme="light"] {
+    --bg-base:       #f8f8f8;
+    --bg-surface:    #ffffff;
+    --bg-elevated:   #eeeeee;
+    --bg-hover:      #e5e5e5;
+    --bg-active:     #dcdcdc;
+
+    --accent:        #cc0000;
+    --accent-dim:    #aa0000;
+    --accent-glow:   rgba(204, 0, 0, 0.12);
+
+    --text-primary:  #111111;
+    --text-secondary:#555555;
+    --text-muted:    #999999;
+
+    --border:        rgba(0, 0, 0, 0.10);
+    --border-strong: rgba(0, 0, 0, 0.18);
+
+    --owner-bg:      rgba(255, 112, 67, 0.15);
+    --moderator-bg:  rgba(92, 158, 245, 0.15);
+    --sponsor-bg:    rgba(74, 222, 128, 0.15);
+    --normal-bg:     rgba(110, 110, 122, 0.12);
+}
+
+/* ═══════════════════════════════════════════
    Reset & Base
    ═══════════════════════════════════════════ */
 *, *::before, *::after {
@@ -528,6 +555,14 @@ body {
 .role-moderator { background: var(--moderator-bg); color: var(--moderator); }
 .role-sponsor   { background: var(--sponsor-bg);   color: var(--sponsor); }
 .role-normal    { background: var(--normal-bg);     color: var(--normal); }
+
+/* Theme row in drawer */
+.drawer-theme-row {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 0;
+}
 
 /* Drawer bottom controls */
 .drawer-controls {
