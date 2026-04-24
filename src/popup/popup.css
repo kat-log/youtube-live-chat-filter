@@ -111,9 +111,9 @@ body {
 }
 
 .status-online {
-    background: var(--accent);
-    color: #fff;
-    box-shadow: 0 0 8px var(--accent-glow);
+    background: #7a2828;
+    color: #ffb3b3;
+    box-shadow: 0 0 6px rgba(120,40,40,0.4);
     animation: pulse-online 2s ease-in-out infinite;
 }
 
@@ -123,8 +123,8 @@ body {
 }
 
 @keyframes pulse-online {
-    0%, 100% { box-shadow: 0 0 6px var(--accent-glow); }
-    50%       { box-shadow: 0 0 14px rgba(255,0,0,0.35); }
+    0%, 100% { box-shadow: 0 0 4px rgba(120,40,40,0.3); }
+    50%       { box-shadow: 0 0 10px rgba(120,40,40,0.55); }
 }
 
 /* Video ID chip */
