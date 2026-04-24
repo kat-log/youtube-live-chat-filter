@@ -865,7 +865,7 @@ body {
     min-height: 0;
     overflow-y: auto;
     overflow-x: hidden;
-    border: 1px solid var(--border);
+    border: 2px solid rgba(255, 255, 255, 0.18);
     border-top: none;
     margin: 0 6px 6px;
     border-radius: 0 0 var(--radius-md) var(--radius-md);
@@ -877,6 +877,7 @@ body {
 .comments-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 3px; }
 .comments-list::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.3); }
 
+[data-theme="light"] .comments-list { border-color: rgba(0, 0, 0, 0.18); }
 [data-theme="light"] .comments-list::-webkit-scrollbar-track { background: rgba(0,0,0,0.04); }
 [data-theme="light"] .comments-list::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.18); }
 [data-theme="light"] .comments-list::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.3); }
