@@ -726,6 +726,25 @@ body {
     background: var(--bg-base);
 }
 
+/* Bottom fade to hint more content is scrollable */
+.comments-area::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 32px;
+    background: linear-gradient(to bottom, transparent, var(--bg-base));
+    pointer-events: none;
+    z-index: 10;
+    opacity: 1;
+    transition: opacity 0.25s ease;
+}
+
+.comments-area.scrolled-to-bottom::after {
+    opacity: 0;
+}
+
 /* Comments header */
 .comments-header {
     flex-shrink: 0;
@@ -846,12 +865,21 @@ body {
     min-height: 0;
     overflow-y: auto;
     overflow-x: hidden;
+    border: 1px solid var(--border);
+    border-top: none;
+    margin: 0 6px 6px;
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
+    padding-bottom: 4px;
 }
 
-.comments-list::-webkit-scrollbar { width: 4px; }
-.comments-list::-webkit-scrollbar-track { background: transparent; }
-.comments-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
-.comments-list::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+.comments-list::-webkit-scrollbar { width: 6px; }
+.comments-list::-webkit-scrollbar-track { background: rgba(255,255,255,0.03); border-radius: 3px; margin: 4px 0; }
+.comments-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 3px; }
+.comments-list::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.3); }
+
+[data-theme="light"] .comments-list::-webkit-scrollbar-track { background: rgba(0,0,0,0.04); }
+[data-theme="light"] .comments-list::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.18); }
+[data-theme="light"] .comments-list::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.3); }
 
 /* Comment card */
 .comment-item {

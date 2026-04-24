@@ -659,6 +659,7 @@ class PopupController {
         // コメントリストのスクロールイベント（自動追従フラグの更新）
         this.elements.commentsList.addEventListener('scroll', () => {
             this.autoScroll = this.isAtBottom();
+            this.updateScrolledToBottom();
         });
     }
     
@@ -1234,6 +1235,20 @@ class PopupController {
         return element.scrollTop + element.clientHeight >= element.scrollHeight - threshold;
     }
 
+    // コメントエリアの下部フェードグラデーション表示を更新
+    updateScrolledToBottom() {
+        const commentsArea = this.elements.commentsList.closest('.comments-area');
+        if (commentsArea) {
+            const el = this.elements.commentsList;
+            const hasScroll = el.scrollHeight > el.clientHeight;
+            if (!hasScroll || this.isAtBottom()) {
+                commentsArea.classList.add('scrolled-to-bottom');
+            } else {
+                commentsArea.classList.remove('scrolled-to-bottom');
+            }
+        }
+    }
+
     renderComments(forceScrollToTop = false, forceScrollToBottom = false) {
         console.log('[Popup] === renderComments called ===');
         console.log('[Popup] Total comments:', this.comments.length);
@@ -1364,6 +1379,7 @@ class PopupController {
         }
         // スクロール後に autoScroll フラグを再同期
         this.autoScroll = this.isAtBottom();
+        this.updateScrolledToBottom();
         
         console.log('[Popup] Comments rendered successfully, scroll position:', this.elements.commentsList.scrollTop);
     }
