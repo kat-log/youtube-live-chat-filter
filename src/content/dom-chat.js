@@ -73,11 +73,15 @@ function extractText(el) {
 }
 
 function sendMessages(messages, retries = 3) {
-  chrome.runtime.sendMessage({ action: 'domChatMessages', messages }, () => {
-    if (chrome.runtime.lastError && retries > 0) {
-      setTimeout(() => sendMessages(messages, retries - 1), 1000);
-    }
-  });
+  try {
+    chrome.runtime.sendMessage({ action: 'domChatMessages', messages }, () => {
+      if (chrome.runtime.lastError && retries > 0) {
+        setTimeout(() => sendMessages(messages, retries - 1), 1000);
+      }
+    });
+  } catch (e) {
+    // Extension context invalidated（拡張機能再読み込み直後）は無視
+  }
 }
 
 attachObserver();

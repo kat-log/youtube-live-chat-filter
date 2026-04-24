@@ -202,7 +202,7 @@ let monitoringState = {
   },
   commentsHistory: [], // 現在監視中のVideo IDの履歴
   currentVideoId: null,
-  chatMode: 'api' // 'api' | 'dom'
+  chatMode: null // 'api' | 'dom' — ストレージから復元するまで不定
 };
 
 // コメント履歴をストレージに保存（Video ID別）
@@ -731,10 +731,11 @@ async function startBackgroundMonitoring(liveChatId, tabId, videoId) {
     monitoringState: {
       isMonitoring: true,
       liveChatId: liveChatId,
-      tabId: tabId
+      tabId: tabId,
+      chatMode: 'api'
     }
   });
-  
+
   // 監視開始
   updateBadge(true);
   startPollingLoop();
@@ -747,7 +748,6 @@ async function stopBackgroundMonitoring() {
   debugLog('[Background] Stopping background monitoring');
 
   monitoringState.isMonitoring = false;
-  monitoringState.chatMode = 'api';
 
   if (monitoringState.pollingInterval) {
     clearTimeout(monitoringState.pollingInterval);
@@ -790,7 +790,7 @@ async function getMonitoringState() {
     liveChatId: monitoringState.liveChatId || savedState.liveChatId,
     tabId: monitoringState.tabId || savedState.tabId,
     currentVideoId: monitoringState.currentVideoId,
-    chatMode: monitoringState.chatMode || 'api'
+    chatMode: monitoringState.chatMode || savedState.chatMode || null
   };
 }
 
@@ -940,7 +940,8 @@ async function startDomMonitoring(tabId, videoId) {
     monitoringState: {
       isMonitoring: true,
       liveChatId: null,
-      tabId: tabId
+      tabId: tabId,
+      chatMode: 'dom'
     }
   });
 
