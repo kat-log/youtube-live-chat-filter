@@ -11,6 +11,26 @@ async function loadDebugMode() {
   }
 }
 
+// テーマ設定を取得して適用
+async function loadTheme() {
+  try {
+    const { theme } = await chrome.storage.local.get(['theme']);
+    document.documentElement.setAttribute('data-theme', theme || 'light');
+  } catch (error) {
+    console.error('[Popup] Failed to load theme:', error);
+  }
+}
+
+// ストレージ変更時にテーマをリアルタイム反映
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.theme) {
+    const newTheme = changes.theme.newValue || 'light';
+    document.documentElement.setAttribute('data-theme', newTheme);
+    const toggle = document.getElementById('dark-mode-toggle');
+    if (toggle) toggle.checked = (newTheme === 'dark');
+  }
+});
+
 // デバッグ用ログ関数
 function debugLog(prefix, ...args) {
   if (debugMode) {
@@ -152,6 +172,7 @@ class PopupController {
             this.loadSavedApiKey(),
             this.loadCommentFilters(),
             this.loadChatMode(),
+            loadTheme(),
             this.checkCurrentTab()
         ]);
         
@@ -1907,4 +1928,17 @@ function initDrawer() {
     backdrop.addEventListener('click', closeDrawer);
 
     drawer.addEventListener('click', (e) => e.stopPropagation());
+
+    // ドロワー内ダークモードトグル
+    const darkToggle = document.getElementById('dark-mode-toggle');
+    if (darkToggle) {
+        chrome.storage.local.get(['theme']).then(({ theme }) => {
+            darkToggle.checked = ((theme || 'light') === 'dark');
+        });
+        darkToggle.addEventListener('change', async () => {
+            const theme = darkToggle.checked ? 'dark' : 'light';
+            await chrome.storage.local.set({ theme });
+            document.documentElement.setAttribute('data-theme', theme);
+        });
+    }
 }
