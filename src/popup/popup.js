@@ -1875,4 +1875,36 @@ class PopupController {
 
 document.addEventListener('DOMContentLoaded', () => {
     new PopupController();
+    initDrawer();
 });
+
+function initDrawer() {
+    const drawer   = document.getElementById('settings-drawer');
+    const backdrop = document.getElementById('drawer-backdrop');
+    const gearBtn  = document.getElementById('settings-toggle-btn');
+
+    if (!drawer || !backdrop || !gearBtn) return;
+
+    function openDrawer() {
+        drawer.classList.add('open');
+        drawer.setAttribute('aria-hidden', 'false');
+        backdrop.classList.add('visible');
+        gearBtn.classList.add('active');
+    }
+
+    function closeDrawer() {
+        drawer.classList.remove('open');
+        drawer.setAttribute('aria-hidden', 'true');
+        backdrop.classList.remove('visible');
+        gearBtn.classList.remove('active');
+    }
+
+    gearBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        drawer.classList.contains('open') ? closeDrawer() : openDrawer();
+    });
+
+    backdrop.addEventListener('click', closeDrawer);
+
+    drawer.addEventListener('click', (e) => e.stopPropagation());
+}
