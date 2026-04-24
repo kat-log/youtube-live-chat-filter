@@ -7,131 +7,150 @@
     <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-    <div class="container">
-        <header class="header">
-            <h1>YouTube特別コメント</h1>
-            <div class="status">
-                <span id="status-indicator" class="status-offline">オフライン</span>
-            </div>
-        </header>
+    <div class="app">
 
-        <!-- モード選択 -->
-        <div class="mode-selector-section">
-            <div class="mode-selector">
-                <label class="mode-label">取得モード:</label>
-                <div class="mode-select-wrapper" id="mode-select-wrapper">
-                    <select id="chat-mode-toggle" class="mode-select">
-                        <option value="api">APIモード</option>
-                        <option value="dom">DOMモード（APIキー不要）</option>
-                    </select>
-                </div>
+        <!-- ─────────────── TOP BAR ─────────────── -->
+        <div class="top-bar">
+            <div class="top-bar-left">
+                <span id="status-indicator" class="status-indicator status-offline">オフライン</span>
+                <span class="video-id-chip" id="current-video-id">---</span>
             </div>
-            <p class="mode-help-text" id="dom-mode-help" style="display:none">
-                DOMモード：APIキー不要でライブチャットのDOMを直接監視します。
-            </p>
+            <div class="top-bar-right">
+                <button id="start-monitoring" class="tb-btn tb-start" disabled title="APIキーを入力してください">
+                    <svg width="10" height="12" viewBox="0 0 10 12" fill="currentColor"><polygon points="0,0 10,6 0,12"/></svg>
+                    開始
+                </button>
+                <button id="stop-monitoring" class="tb-btn tb-stop" disabled title="取得停止中です">
+                    <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><rect width="10" height="10"/></svg>
+                    停止
+                </button>
+                <button id="settings-toggle-btn" class="tb-btn tb-icon" title="設定を開く" aria-label="設定">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                    </svg>
+                </button>
+            </div>
         </div>
 
-        <div class="api-key-section" id="api-key-section">
-            <div class="api-key-form">
-                <label for="api-key-input">YouTube Data API Key:</label>
-                <div class="input-group">
-                    <input type="password" id="api-key-input" placeholder="APIキーを入力してください">
-                    <button id="save-api-key" class="btn btn-primary">保存</button>
+        <!-- ─────────────── SETTINGS DRAWER ─────────────── -->
+        <div class="settings-drawer" id="settings-drawer" aria-hidden="true">
+            <div class="drawer-inner">
+
+                <!-- モード選択 -->
+                <div class="drawer-row">
+                    <label class="drawer-label">取得モード</label>
+                    <div class="mode-select-wrapper" id="mode-select-wrapper">
+                        <select id="chat-mode-toggle" class="mode-select">
+                            <option value="api">APIモード</option>
+                            <option value="dom">DOMモード（APIキー不要）</option>
+                        </select>
+                    </div>
                 </div>
-                <p class="help-text">
-                    <a href="https://console.developers.google.com/" target="_blank">Google Cloud Console</a>
-                    でAPIキーを取得してください
+                <p class="mode-help-text" id="dom-mode-help" style="display:none">
+                    DOMモード：APIキー不要でライブチャットのDOMを直接監視します。
                 </p>
-            </div>
-        </div>
 
-        <div class="video-info-section">
-            <div class="video-info">
-                <div class="current-video">
-                    <span class="label">動画ID:</span>
-                    <span id="current-video-id" class="video-id">取得中...</span>
+                <!-- APIキー入力 -->
+                <div id="api-key-section" class="drawer-api-section">
+                    <label class="drawer-label">YouTube Data API Key</label>
+                    <div class="api-input-row">
+                        <input type="password" id="api-key-input" class="api-input" placeholder="APIキーを入力...">
+                        <button id="save-api-key" class="btn-save">保存</button>
+                    </div>
+                    <p class="help-text">
+                        <a href="https://console.developers.google.com/" target="_blank">Google Cloud Console</a>
+                        でAPIキーを取得してください
+                    </p>
                 </div>
-            </div>
-        </div>
 
-        <div class="filter-section">
-            <div class="filter-header">
-                <h3>コメントフィルター</h3>
-                <div class="filter-presets">
-                    <button id="preset-special" class="btn-preset btn-preset-active">特別コメント</button>
-                    <button id="preset-all" class="btn-preset">すべて</button>
-                    <button id="preset-none" class="btn-preset">なし</button>
+                <!-- フィルター -->
+                <div class="drawer-section">
+                    <div class="filter-header-row">
+                        <span class="drawer-label">フィルター</span>
+                        <div class="filter-presets">
+                            <button id="preset-special" class="btn-preset btn-preset-active">特別</button>
+                            <button id="preset-all" class="btn-preset">すべて</button>
+                            <button id="preset-none" class="btn-preset">なし</button>
+                        </div>
+                    </div>
+                    <div class="filter-toggles">
+                        <label class="filter-toggle-container">
+                            <input type="checkbox" id="owner-toggle" checked>
+                            <span class="toggle-slider owner-slider"></span>
+                            <span class="toggle-label"><span class="comment-role role-owner">配信者</span></span>
+                        </label>
+                        <label class="filter-toggle-container">
+                            <input type="checkbox" id="moderator-toggle" checked>
+                            <span class="toggle-slider moderator-slider"></span>
+                            <span class="toggle-label"><span class="comment-role role-moderator">モデレーター</span></span>
+                        </label>
+                        <label class="filter-toggle-container">
+                            <input type="checkbox" id="sponsor-toggle">
+                            <span class="toggle-slider sponsor-slider"></span>
+                            <span class="toggle-label"><span class="comment-role role-sponsor">メンバー</span></span>
+                        </label>
+                        <label class="filter-toggle-container">
+                            <input type="checkbox" id="normal-toggle">
+                            <span class="toggle-slider normal-slider"></span>
+                            <span class="toggle-label"><span class="comment-role role-normal">一般</span></span>
+                        </label>
+                    </div>
                 </div>
-            </div>
-            
-            <div class="filter-toggles">
-                <label class="filter-toggle-container">
-                    <input type="checkbox" id="owner-toggle" checked>
-                    <span class="toggle-slider owner-slider"></span>
-                    <span class="toggle-label">
-                        <span class="comment-role role-owner">配信者</span>
-                        配信者コメント
-                    </span>
-                </label>
-                
-                <label class="filter-toggle-container">
-                    <input type="checkbox" id="moderator-toggle" checked>
-                    <span class="toggle-slider moderator-slider"></span>
-                    <span class="toggle-label">
-                        <span class="comment-role role-moderator">モデレーター</span>
-                        モデレーターコメント
-                    </span>
-                </label>
-                
-                <label class="filter-toggle-container">
-                    <input type="checkbox" id="sponsor-toggle">
-                    <span class="toggle-slider sponsor-slider"></span>
-                    <span class="toggle-label">
-                        <span class="comment-role role-sponsor">メンバー</span>
-                        メンバーコメント
-                    </span>
-                </label>
-                
-                <label class="filter-toggle-container">
-                    <input type="checkbox" id="normal-toggle">
-                    <span class="toggle-slider normal-slider"></span>
-                    <span class="toggle-label">
-                        <span class="comment-role role-normal">一般</span>
-                        一般コメント
-                    </span>
-                </label>
+
+                <!-- 操作ボタン群 -->
+                <div class="drawer-controls">
+                    <button id="clear-comments" class="btn btn-secondary">履歴クリア</button>
+                    <div id="fix-extension-container" style="display: none;">
+                        <button id="fix-extension" class="btn btn-warning">修復</button>
+                    </div>
+                </div>
+
+                <!-- DOMモード リロード通知 -->
+                <div id="dom-mode-reload-notice" class="dom-reload-notice" style="display:none">
+                    <span class="dom-reload-text">DOMモードを有効にするにはページのリロードが必要です</span>
+                    <button id="reload-page-for-dom" class="btn btn-warning btn-sm">リロード</button>
+                </div>
+
             </div>
         </div>
-        
-        <!-- DOMモード: リロード必須通知 -->
-        <div id="dom-mode-reload-notice" class="dom-reload-notice" style="display:none">
-            <span class="dom-reload-text">DOMモードを有効にするにはページのリロードが必要です</span>
-            <button id="reload-page-for-dom" class="btn btn-warning btn-sm">ページをリロード</button>
+        <div class="drawer-backdrop" id="drawer-backdrop"></div>
+
+        <!-- ─────────────── SEARCH BAR ─────────────── -->
+        <div class="search-filter-bar" id="search-filter-bar">
+            <div class="search-input-wrapper">
+                <svg class="search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+                <input
+                    type="text"
+                    id="search-keyword-input"
+                    class="search-keyword-input"
+                    placeholder="キーワードで絞り込み..."
+                    autocomplete="off"
+                    spellcheck="false"
+                >
+                <button id="clear-search-btn" class="btn-clear-search" style="display: none;" title="検索をクリア">×</button>
+            </div>
+            <span id="search-match-count" class="search-match-count" style="display: none;"></span>
         </div>
 
-        <div class="controls">
-            <button id="start-monitoring" class="btn btn-success" disabled title="APIキーを入力してください">取得開始</button>
-            <button id="stop-monitoring" class="btn btn-danger" disabled title="取得停止中です">取得停止</button>
-            <button id="clear-comments" class="btn btn-secondary">履歴クリア</button>
-        </div>
-        <div id="fix-extension-container" style="display: none; padding: 4px 0;">
-            <button id="fix-extension" class="btn btn-warning" style="width: 100%;" title="拡張機能の問題を修復します">修復</button>
-        </div>
+        <!-- ─────────────── COMMENTS AREA ─────────────── -->
+        <div class="comments-area">
 
-        <div class="comments-section">
             <div class="comments-header">
-                <h2 id="comments-title">コメント履歴</h2>
+                <h2 id="comments-title">コメント</h2>
                 <div class="comment-counts">
                     <span id="total-count" class="comment-count comment-count-total">0件</span>
                     <div class="comment-count-details">
                         <span id="owner-count" class="comment-count-item owner-count">配信者: 0</span>
-                        <span id="moderator-count" class="comment-count-item moderator-count">モデレーター: 0</span>
+                        <span id="moderator-count" class="comment-count-item moderator-count">モデレ: 0</span>
                         <span id="sponsor-count" class="comment-count-item sponsor-count">メンバー: 0</span>
                         <span id="normal-count" class="comment-count-item normal-count">一般: 0</span>
                     </div>
                 </div>
             </div>
-            
+
             <div class="user-filter-status" id="user-filter-status" style="display: none;">
                 <div class="user-filter-info">
                     <span class="user-filter-icon">👤</span>
@@ -141,55 +160,38 @@
                 <button id="clear-user-filter" class="btn-clear-filter">×</button>
             </div>
 
-            <!-- キーワード検索フォーム -->
-            <div class="search-filter-bar" id="search-filter-bar">
-                <div class="search-input-wrapper">
-                    <span class="search-icon">🔍</span>
-                    <input
-                        type="text"
-                        id="search-keyword-input"
-                        class="search-keyword-input"
-                        placeholder="キーワードで絞り込み..."
-                        autocomplete="off"
-                        spellcheck="false"
-                    >
-                    <button id="clear-search-btn" class="btn-clear-search" style="display: none;" title="検索をクリア">×</button>
-                </div>
-                <span id="search-match-count" class="search-match-count" style="display: none;"></span>
-            </div>
-
-            <div id="no-comments" class="no-comments">
-                まだコメントがありません
-            </div>
-            
+            <div id="no-comments" class="no-comments">まだコメントがありません</div>
             <div id="comments-list" class="comments-list"></div>
-        </div>
 
-        <div class="loading" id="loading" style="display: none;">
-            <div class="spinner"></div>
-            <span>読み込み中...</span>
-            <div id="initialization-status" class="initialization-status" style="display: none;"></div>
-        </div>
-
-        <div class="error-message" id="error-message" style="display: none;"></div>
-        
-        <div class="error-details" id="error-details" style="display: none;">
-            <div class="error-header">
-                <div class="error-icon">⚠️</div>
-                <div class="error-title" id="error-title">エラーが発生しました</div>
+            <!-- ローディング（コメントエリア内オーバーレイ） -->
+            <div class="loading" id="loading" style="display: none;">
+                <div class="spinner"></div>
+                <span>読み込み中...</span>
+                <div id="initialization-status" class="initialization-status" style="display: none;"></div>
             </div>
-            <div class="error-content">
-                <div class="error-description" id="error-description"></div>
-                <div class="error-solution" id="error-solution"></div>
-                <div class="error-actions" id="error-actions">
-                    <button id="retry-button" class="btn btn-primary btn-small">再試行</button>
-                    <button id="options-button" class="btn btn-secondary btn-small">設定画面</button>
+
+            <div class="error-message" id="error-message" style="display: none;"></div>
+
+            <div class="error-details" id="error-details" style="display: none;">
+                <div class="error-header">
+                    <div class="error-icon">⚠️</div>
+                    <div class="error-title" id="error-title">エラーが発生しました</div>
+                </div>
+                <div class="error-content">
+                    <div class="error-description" id="error-description"></div>
+                    <div class="error-solution" id="error-solution"></div>
+                    <div class="error-actions" id="error-actions">
+                        <button id="retry-button" class="btn btn-primary btn-small">再試行</button>
+                        <button id="options-button" class="btn btn-secondary btn-small">設定画面</button>
+                    </div>
                 </div>
             </div>
+
         </div>
+
     </div>
 
-    <!-- オーバーレイメッセージ -->
+    <!-- トーストオーバーレイ -->
     <div class="success-overlay" id="success-overlay" style="display: none;"></div>
     <div class="error-overlay" id="error-overlay" style="display: none;"></div>
 
