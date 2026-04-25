@@ -933,6 +933,11 @@ body {
 
 .comment-author:hover { background: rgba(255,255,255,0.08); color: var(--text-primary); }
 
+[data-theme="light"] .comment-author {
+    background: #ebebeb;
+}
+[data-theme="light"] .comment-author:hover { background: #dcdcdc; }
+
 .comment-author.selected {
     background: var(--moderator);
     color: #fff;
