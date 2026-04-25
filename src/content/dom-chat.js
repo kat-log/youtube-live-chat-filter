@@ -4,11 +4,9 @@ window.__domChatInitialized = true;
 
 const seenIds = new Set();
 
-function attachObserver() {
+function doInitialSweep() {
   const itemList = document.querySelector('yt-live-chat-item-list-renderer #items');
-  if (!itemList) { setTimeout(attachObserver, 500); return; }
-
-  // 監視開始時点で既に表示されているメッセージを一括取得
+  if (!itemList) return;
   const existingMessages = [];
   for (const node of itemList.children) {
     if (node.tagName?.toLowerCase() === 'yt-live-chat-text-message-renderer') {
@@ -20,9 +18,19 @@ function attachObserver() {
     }
   }
   if (existingMessages.length > 0) sendMessages(existingMessages);
+}
 
+function attachObserver() {
+  const itemList = document.querySelector('yt-live-chat-item-list-renderer #items');
+  if (!itemList) { setTimeout(attachObserver, 500); return; }
+
+  doInitialSweep();
   new MutationObserver(handleMutations).observe(itemList, { childList: true });
 }
+
+chrome.runtime.onMessage.addListener((request) => {
+  if (request.action === 'requestInitialSweep') doInitialSweep();
+});
 
 function handleMutations(mutations) {
   const messages = [];

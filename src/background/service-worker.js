@@ -959,6 +959,9 @@ async function startDomMonitoring(tabId, videoId) {
     debugLog('[Background] dom-chat.js injection skipped:', e.message);
   }
 
+  // 注入済みガードで再実行がスキップされた場合でも初期スキャンを確実に実行
+  chrome.tabs.sendMessage(tabId, { action: 'requestInitialSweep' }).catch(() => {});
+
   return { success: true };
 }
 
