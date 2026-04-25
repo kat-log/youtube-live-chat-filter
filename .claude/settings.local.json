@@ -11,7 +11,8 @@
       "Bash(gh issue create --title 'fix: インストール直後の初回利用でcontent scriptが未注入のためエラーになる問題' --body ':*)",
       "Bash(gh issue:*)",
       "Bash(gh repo:*)",
-      "Bash(git remote:*)"
+      "Bash(git remote:*)",
+      "Bash(zip -r ../youtube-live-chat-filter-v1.7.3.zip . --exclude \"*.DS_Store\")"
     ],
     "deny": []
   }
