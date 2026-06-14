@@ -283,8 +283,10 @@ class PopupController {
             return true;
         }
 
-        if (!this.currentTab || !this.currentTab.url.includes('youtube.com/watch')) {
-            console.log('[YouTube Special Comments] Not a YouTube watch page, skipping content script check');
+        const isYouTubePage = this.currentTab && this.currentTab.url && 
+            (this.currentTab.url.includes('youtube.com/watch') || this.currentTab.url.includes('youtube.com/live/'));
+        if (!isYouTubePage) {
+            console.log('[YouTube Special Comments] Not a YouTube watch or live page, skipping content script check');
             return true;
         }
         
@@ -788,7 +790,8 @@ class PopupController {
             
             console.log('[YouTube Special Comments] Current tab:', tab.url);
             
-            if (tab.url && tab.url.includes('youtube.com/watch')) {
+            const isYouTubePage = tab.url && (tab.url.includes('youtube.com/watch') || tab.url.includes('youtube.com/live/'));
+            if (isYouTubePage) {
                 this.updateStatus('YouTube ページ');
                 await this.loadExistingComments();
             } else {
@@ -873,6 +876,11 @@ class PopupController {
             if (urlMatch) {
                 console.log('[YouTube Special Comments] Video ID from URL:', urlMatch[1]);
                 return urlMatch[1];
+            }
+            const liveMatch = this.currentTab.url.match(/\/live\/([^/?]+)/);
+            if (liveMatch) {
+                console.log('[YouTube Special Comments] Video ID from URL (live):', liveMatch[1]);
+                return liveMatch[1];
             }
         }
         
@@ -991,7 +999,9 @@ class PopupController {
     async tryDomAutoStart() {
         if (this.isMonitoring) return;
         if (this.chatMode !== 'dom') return;
-        if (!this.currentTab || !this.currentTab.url.includes('youtube.com/watch')) return;
+        const isYouTubePage = this.currentTab && this.currentTab.url && 
+            (this.currentTab.url.includes('youtube.com/watch') || this.currentTab.url.includes('youtube.com/live/'));
+        if (!isYouTubePage) return;
 
         try {
             const response = await this.sendMessageWithRetry({ action: 'getAutoStart' }, 2);
@@ -1005,7 +1015,9 @@ class PopupController {
     }
 
     async startMonitoring(suppressErrors = false) {
-        if (!this.currentTab || !this.currentTab.url.includes('youtube.com/watch')) {
+        const isYouTubePage = this.currentTab && this.currentTab.url && 
+            (this.currentTab.url.includes('youtube.com/watch') || this.currentTab.url.includes('youtube.com/live/'));
+        if (!isYouTubePage) {
             if (!suppressErrors) this.showError('YouTubeのライブ配信ページで使用してください');
             return;
         }
@@ -1395,7 +1407,8 @@ class PopupController {
     }
     
     updateMonitoringButtons(hasApiKey) {
-        const isYouTubePage = this.currentTab && this.currentTab.url && this.currentTab.url.includes('youtube.com/watch');
+        const isYouTubePage = this.currentTab && this.currentTab.url && 
+            (this.currentTab.url.includes('youtube.com/watch') || this.currentTab.url.includes('youtube.com/live/'));
         // DOMモードはAPIキー不要
         const effectiveHasApiKey = this.chatMode === 'dom' ? true : hasApiKey;
 

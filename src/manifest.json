@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YouTube特別コメントフィルター",
-  "version": "1.7.4",
+  "version": "1.7.5",
   "description": "YouTubeライブチャットでモデレーター、メンバー（スポンサー）、配信者からのコメントのみを表示",
 
   "permissions": ["storage", "activeTab", "scripting", "tabs"],
@@ -14,7 +14,7 @@
 
   "content_scripts": [
     {
-      "matches": ["*://*.youtube.com/watch*"],
+      "matches": ["*://*.youtube.com/watch*", "*://*.youtube.com/live*"],
       "js": ["content/content-script.js"],
       "run_at": "document_end"
     },

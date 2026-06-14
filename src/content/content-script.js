@@ -202,7 +202,7 @@ class YouTubeLiveChatMonitor {
   }
   
   isYouTubeLivePage() {
-    return window.location.href.includes('youtube.com/watch');
+    return window.location.href.includes('youtube.com/watch') || window.location.href.includes('youtube.com/live/');
   }
   
   async extractLiveChatId() {
@@ -477,6 +477,12 @@ YouTubeLiveChatMonitor.prototype.extractVideoId = function() {
     return pathMatch[1];
   }
   
+  // Method 2.5: URLのパスからvideo IDを抽出（/live/video_id形式）
+  const liveMatch = url.match(/\/live\/([^/?]+)/);
+  if (liveMatch) {
+    return liveMatch[1];
+  }
+  
   // Method 3: meta tagからvideo IDを抽出
   const metaTag = document.querySelector('meta[property="og:url"]');
   if (metaTag) {
@@ -484,6 +490,10 @@ YouTubeLiveChatMonitor.prototype.extractVideoId = function() {
     const metaMatch = metaUrl.match(/[?&]v=([^&]+)/);
     if (metaMatch) {
       return metaMatch[1];
+    }
+    const metaLiveMatch = metaUrl.match(/\/live\/([^/?]+)/);
+    if (metaLiveMatch) {
+      return metaLiveMatch[1];
     }
   }
   
