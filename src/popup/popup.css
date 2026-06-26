@@ -792,6 +792,26 @@ body {
     font-weight: 600;
     padding: 1px 6px;
     border-radius: var(--radius-pill);
+    cursor: pointer;
+    user-select: none;
+    transition: opacity 0.2s ease, transform 0.1s ease, filter 0.2s ease;
+}
+
+.comment-count-item:hover {
+    opacity: 0.85;
+    transform: translateY(-1px);
+}
+
+.comment-count-item:active {
+    transform: translateY(0);
+}
+
+.comment-count-item.filter-inactive {
+    opacity: 0.3;
+}
+
+.comment-count-item.filter-inactive:hover {
+    opacity: 0.75;
 }
 
 .owner-count     { background: var(--owner-bg);     color: var(--owner); }

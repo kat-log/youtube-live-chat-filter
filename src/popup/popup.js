@@ -628,6 +628,12 @@ class PopupController {
         this.elements.sponsorToggle.addEventListener('change', () => this.onFilterToggleChange('sponsor'));
         this.elements.normalToggle.addEventListener('change', () => this.onFilterToggleChange('normal'));
         
+        // コメント数バッジクリックによる直接フィルター
+        this.elements.ownerCount.addEventListener('click', () => this.toggleBadgeFilter('owner'));
+        this.elements.moderatorCount.addEventListener('click', () => this.toggleBadgeFilter('moderator'));
+        this.elements.sponsorCount.addEventListener('click', () => this.toggleBadgeFilter('sponsor'));
+        this.elements.normalCount.addEventListener('click', () => this.toggleBadgeFilter('normal'));
+        
         // プリセットボタン
         this.elements.presetSpecial.addEventListener('click', () => this.applyPreset('special'));
         this.elements.presetAll.addEventListener('click', () => this.applyPreset('all'));
@@ -1326,6 +1332,24 @@ class PopupController {
         this.elements.sponsorCount.textContent = `メンバー: ${counts.sponsor}`;
         this.elements.normalCount.textContent = `一般: ${counts.normal}`;
         
+        // フィルター状態に応じてバッジのアクティブ・非アクティブ表示を切り替え
+        const badgeElements = {
+            owner: this.elements.ownerCount,
+            moderator: this.elements.moderatorCount,
+            sponsor: this.elements.sponsorCount,
+            normal: this.elements.normalCount
+        };
+
+        for (const [key, element] of Object.entries(badgeElements)) {
+            if (element) {
+                if (this.commentFilters[key]) {
+                    element.classList.remove('filter-inactive');
+                } else {
+                    element.classList.add('filter-inactive');
+                }
+            }
+        }
+        
         if (filteredComments.length === 0) {
             console.log('[Popup] No filtered comments to display, showing placeholder');
             this.elements.noComments.style.display = 'block';
@@ -1574,6 +1598,45 @@ class PopupController {
             
         } catch (error) {
             console.error('[YouTube Special Comments] Error saving comment filters:', error);
+        }
+    }
+
+    async toggleBadgeFilter(filterType) {
+        console.log('[YouTube Special Comments] Badge clicked:', filterType);
+        
+        // 該当のカテゴリのみが現在有効であるか判定 (他はすべて無効)
+        const isOnlyActive = this.commentFilters[filterType] && 
+            Object.keys(this.commentFilters).every(key => key === filterType || !this.commentFilters[key]);
+        
+        if (isOnlyActive) {
+            // 既にそのカテゴリのみのフィルターが有効な状態でクリックされた場合は、フィルター解除（すべて有効）にする
+            this.commentFilters = {
+                owner: true,
+                moderator: true,
+                sponsor: true,
+                normal: true
+            };
+        } else {
+            // それ以外の場合は、クリックされたカテゴリのみを有効にし、他を無効にする
+            this.commentFilters = {
+                owner: false,
+                moderator: false,
+                sponsor: false,
+                normal: false
+            };
+            this.commentFilters[filterType] = true;
+        }
+
+        try {
+            await this.sendMessageWithRetry({
+                action: 'setCommentFilters',
+                filters: this.commentFilters
+            }, 2);
+            
+            this.updateFilterUI();
+            
+        } catch (error) {
+            console.error('[YouTube Special Comments] Error toggling badge filter:', error);
         }
     }
     
