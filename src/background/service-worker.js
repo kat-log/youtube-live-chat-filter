@@ -240,6 +240,88 @@ async function saveCommentsHistory(videoId = null) {
   }
 }
 
+// 保存のデバウンス（活発なチャットで毎バッチ書き込むと重いため）
+let pendingSaveTimer = null;
+
+function scheduleSaveCommentsHistory(delayMs = 500) {
+  if (pendingSaveTimer) return;
+  pendingSaveTimer = setTimeout(() => {
+    pendingSaveTimer = null;
+    saveCommentsHistory();
+  }, delayMs);
+}
+
+function flushCommentsHistory() {
+  if (pendingSaveTimer) {
+    clearTimeout(pendingSaveTimer);
+    pendingSaveTimer = null;
+  }
+  return saveCommentsHistory();
+}
+
+// === Service Worker 復帰時の状態復元 =========================================
+// MV3のService Workerは約30秒のアイドルで終了し、メモリ上のmonitoringStateが失われる。
+// 復帰後の最初のイベントでstorageから復元しないと、DOMモードでは
+// handleDomChatMessagesのガードに阻まれて以降のコメントが永久に捨てられる。
+let stateRestorePromise = null;
+
+function ensureStateRestored() {
+  if (!stateRestorePromise) {
+    stateRestorePromise = restoreStateFromStorage();
+  }
+  return stateRestorePromise;
+}
+
+async function restoreStateFromStorage() {
+  try {
+    const result = await chrome.storage.local.get(['monitoringState', 'commentFilters']);
+    const saved = result.monitoringState;
+
+    if (result.commentFilters) {
+      monitoringState.commentFilters = result.commentFilters;
+    }
+
+    if (!saved || !saved.isMonitoring) {
+      debugLog('[Background] No active monitoring state to restore');
+      return;
+    }
+
+    monitoringState.isMonitoring = true;
+    monitoringState.liveChatId = saved.liveChatId || null;
+    monitoringState.tabId = saved.tabId ?? null;
+    monitoringState.currentVideoId = saved.videoId || null;
+    // 旧バージョンが保存した状態にはchatModeが無いため、liveChatIdの有無で推定する
+    monitoringState.chatMode = saved.chatMode || (saved.liveChatId ? 'api' : 'dom');
+
+    if (monitoringState.currentVideoId) {
+      const storageKey = `commentsHistory_${monitoringState.currentVideoId}`;
+      const historyResult = await chrome.storage.local.get([storageKey]);
+      monitoringState.commentsHistory = historyResult[storageKey] || [];
+
+      // 復元した履歴のIDを重複判定に反映（復帰直後の再送を弾く）
+      for (const comment of monitoringState.commentsHistory.slice(-500)) {
+        if (comment?.id) monitoringState.processedMessageIds.add(comment.id);
+      }
+    }
+
+    debugLog('[Background] ♻️ Restored monitoring state after service worker wake-up:', {
+      chatMode: monitoringState.chatMode,
+      videoId: monitoringState.currentVideoId,
+      tabId: monitoringState.tabId,
+      comments: monitoringState.commentsHistory.length
+    });
+
+    updateBadge(true);
+
+    // APIモードはポーリングも止まっているので再開する
+    if (monitoringState.chatMode === 'api' && monitoringState.liveChatId) {
+      startPollingLoop();
+    }
+  } catch (error) {
+    debugError('[Background] Failed to restore monitoring state:', error);
+  }
+}
+
 // Service Worker起動時の初期化
 async function initializeServiceWorker() {
   debugLog('[Background] Initializing Service Worker');
@@ -262,6 +344,9 @@ async function initializeServiceWorker() {
 // Service Worker起動時に初期化を実行
 initializeServiceWorker();
 
+// Service Workerが終了から復帰した直後に監視状態を復元する
+ensureStateRestored();
+
 // タブ監視機能を設定
 setupTabMonitoring();
 
@@ -279,6 +364,13 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   debugLog('[Background] Restored', existingHistory.length, 'comments from storage on install');
   
   // インストール時に監視状態をリセット（履歴は保持）
+  // 起動直後のensureStateRestored()が古い状態を復元している可能性があるため、
+  // メモリ側も併せてリセットする
+  monitoringState.isMonitoring = false;
+  monitoringState.liveChatId = null;
+  monitoringState.tabId = null;
+  updateBadge(false);
+
   chrome.storage.local.set({
     monitoringState: {
       isMonitoring: false,
@@ -566,9 +658,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === 'getMonitoringVideoId') {
-    sendResponse({ 
-      success: true, 
-      videoId: monitoringState.currentVideoId 
+    ensureStateRestored().then(() => {
+      sendResponse({
+        success: true,
+        videoId: monitoringState.currentVideoId
+      });
     });
     return true;
   }
@@ -588,7 +682,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === 'domChatMessages') {
-    handleDomChatMessages(request.messages);
+    handleDomChatMessages(request.messages)
+      .catch(error => debugError('[Background] Error handling DOM chat messages:', error));
     sendResponse({ success: true });
     return true;
   }
@@ -680,7 +775,9 @@ function updateBadge(isMonitoring) {
 // Backgroundでの監視開始
 async function startBackgroundMonitoring(liveChatId, tabId, videoId) {
   debugLog('[Background] Starting background monitoring for liveChatId:', liveChatId, 'videoId:', videoId);
-  
+
+  await ensureStateRestored();
+
   if (monitoringState.isMonitoring) {
     debugLog('[Background] Already monitoring, stopping previous session');
     await stopBackgroundMonitoring();
@@ -721,17 +818,19 @@ async function startBackgroundMonitoring(liveChatId, tabId, videoId) {
     processedMessageIds: new Set(),
     commentFilters: currentFilters,
     commentsHistory: existingHistory,
-    currentVideoId: videoId
+    currentVideoId: videoId,
+    chatMode: 'api'
   };
-  
+
   debugLog('[Background] Monitoring state reset for video:', videoId, 'with', existingHistory.length, 'existing comments');
-  
-  // 状態を永続化
+
+  // 状態を永続化（Service Worker終了後の復元に必要な情報をすべて含める）
   await chrome.storage.local.set({
     monitoringState: {
       isMonitoring: true,
       liveChatId: liveChatId,
       tabId: tabId,
+      videoId: videoId,
       chatMode: 'api'
     }
   });
@@ -747,16 +846,18 @@ async function startBackgroundMonitoring(liveChatId, tabId, videoId) {
 async function stopBackgroundMonitoring() {
   debugLog('[Background] Stopping background monitoring');
 
+  await ensureStateRestored();
+
   monitoringState.isMonitoring = false;
 
   if (monitoringState.pollingInterval) {
     clearTimeout(monitoringState.pollingInterval);
     monitoringState.pollingInterval = null;
   }
-  
+
   // 履歴を保存
-  await saveCommentsHistory();
-  
+  await flushCommentsHistory();
+
   // 状態を永続化
   await chrome.storage.local.set({
     monitoringState: {
@@ -773,6 +874,8 @@ async function stopBackgroundMonitoring() {
 
 // 監視状態を取得
 async function getMonitoringState() {
+  await ensureStateRestored();
+
   const result = await chrome.storage.local.get(['monitoringState']);
   const savedState = result.monitoringState || { isMonitoring: false };
   
@@ -833,7 +936,7 @@ function startPollingLoop() {
           }
           
           // 履歴を永続化（即座にかつ定期的に）
-          saveCommentsHistory();
+          scheduleSaveCommentsHistory();
           
           // popupに新しいコメントを通知
           chrome.runtime.sendMessage({
@@ -897,6 +1000,19 @@ function startPollingLoop() {
 async function startDomMonitoring(tabId, videoId) {
   debugLog('[Background] Starting DOM monitoring for videoId:', videoId, 'tabId:', tabId);
 
+  await ensureStateRestored();
+
+  // 同じ動画を同じタブで既にDOM監視中なら、状態とバッファを壊さずに継続する
+  // （content script と popup の自動開始が競合しても取りこぼさないため）
+  if (monitoringState.isMonitoring &&
+      monitoringState.chatMode === 'dom' &&
+      monitoringState.currentVideoId === videoId &&
+      monitoringState.tabId === tabId) {
+    debugLog('[Background] DOM monitoring already active for this video, reusing session');
+    chrome.tabs.sendMessage(tabId, { action: 'requestInitialSweep' }).catch(() => {});
+    return { success: true };
+  }
+
   if (monitoringState.isMonitoring) {
     debugLog('[Background] Already monitoring, stopping previous session');
     await stopBackgroundMonitoring();
@@ -941,6 +1057,7 @@ async function startDomMonitoring(tabId, videoId) {
       isMonitoring: true,
       liveChatId: null,
       tabId: tabId,
+      videoId: videoId,
       chatMode: 'dom'
     }
   });
@@ -966,8 +1083,18 @@ async function startDomMonitoring(tabId, videoId) {
 }
 
 // DOM モードのメッセージ処理
-function handleDomChatMessages(messages) {
-  if (!monitoringState.isMonitoring || monitoringState.chatMode !== 'dom') return;
+async function handleDomChatMessages(messages) {
+  // Service Worker終了から復帰した直後はmonitoringStateが初期値に戻っているため、
+  // ガード判定の前に必ずstorageからの復元を待つ
+  await ensureStateRestored();
+
+  if (!monitoringState.isMonitoring || monitoringState.chatMode !== 'dom') {
+    debugLog('[Background] Dropping DOM messages - not monitoring in DOM mode', {
+      isMonitoring: monitoringState.isMonitoring,
+      chatMode: monitoringState.chatMode
+    });
+    return;
+  }
 
   const filters = monitoringState.commentFilters;
   const newMessages = messages.filter(msg => {
@@ -989,7 +1116,7 @@ function handleDomChatMessages(messages) {
     monitoringState.processedMessageIds = new Set(arr.slice(-500));
   }
 
-  saveCommentsHistory();
+  scheduleSaveCommentsHistory();
 
   chrome.runtime.sendMessage({ action: 'newSpecialComments', comments: newMessages }).catch(() => {});
   if (monitoringState.tabId) {
@@ -1003,42 +1130,8 @@ function handleDomChatMessages(messages) {
 // サービスワーカーのライフサイクル管理
 chrome.runtime.onStartup.addListener(async () => {
   debugLog('[Background] Extension startup');
-  // 保存された状態を復元
-  const result = await chrome.storage.local.get(['monitoringState', 'commentFilters']);
-  const savedState = result.monitoringState;
-  const savedFilters = result.commentFilters || {
-    owner: true,
-    moderator: true,
-    sponsor: true,
-    normal: true
-  };
-  
-  if (savedState && savedState.isMonitoring && savedState.liveChatId) {
-    debugLog('[Background] Restoring monitoring state');
-    
-    // コメント履歴も復元
-    const historyResult = await chrome.storage.local.get(['commentsHistory']);
-    const commentsHistory = historyResult.commentsHistory || [];
-    
-    monitoringState = {
-      isMonitoring: true,
-      liveChatId: savedState.liveChatId,
-      pageToken: null,
-      tabId: savedState.tabId,
-      pollingInterval: null,
-      processedMessageIds: new Set(),
-      commentFilters: savedFilters,
-      commentsHistory: commentsHistory
-    };
-    debugLog('[Background] Restored', commentsHistory.length, 'comments from storage');
-    debugLog('[Background] Restored comment filters:', savedFilters);
-    updateBadge(true);
-    startPollingLoop();
-  } else {
-    // 監視していない場合でもフィルター設定は復元
-    monitoringState.commentFilters = savedFilters;
-    debugLog('[Background] Restored comment filters:', savedFilters);
-  }
+  // DOMモード（liveChatIdがnull）も含めて共通の復元処理に任せる
+  await ensureStateRestored();
 });
 
 // タブが閉じられたときの処理
@@ -1048,15 +1141,15 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     // タブが閉じられても監視は継続
     monitoringState.tabId = null;
     // 履歴を保存
-    saveCommentsHistory();
+    flushCommentsHistory();
   }
 });
 
 // Service Worker停止前の処理
 chrome.runtime.onSuspend.addListener(() => {
   debugLog('[Background] Service Worker suspending, saving state');
-  // 履歴を確実に保存
-  saveCommentsHistory();
+  // 履歴を確実に保存（デバウンス待ちの分も含めて即時書き込む）
+  flushCommentsHistory();
 });
 
 // 拡張機能停止時の処理
@@ -1210,6 +1303,10 @@ async function cleanupOldCommentHistories() {
 
 // コメント履歴を取得（Video ID別）
 async function getCommentsHistory(videoId = null) {
+  await ensureStateRestored();
+  // デバウンス中の未保存分をストレージへ反映してから読み出す
+  await flushCommentsHistory();
+
   const targetVideoId = videoId || monitoringState.currentVideoId;
   debugLog('[Background] === getCommentsHistory called ===');
   debugLog('[Background] Target video ID:', targetVideoId);
@@ -1314,7 +1411,9 @@ async function autoStopMonitoring(reason) {
 // 診断情報取得機能
 async function getDiagnosticsInfo() {
   debugLog('[Background] Generating diagnostics information');
-  
+
+  await ensureStateRestored();
+
   try {
     const diagnostics = {
       timestamp: new Date().toISOString(),
