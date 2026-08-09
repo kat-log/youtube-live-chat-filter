@@ -59,6 +59,7 @@ class PopupController {
         this.comments = [];
         this.currentTab = null;
         this.currentVideoId = null;
+        this.monitoringVideoId = null; // バックグラウンドが実際に監視中の動画ID
         this.serviceWorkerReady = false;
         this.initializationComplete = false;
         
@@ -826,6 +827,8 @@ class PopupController {
             // Step 3: 監視状態を更新
             if (monitoringState.success) {
                 this.isMonitoring = monitoringState.isMonitoring;
+                // バックグラウンドが実際に監視している動画ID（現在のタブと一致しない場合がある）
+                this.monitoringVideoId = monitoringState.currentVideoId || null;
                 // chatMode は監視中の場合のみバックグラウンドと同期する
                 // （非監視時は chrome.storage.local の値を優先する）
                 if (monitoringState.isMonitoring && monitoringState.chatMode) {
@@ -1003,6 +1006,14 @@ class PopupController {
     }
     
     async tryDomAutoStart() {
+        // 「取得中」なのにバックグラウンドが別の動画（または不明な動画）を掴んだままだと
+        // 現在のタブのコメントが永久に届かないため、その場合は開始し直す
+        const isStaleSession = this.isMonitoring && this.monitoringVideoId !== this.currentVideoId;
+        if (isStaleSession) {
+            debugLog('[YouTube Special Comments] Stale monitoring session detected:',
+                this.monitoringVideoId, '->', this.currentVideoId);
+            this.isMonitoring = false;
+        }
         if (this.isMonitoring) return;
         if (this.chatMode !== 'dom') return;
         const isYouTubePage = this.currentTab && this.currentTab.url && 
@@ -1044,12 +1055,13 @@ class PopupController {
 
                 if (response && response.success) {
                     this.isMonitoring = true;
+                    this.monitoringVideoId = this.currentVideoId;
                     this.updateMonitoringButtonStates();
                     this.updateStatus('取得中（DOMモード）');
                     this.showError('');
                     this.hideDetailedError();
                     this.elements.fixExtensionContainer.style.display = 'none';
-                } else {
+                } else if (!suppressErrors) {
                     this.showError('DOMモードでの取得開始に失敗しました。');
                 }
                 return;
@@ -1077,6 +1089,7 @@ class PopupController {
             
             if (response && response.success) {
                 this.isMonitoring = true;
+                this.monitoringVideoId = this.currentVideoId;
                 this.updateMonitoringButtonStates();
                 this.updateStatus('取得中');
                 this.showError('');
