@@ -205,39 +205,168 @@ let monitoringState = {
   chatMode: null // 'api' | 'dom' — ストレージから復元するまで不定
 };
 
+// === ストレージ肥大化対策 ==================================================
+// storage.local は unlimitedStorage 無しだと10MB上限で、超えるとset()がrejectする。
+// 上限に達すると監視開始処理ごと巻き添えで失敗するため、保持量を抑えたうえで
+// 書き込み失敗を必ずハンドリングする。
+const HISTORY_KEY_PREFIX = 'commentsHistory_';
+const HISTORY_META_KEY = 'commentsHistoryMeta'; // { [videoId]: 最終更新時刻(ms) }
+const MAX_COMMENTS_PER_VIDEO = 2000;
+const MAX_HISTORY_VIDEOS = 5;
+
+function isQuotaError(error) {
+  const message = (error?.message || String(error || '')).toLowerCase();
+  return message.includes('quota') || message.includes('exceeded');
+}
+
+let lastQuotaNotifyAt = 0;
+
+function notifyStorageQuotaError() {
+  // 連続保存でエラー通知を撃ち続けないよう1分に1回に絞る
+  if (Date.now() - lastQuotaNotifyAt < 60000) return;
+  lastQuotaNotifyAt = Date.now();
+  notifyPopupOfError({
+    title: '保存領域の上限に達しました',
+    message: 'コメント履歴の保存に失敗しています',
+    solution: '古い履歴の自動削除を試みました。改善しない場合は履歴をクリアしてください',
+    action: 'clearHistory',
+    severity: 'medium',
+    originalError: 'storage quota exceeded',
+    pattern: 'storageQuota'
+  });
+}
+
+// storage.local への書き込み。失敗しても例外を投げず結果を返す
+// （呼び出し側の後続処理＝バッジ更新やスクリプト注入を止めないため）
+async function safeStorageSet(items) {
+  try {
+    await chrome.storage.local.set(items);
+    return { ok: true };
+  } catch (error) {
+    debugError('[Background] storage.set failed:', error);
+
+    if (isQuotaError(error) && await emergencyCleanup()) {
+      try {
+        await chrome.storage.local.set(items);
+        debugLog('[Background] storage.set recovered after emergency cleanup');
+        return { ok: true, recovered: true };
+      } catch (retryError) {
+        debugError('[Background] storage.set failed again after cleanup:', retryError);
+      }
+    }
+
+    if (isQuotaError(error)) notifyStorageQuotaError();
+    return { ok: false, error };
+  }
+}
+
+// 容量超過時の緊急退避：監視中の動画以外の履歴を捨て、手元の履歴も半分に切り詰める
+async function emergencyCleanup() {
+  try {
+    const keys = await listHistoryKeys();
+    const protectedKey = monitoringState.currentVideoId
+      ? `${HISTORY_KEY_PREFIX}${monitoringState.currentVideoId}`
+      : null;
+    const keysToRemove = keys.filter(key => key !== protectedKey);
+
+    if (keysToRemove.length > 0) {
+      await chrome.storage.local.remove(keysToRemove);
+      debugLog('[Background] 🚨 Emergency cleanup removed', keysToRemove.length, 'histories');
+    }
+
+    if (monitoringState.commentsHistory.length > 500) {
+      monitoringState.commentsHistory = monitoringState.commentsHistory.slice(-500);
+      debugLog('[Background] 🚨 Emergency cleanup trimmed in-memory history to 500');
+      return true;
+    }
+
+    return keysToRemove.length > 0;
+  } catch (error) {
+    debugError('[Background] Emergency cleanup failed:', error);
+    return false;
+  }
+}
+
+// 履歴キーの一覧。getKeys()が使える環境では全件読み込みを避ける
+async function listHistoryKeys() {
+  try {
+    if (typeof chrome.storage.local.getKeys === 'function') {
+      const keys = await chrome.storage.local.getKeys();
+      return keys.filter(key => key.startsWith(HISTORY_KEY_PREFIX));
+    }
+  } catch (error) {
+    debugWarn('[Background] storage.getKeys() unavailable, falling back:', error.message);
+  }
+  const all = await chrome.storage.local.get();
+  return Object.keys(all).filter(key => key.startsWith(HISTORY_KEY_PREFIX));
+}
+
+// 履歴の最終コメント時刻。DOMモードはトップレベル、APIモードはsnippet配下にある
+function latestTimestampOf(history) {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const raw = history[i]?.publishedAt || history[i]?.snippet?.publishedAt;
+    const time = raw ? new Date(raw).getTime() : 0;
+    if (time) return time;
+  }
+  return 0;
+}
+
+let lastMetaTouch = { videoId: null, at: 0 };
+
+async function touchHistoryMeta(videoId) {
+  // 保存のたびに読み書きすると無駄なので、同じ動画は1分に1回だけ更新する
+  if (lastMetaTouch.videoId === videoId && Date.now() - lastMetaTouch.at < 60000) return;
+
+  try {
+    const result = await chrome.storage.local.get([HISTORY_META_KEY]);
+    const meta = result[HISTORY_META_KEY] || {};
+    meta[videoId] = Date.now();
+    await chrome.storage.local.set({ [HISTORY_META_KEY]: meta });
+    lastMetaTouch = { videoId, at: Date.now() };
+  } catch (error) {
+    debugError('[Background] Failed to update history meta:', error);
+  }
+}
+
+// URLからVideo IDを抽出（watch / live / live_chat のいずれにも対応）
+function extractVideoIdFromUrl(url) {
+  if (!url) return null;
+  const queryMatch = url.match(/[?&]v=([^&#]+)/);
+  if (queryMatch) return queryMatch[1];
+  const liveMatch = url.match(/youtube\.com\/live\/([^/?&#]+)/);
+  if (liveMatch) return liveMatch[1];
+  return null;
+}
+
 // コメント履歴をストレージに保存（Video ID別）
 async function saveCommentsHistory(videoId = null) {
-  try {
-    const targetVideoId = videoId || monitoringState.currentVideoId;
-    if (!targetVideoId) {
-      debugWarn('[Background] No video ID available for saving comments');
-      return;
-    }
-    
-    const commentsToSave = monitoringState.commentsHistory || [];
-    const storageKey = `commentsHistory_${targetVideoId}`;
-    
-    debugLog('[Background] === Saving comments history ===');
-    debugLog('[Background] Video ID:', targetVideoId);
-    debugLog('[Background] Comments count:', commentsToSave.length);
-    
-    await chrome.storage.local.set({
-      [storageKey]: commentsToSave
-    });
-    
-    // 保存確認のため、すぐに読み取りテストを実行
-    const verification = await chrome.storage.local.get([storageKey]);
-    const savedCount = verification[storageKey]?.length || 0;
-    
-    debugLog('[Background] Saved and verified', savedCount, 'comments for video', targetVideoId);
-    
-    if (savedCount !== commentsToSave.length) {
-      debugError('[Background] Save verification failed! Expected:', commentsToSave.length, 'Actual:', savedCount);
-    }
-    
-  } catch (error) {
-    debugError('[Background] Failed to save comments history:', error);
+  const targetVideoId = videoId || monitoringState.currentVideoId;
+  if (!targetVideoId) {
+    debugWarn('[Background] No video ID available for saving comments');
+    return;
   }
+
+  if (monitoringState.commentsHistory.length > MAX_COMMENTS_PER_VIDEO) {
+    monitoringState.commentsHistory = monitoringState.commentsHistory.slice(-MAX_COMMENTS_PER_VIDEO);
+  }
+
+  const commentsToSave = monitoringState.commentsHistory || [];
+  const storageKey = `${HISTORY_KEY_PREFIX}${targetVideoId}`;
+
+  // 空配列を書くと中身の無い履歴キーが残り、保持枠を無駄に消費する
+  if (commentsToSave.length === 0) {
+    debugLog('[Background] Nothing to save for video', targetVideoId);
+    return;
+  }
+
+  const result = await safeStorageSet({ [storageKey]: commentsToSave });
+  if (!result.ok) {
+    debugError('[Background] Failed to save comments history for', targetVideoId);
+    return;
+  }
+
+  await touchHistoryMeta(targetVideoId);
+  debugLog('[Background] Saved', commentsToSave.length, 'comments for video', targetVideoId);
 }
 
 // 保存のデバウンス（活発なチャットで毎バッチ書き込むと重いため）
@@ -272,6 +401,42 @@ function ensureStateRestored() {
   return stateRestorePromise;
 }
 
+// 保存済みセッションがもう有効でない理由を返す（有効ならnull）。
+// ブラウザ終了などでisMonitoring:trueのまま残った状態を引きずると、
+// 別配信のコメントを古い動画の履歴に積んでしまう。
+async function getStaleSessionReason(saved) {
+  if (saved.tabId === null || saved.tabId === undefined) return 'タブ情報なし';
+
+  let tab;
+  try {
+    tab = await chrome.tabs.get(saved.tabId);
+  } catch (error) {
+    return 'タブが存在しない';
+  }
+
+  if (!tab?.url) return null; // URLが読めないときは判断を保留して継続
+
+  if (saved.videoId) {
+    const currentVideoId = extractVideoIdFromUrl(tab.url);
+    if (currentVideoId && currentVideoId !== saved.videoId) {
+      return `動画が変わっている (${saved.videoId} -> ${currentVideoId})`;
+    }
+  }
+
+  return null;
+}
+
+async function discardStaleSession(reason) {
+  debugLog('[Background] 🧹 Discarding stale monitoring session:', reason);
+  monitoringState.isMonitoring = false;
+  monitoringState.liveChatId = null;
+  monitoringState.tabId = null;
+  updateBadge(false);
+  await safeStorageSet({
+    monitoringState: { isMonitoring: false, liveChatId: null, tabId: null }
+  });
+}
+
 async function restoreStateFromStorage() {
   try {
     const result = await chrome.storage.local.get(['monitoringState', 'commentFilters']);
@@ -286,6 +451,12 @@ async function restoreStateFromStorage() {
       return;
     }
 
+    const staleReason = await getStaleSessionReason(saved);
+    if (staleReason) {
+      await discardStaleSession(staleReason);
+      return;
+    }
+
     monitoringState.isMonitoring = true;
     monitoringState.liveChatId = saved.liveChatId || null;
     monitoringState.tabId = saved.tabId ?? null;
@@ -294,7 +465,7 @@ async function restoreStateFromStorage() {
     monitoringState.chatMode = saved.chatMode || (saved.liveChatId ? 'api' : 'dom');
 
     if (monitoringState.currentVideoId) {
-      const storageKey = `commentsHistory_${monitoringState.currentVideoId}`;
+      const storageKey = `${HISTORY_KEY_PREFIX}${monitoringState.currentVideoId}`;
       const historyResult = await chrome.storage.local.get([storageKey]);
       monitoringState.commentsHistory = historyResult[storageKey] || [];
 
@@ -327,15 +498,17 @@ async function initializeServiceWorker() {
   debugLog('[Background] Initializing Service Worker');
   
   try {
-    // 古い履歴形式から新しい形式へのマイグレーション
+    // 旧バージョンが使っていた単一キーの履歴は参照されないまま容量を食うので削除する
     const oldResult = await chrome.storage.local.get(['commentsHistory']);
-    if (oldResult.commentsHistory && oldResult.commentsHistory.length > 0) {
-      debugLog('[Background] Found old format history, migration may be needed');
+    if (oldResult.commentsHistory) {
+      debugLog('[Background] Removing legacy commentsHistory key');
+      await chrome.storage.local.remove('commentsHistory');
     }
-    
-    // 定期的なクリーンアップを実行
-    cleanupOldCommentHistories();
-    
+
+    // クリーンアップは監視中の動画を守るため、状態復元を待ってから実行する
+    await ensureStateRestored();
+    await cleanupOldCommentHistories();
+
   } catch (error) {
     debugError('[Background] Error initializing service worker:', error);
   }
@@ -356,28 +529,28 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   // 自動Content Script再注入を実行
   await reinjectContentScripts(details.reason);
   
-  // ストレージから既存の履歴を復元
-  const result = await chrome.storage.local.get(['commentsHistory']);
-  const existingHistory = result.commentsHistory || [];
-  monitoringState.commentsHistory = existingHistory;
-  
-  debugLog('[Background] Restored', existingHistory.length, 'comments from storage on install');
-  
   // インストール時に監視状態をリセット（履歴は保持）
   // 起動直後のensureStateRestored()が古い状態を復元している可能性があるため、
   // メモリ側も併せてリセットする
   monitoringState.isMonitoring = false;
   monitoringState.liveChatId = null;
   monitoringState.tabId = null;
+  monitoringState.commentsHistory = [];
+  // currentVideoIdも消しておかないと、空になった履歴が保存され
+  // ストレージ上の履歴を上書きしてしまう
+  monitoringState.currentVideoId = null;
   updateBadge(false);
 
-  chrome.storage.local.set({
+  await safeStorageSet({
     monitoringState: {
       isMonitoring: false,
       liveChatId: null,
       tabId: null
     }
   });
+
+  // 旧バージョンで肥大化したストレージを更新時に整理する
+  await cleanupOldCommentHistories();
 });
 
 // Content Script自動再注入機能
@@ -646,8 +819,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     (async () => {
       const videoId = request.videoId || monitoringState.currentVideoId;
       if (videoId) {
-        const storageKey = `commentsHistory_${videoId}`;
-        await chrome.storage.local.remove(storageKey);
+        await chrome.storage.local.remove(`${HISTORY_KEY_PREFIX}${videoId}`);
+        const metaResult = await chrome.storage.local.get([HISTORY_META_KEY]);
+        const meta = metaResult[HISTORY_META_KEY] || {};
+        if (videoId in meta) {
+          delete meta[videoId];
+          await safeStorageSet({ [HISTORY_META_KEY]: meta });
+        }
+        if (lastMetaTouch.videoId === videoId) lastMetaTouch = { videoId: null, at: 0 };
       }
       if (!request.videoId || request.videoId === monitoringState.currentVideoId) {
         monitoringState.commentsHistory = [];
@@ -682,7 +861,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === 'domChatMessages') {
-    handleDomChatMessages(request.messages)
+    handleDomChatMessages(request.messages, sender)
       .catch(error => debugError('[Background] Error handling DOM chat messages:', error));
     sendResponse({ success: true });
     return true;
@@ -792,7 +971,7 @@ async function startBackgroundMonitoring(liveChatId, tabId, videoId) {
   } else if (videoId) {
     // 新しいVideo IDの場合は履歴をロード
     try {
-      const storageKey = `commentsHistory_${videoId}`;
+      const storageKey = `${HISTORY_KEY_PREFIX}${videoId}`;
       const result = await chrome.storage.local.get([storageKey]);
       existingHistory = result[storageKey] || [];
       debugLog('[Background] Loaded', existingHistory.length, 'comments for video', videoId);
@@ -825,7 +1004,7 @@ async function startBackgroundMonitoring(liveChatId, tabId, videoId) {
   debugLog('[Background] Monitoring state reset for video:', videoId, 'with', existingHistory.length, 'existing comments');
 
   // 状態を永続化（Service Worker終了後の復元に必要な情報をすべて含める）
-  await chrome.storage.local.set({
+  await safeStorageSet({
     monitoringState: {
       isMonitoring: true,
       liveChatId: liveChatId,
@@ -859,7 +1038,7 @@ async function stopBackgroundMonitoring() {
   await flushCommentsHistory();
 
   // 状態を永続化
-  await chrome.storage.local.set({
+  await safeStorageSet({
     monitoringState: {
       isMonitoring: false,
       liveChatId: null,
@@ -930,9 +1109,9 @@ function startPollingLoop() {
           // コメント履歴に追加
           monitoringState.commentsHistory.push(...newComments);
           
-          // 履歴サイズを制限（10000件まで）
-          if (monitoringState.commentsHistory.length > 10000) {
-            monitoringState.commentsHistory = monitoringState.commentsHistory.slice(-10000);
+          // 履歴サイズを制限
+          if (monitoringState.commentsHistory.length > MAX_COMMENTS_PER_VIDEO) {
+            monitoringState.commentsHistory = monitoringState.commentsHistory.slice(-MAX_COMMENTS_PER_VIDEO);
           }
           
           // 履歴を永続化（即座にかつ定期的に）
@@ -1024,7 +1203,7 @@ async function startDomMonitoring(tabId, videoId) {
     existingHistory = monitoringState.commentsHistory || [];
   } else if (videoId) {
     try {
-      const storageKey = `commentsHistory_${videoId}`;
+      const storageKey = `${HISTORY_KEY_PREFIX}${videoId}`;
       const result = await chrome.storage.local.get([storageKey]);
       existingHistory = result[storageKey] || [];
     } catch (error) {
@@ -1052,7 +1231,9 @@ async function startDomMonitoring(tabId, videoId) {
     chatMode: 'dom'
   };
 
-  await chrome.storage.local.set({
+  // 書き込みに失敗しても、以降のバッジ更新とdom-chat.js注入は必ず実行する
+  // （ここで例外を投げると監視が始まらず「コメントが1件も来ない」状態になる）
+  await safeStorageSet({
     monitoringState: {
       isMonitoring: true,
       liveChatId: null,
@@ -1083,10 +1264,26 @@ async function startDomMonitoring(tabId, videoId) {
 }
 
 // DOM モードのメッセージ処理
-async function handleDomChatMessages(messages) {
+async function handleDomChatMessages(messages, sender = null) {
   // Service Worker終了から復帰した直後はmonitoringStateが初期値に戻っているため、
   // ガード判定の前に必ずstorageからの復元を待つ
   await ensureStateRestored();
+
+  // 同じタブなのに監視対象の動画IDが食い違う場合は、復元した状態が古い。
+  // そのまま処理すると別動画の履歴にコメントを積んでしまうのでセッションを張り直す
+  const senderTabId = sender?.tab?.id ?? null;
+  const senderVideoId = extractVideoIdFromUrl(sender?.url) ||
+                        extractVideoIdFromUrl(sender?.tab?.url);
+
+  if (monitoringState.isMonitoring &&
+      monitoringState.chatMode === 'dom' &&
+      senderVideoId && senderTabId !== null &&
+      monitoringState.tabId === senderTabId &&
+      monitoringState.currentVideoId !== senderVideoId) {
+    debugLog('[Background] ♻️ Video changed under active DOM session:',
+      monitoringState.currentVideoId, '->', senderVideoId);
+    await startDomMonitoring(senderTabId, senderVideoId);
+  }
 
   if (!monitoringState.isMonitoring || monitoringState.chatMode !== 'dom') {
     debugLog('[Background] Dropping DOM messages - not monitoring in DOM mode', {
@@ -1109,8 +1306,8 @@ async function handleDomChatMessages(messages) {
   if (!newMessages.length) return;
 
   monitoringState.commentsHistory.push(...newMessages);
-  if (monitoringState.commentsHistory.length > 10000)
-    monitoringState.commentsHistory = monitoringState.commentsHistory.slice(-10000);
+  if (monitoringState.commentsHistory.length > MAX_COMMENTS_PER_VIDEO)
+    monitoringState.commentsHistory = monitoringState.commentsHistory.slice(-MAX_COMMENTS_PER_VIDEO);
   if (monitoringState.processedMessageIds.size > 1000) {
     const arr = Array.from(monitoringState.processedMessageIds);
     monitoringState.processedMessageIds = new Set(arr.slice(-500));
@@ -1258,44 +1455,68 @@ async function getCommentFilters() {
 async function cleanupOldCommentHistories() {
   try {
     debugLog('[Background] Starting comments history cleanup');
-    
-    // 全てのストレージキーを取得
-    const allData = await chrome.storage.local.get();
-    const historyKeys = Object.keys(allData).filter(key => key.startsWith('commentsHistory_'));
-    
+
+    const historyKeys = await listHistoryKeys();
+    const metaResult = await chrome.storage.local.get([HISTORY_META_KEY]);
+    const meta = metaResult[HISTORY_META_KEY] || {};
+    let metaChanged = false;
+
     debugLog('[Background] Found', historyKeys.length, 'comment history entries');
-    
-    // 現在の日付から7日前を計算
-    const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
-    
-    // 最大10個のVideo IDまで保持（最新のものから）
-    const maxEntries = 10;
-    
-    if (historyKeys.length > maxEntries) {
-      // 最新のものを保持し、古いものを削除
-      const sortedKeys = historyKeys.sort((a, b) => {
-        const aHistory = allData[a] || [];
-        const bHistory = allData[b] || [];
-        
-        // 最新のコメントのタイムスタンプで比較
-        const aLatest = aHistory.length > 0 ? new Date(aHistory[aHistory.length - 1].snippet?.publishedAt || 0).getTime() : 0;
-        const bLatest = bHistory.length > 0 ? new Date(bHistory[bHistory.length - 1].snippet?.publishedAt || 0).getTime() : 0;
-        
-        return bLatest - aLatest; // 降順
-      });
-      
-      const keysToRemove = sortedKeys.slice(maxEntries);
-      
+
+    // メタ情報が無いキー（旧バージョンが作った履歴）だけ実体を読んで補完し、
+    // ついでに上限を超えている配列を切り詰める
+    for (const key of historyKeys) {
+      const videoId = key.slice(HISTORY_KEY_PREFIX.length);
+      if (videoId in meta) continue;
+
+      const stored = await chrome.storage.local.get([key]);
+      const history = stored[key] || [];
+      meta[videoId] = latestTimestampOf(history);
+      metaChanged = true;
+
+      if (history.length > MAX_COMMENTS_PER_VIDEO) {
+        debugLog('[Background] Trimming oversized history:', key, history.length, '->', MAX_COMMENTS_PER_VIDEO);
+        await safeStorageSet({ [key]: history.slice(-MAX_COMMENTS_PER_VIDEO) });
+      }
+    }
+
+    // 実体が無くなったメタを掃除
+    for (const videoId of Object.keys(meta)) {
+      if (!historyKeys.includes(`${HISTORY_KEY_PREFIX}${videoId}`)) {
+        delete meta[videoId];
+        metaChanged = true;
+      }
+    }
+
+    // 新しい順に MAX_HISTORY_VIDEOS 件だけ残す。
+    // 監視中の動画はタイムスタンプに関わらず必ず保護する
+    const protectedVideoId = monitoringState.currentVideoId;
+    const sortedKeys = historyKeys.slice().sort((a, b) => {
+      const aVideoId = a.slice(HISTORY_KEY_PREFIX.length);
+      const bVideoId = b.slice(HISTORY_KEY_PREFIX.length);
+      if (aVideoId === protectedVideoId) return -1;
+      if (bVideoId === protectedVideoId) return 1;
+      return (meta[bVideoId] || 0) - (meta[aVideoId] || 0);
+    });
+
+    const keysToRemove = sortedKeys.slice(MAX_HISTORY_VIDEOS);
+
+    if (keysToRemove.length > 0) {
+      await chrome.storage.local.remove(keysToRemove);
       for (const key of keysToRemove) {
-        await chrome.storage.local.remove(key);
+        delete meta[key.slice(HISTORY_KEY_PREFIX.length)];
         debugLog('[Background] Removed old history:', key);
       }
-      
+      metaChanged = true;
       debugLog('[Background] Cleanup completed, removed', keysToRemove.length, 'old histories');
     } else {
       debugLog('[Background] No cleanup needed, within limit');
     }
-    
+
+    if (metaChanged) {
+      await safeStorageSet({ [HISTORY_META_KEY]: meta });
+    }
+
   } catch (error) {
     debugError('[Background] Error during cleanup:', error);
   }
@@ -1322,7 +1543,7 @@ async function getCommentsHistory(videoId = null) {
   }
   
   try {
-    const storageKey = `commentsHistory_${targetVideoId}`;
+    const storageKey = `${HISTORY_KEY_PREFIX}${targetVideoId}`;
     
     // 現在監視中のVideo IDの場合は、メモリを優先してストレージをフォールバックとする
     if (targetVideoId === monitoringState.currentVideoId && monitoringState.isMonitoring) {
@@ -1332,8 +1553,7 @@ async function getCommentsHistory(videoId = null) {
       debugLog('[Background] Memory has', memoryComments.length, 'comments');
       
       if (memoryComments.length > 0) {
-        // メモリにコメントがある場合はそれを使用し、ストレージも同期
-        await saveCommentsHistory(targetVideoId);
+        // 直前のflushCommentsHistory()でストレージ同期済みなので、そのまま返す
         debugLog('[Background] Returning', memoryComments.length, 'comments from memory');
         return { success: true, comments: memoryComments };
       } else {
@@ -1447,18 +1667,11 @@ async function getDiagnosticsInfo() {
       diagnostics.storage.hasApiKey = 'error';
     }
     
-    // ストレージ使用量確認
+    // ストレージ使用量確認（全件読み込みは重いのでバイト数とキー数だけ見る）
     try {
-      const storageData = await chrome.storage.local.get();
-      const historyKeys = Object.keys(storageData).filter(key => key.startsWith('commentsHistory_'));
+      const historyKeys = await listHistoryKeys();
       diagnostics.storage.historyEntriesCount = historyKeys.length;
-      
-      let totalComments = 0;
-      for (const key of historyKeys) {
-        const comments = storageData[key] || [];
-        totalComments += comments.length;
-      }
-      diagnostics.storage.totalStoredComments = totalComments;
+      diagnostics.storage.bytesInUse = await chrome.storage.local.getBytesInUse(null);
     } catch (error) {
       debugError('[Background] Error checking storage:', error);
       diagnostics.storage.historyEntriesCount = 'error';

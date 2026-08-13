@@ -4,7 +4,7 @@
   "version": "1.7.7",
   "description": "YouTubeライブチャットでモデレーター、メンバー（スポンサー）、配信者からのコメントのみを表示",
 
-  "permissions": ["storage", "activeTab", "scripting", "tabs"],
+  "permissions": ["storage", "unlimitedStorage", "activeTab", "scripting", "tabs"],
 
   "host_permissions": ["*://*.youtube.com/*", "*://*.googleapis.com/*"],
 
