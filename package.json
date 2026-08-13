@@ -1,0 +1,11 @@
+{
+  "name": "youtube-live-chat-filter",
+  "private": true,
+  "description": "YouTubeライブチャット特別コメントフィルターの開発用設定（テスト実行のみ。ビルドは不要）",
+  "scripts": {
+    "test": "node --test \"test/**/*.test.js\""
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
