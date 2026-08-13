@@ -375,9 +375,10 @@ class YouTubeLiveChatMonitor {
     debugLog('[Content Script] Received', newComments.length, 'new comments from background');
     
     this.specialComments.push(...newComments);
-    
-    if (this.specialComments.length > 10000) {
-      this.specialComments = this.specialComments.slice(-10000);
+
+    // background側の保持上限（MAX_COMMENTS_PER_VIDEO）に合わせる
+    if (this.specialComments.length > 2000) {
+      this.specialComments = this.specialComments.slice(-2000);
     }
     
     // popupに通知（開いている場合）
