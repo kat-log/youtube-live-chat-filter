@@ -107,7 +107,8 @@ function loadServiceWorker(chrome) {
       latestTimestampOf,
       safeStorageSet,
       MAX_COMMENTS_PER_VIDEO,
-      MAX_HISTORY_VIDEOS
+      MAX_HISTORY_VIDEOS,
+      MAX_AVATARS_PER_VIDEO
     };`;
 
   const context = vm.createContext({
@@ -122,13 +123,17 @@ function loadServiceWorker(chrome) {
 /** 読み込み時に走る非同期の初期化（状態復元・クリーンアップ）が終わるまで待つ */
 const settle = () => new Promise(resolve => setTimeout(resolve, 30));
 
-/** DOMモードのコメント1件。publishedAt はトップレベル（APIモードは snippet 配下） */
-const domComment = (index, timestamp = Date.now()) => ({
+/**
+ * DOMモードのコメント1件。publishedAt はトップレベル（APIモードは snippet 配下）
+ * @param {object} [extra] role や avatarUrl など、個別に上書きしたいフィールド
+ */
+const domComment = (index, timestamp = Date.now(), extra = {}) => ({
   id: `dom_${index}`,
   role: 'normal',
   displayName: `ユーザー${index}`,
   message: `テストコメント${index}`,
-  publishedAt: new Date(timestamp).toISOString()
+  publishedAt: new Date(timestamp).toISOString(),
+  ...extra
 });
 
 /** live_chat iframe から届くメッセージの sender を模す */

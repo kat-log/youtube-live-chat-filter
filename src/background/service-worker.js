@@ -201,6 +201,7 @@ let monitoringState = {
     normal: true
   },
   commentsHistory: [], // 現在監視中のVideo IDの履歴
+  avatarsByAuthor: {},  // { [displayName]: アバターURL } DOMモード用
   currentVideoId: null,
   chatMode: null // 'api' | 'dom' — ストレージから復元するまで不定
 };
@@ -213,6 +214,46 @@ const HISTORY_KEY_PREFIX = 'commentsHistory_';
 const HISTORY_META_KEY = 'commentsHistoryMeta'; // { [videoId]: 最終更新時刻(ms) }
 const MAX_COMMENTS_PER_VIDEO = 2000;
 const MAX_HISTORY_VIDEOS = 5;
+// アバターURLは発言者ごとに1つだけ持つ。コメント件数に比例させると
+// 同じURLを何百回も保存することになり、履歴の肥大化を招くため。
+const AVATAR_KEY_PREFIX = 'commentAvatars_';
+const MAX_AVATARS_PER_VIDEO = 500;
+
+// 新着コメントからアバターURLを取り出してマップへ入れ、追加分だけを返す。
+// URLはコメント側から落とすので、履歴の1件あたりのサイズは変わらない。
+function collectAvatars(messages) {
+  const delta = {};
+  for (const msg of messages) {
+    const url = msg.avatarUrl;
+    delete msg.avatarUrl;
+    if (!url || !msg.displayName) continue;
+    if (monitoringState.avatarsByAuthor[msg.displayName] === url) continue;
+    monitoringState.avatarsByAuthor[msg.displayName] = url;
+    delta[msg.displayName] = url;
+  }
+
+  // 上限超過分は古い方（挿入順が先）から捨てる
+  const names = Object.keys(monitoringState.avatarsByAuthor);
+  if (names.length > MAX_AVATARS_PER_VIDEO) {
+    for (const name of names.slice(0, names.length - MAX_AVATARS_PER_VIDEO)) {
+      delete monitoringState.avatarsByAuthor[name];
+    }
+  }
+
+  return delta;
+}
+
+async function loadAvatars(videoId) {
+  if (!videoId) return {};
+  try {
+    const key = `${AVATAR_KEY_PREFIX}${videoId}`;
+    const result = await chrome.storage.local.get([key]);
+    return result[key] || {};
+  } catch (error) {
+    debugError('[Background] Failed to load avatars:', error);
+    return {};
+  }
+}
 
 function isQuotaError(error) {
   const message = (error?.message || String(error || '')).toLowerCase();
@@ -270,7 +311,9 @@ async function emergencyCleanup() {
     const keysToRemove = keys.filter(key => key !== protectedKey);
 
     if (keysToRemove.length > 0) {
-      await chrome.storage.local.remove(keysToRemove);
+      const avatarKeysToRemove = keysToRemove.map(
+        key => `${AVATAR_KEY_PREFIX}${key.slice(HISTORY_KEY_PREFIX.length)}`);
+      await chrome.storage.local.remove([...keysToRemove, ...avatarKeysToRemove]);
       debugLog('[Background] 🚨 Emergency cleanup removed', keysToRemove.length, 'histories');
     }
 
@@ -363,6 +406,12 @@ async function saveCommentsHistory(videoId = null) {
   if (!result.ok) {
     debugError('[Background] Failed to save comments history for', targetVideoId);
     return;
+  }
+
+  // アバターは履歴とは別キー。書き込みに失敗してもコメント本体は残す
+  const avatars = monitoringState.avatarsByAuthor || {};
+  if (Object.keys(avatars).length > 0) {
+    await safeStorageSet({ [`${AVATAR_KEY_PREFIX}${targetVideoId}`]: avatars });
   }
 
   await touchHistoryMeta(targetVideoId);
@@ -468,6 +517,7 @@ async function restoreStateFromStorage() {
       const storageKey = `${HISTORY_KEY_PREFIX}${monitoringState.currentVideoId}`;
       const historyResult = await chrome.storage.local.get([storageKey]);
       monitoringState.commentsHistory = historyResult[storageKey] || [];
+      monitoringState.avatarsByAuthor = await loadAvatars(monitoringState.currentVideoId);
 
       // 復元した履歴のIDを重複判定に反映（復帰直後の再送を弾く）
       for (const comment of monitoringState.commentsHistory.slice(-500)) {
@@ -536,6 +586,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   monitoringState.liveChatId = null;
   monitoringState.tabId = null;
   monitoringState.commentsHistory = [];
+  monitoringState.avatarsByAuthor = {};
   // currentVideoIdも消しておかないと、空になった履歴が保存され
   // ストレージ上の履歴を上書きしてしまう
   monitoringState.currentVideoId = null;
@@ -1199,8 +1250,10 @@ async function startDomMonitoring(tabId, videoId) {
 
   // Video ID が同じ場合は既存履歴を保持
   let existingHistory = [];
+  let existingAvatars = {};
   if (videoId && videoId === monitoringState.currentVideoId) {
     existingHistory = monitoringState.commentsHistory || [];
+    existingAvatars = monitoringState.avatarsByAuthor || {};
   } else if (videoId) {
     try {
       const storageKey = `${HISTORY_KEY_PREFIX}${videoId}`;
@@ -1209,6 +1262,7 @@ async function startDomMonitoring(tabId, videoId) {
     } catch (error) {
       debugError('[Background] Failed to load existing history:', error);
     }
+    existingAvatars = await loadAvatars(videoId);
   }
 
   const currentFilters = monitoringState.commentFilters || {
@@ -1227,6 +1281,7 @@ async function startDomMonitoring(tabId, videoId) {
     processedMessageIds: new Set(),
     commentFilters: currentFilters,
     commentsHistory: existingHistory,
+    avatarsByAuthor: existingAvatars,
     currentVideoId: videoId,
     chatMode: 'dom'
   };
@@ -1305,6 +1360,9 @@ async function handleDomChatMessages(messages, sender = null) {
 
   if (!newMessages.length) return;
 
+  // コメント本体に載せず、発言者ごとのマップへ移す
+  const avatarDelta = collectAvatars(newMessages);
+
   monitoringState.commentsHistory.push(...newMessages);
   if (monitoringState.commentsHistory.length > MAX_COMMENTS_PER_VIDEO)
     monitoringState.commentsHistory = monitoringState.commentsHistory.slice(-MAX_COMMENTS_PER_VIDEO);
@@ -1315,11 +1373,16 @@ async function handleDomChatMessages(messages, sender = null) {
 
   scheduleSaveCommentsHistory();
 
-  chrome.runtime.sendMessage({ action: 'newSpecialComments', comments: newMessages }).catch(() => {});
+  chrome.runtime.sendMessage({
+    action: 'newSpecialComments',
+    comments: newMessages,
+    avatars: avatarDelta
+  }).catch(() => {});
   if (monitoringState.tabId) {
     chrome.tabs.sendMessage(monitoringState.tabId, {
       action: 'newSpecialComments',
-      comments: newMessages
+      comments: newMessages,
+      avatars: avatarDelta
     }).catch(() => {});
   }
 }
@@ -1502,7 +1565,10 @@ async function cleanupOldCommentHistories() {
     const keysToRemove = sortedKeys.slice(MAX_HISTORY_VIDEOS);
 
     if (keysToRemove.length > 0) {
-      await chrome.storage.local.remove(keysToRemove);
+      // 履歴とアバターは対で消さないと、参照されないアバターだけが残り続ける
+      const avatarKeysToRemove = keysToRemove.map(
+        key => `${AVATAR_KEY_PREFIX}${key.slice(HISTORY_KEY_PREFIX.length)}`);
+      await chrome.storage.local.remove([...keysToRemove, ...avatarKeysToRemove]);
       for (const key of keysToRemove) {
         delete meta[key.slice(HISTORY_KEY_PREFIX.length)];
         debugLog('[Background] Removed old history:', key);
@@ -1539,7 +1605,7 @@ async function getCommentsHistory(videoId = null) {
   
   if (!targetVideoId) {
     debugLog('[Background] No video ID provided, returning empty history');
-    return { success: true, comments: [] };
+    return { success: true, comments: [], avatars: {} };
   }
   
   try {
@@ -1555,7 +1621,7 @@ async function getCommentsHistory(videoId = null) {
       if (memoryComments.length > 0) {
         // 直前のflushCommentsHistory()でストレージ同期済みなので、そのまま返す
         debugLog('[Background] Returning', memoryComments.length, 'comments from memory');
-        return { success: true, comments: memoryComments };
+        return { success: true, comments: memoryComments, avatars: monitoringState.avatarsByAuthor };
       } else {
         // メモリが空の場合はストレージから復元を試行
         debugLog('[Background] Memory empty, checking storage for recovery');
@@ -1566,10 +1632,10 @@ async function getCommentsHistory(videoId = null) {
           // ストレージから復元してメモリにも保存
           monitoringState.commentsHistory = storageHistory;
           debugLog('[Background] Recovered', storageHistory.length, 'comments from storage to memory');
-          return { success: true, comments: storageHistory };
+          return { success: true, comments: storageHistory, avatars: monitoringState.avatarsByAuthor };
         } else {
           debugLog('[Background] No comments found in memory or storage for monitored video');
-          return { success: true, comments: [] };
+          return { success: true, comments: [], avatars: monitoringState.avatarsByAuthor };
         }
       }
     } else {
@@ -1578,12 +1644,12 @@ async function getCommentsHistory(videoId = null) {
       const result = await chrome.storage.local.get([storageKey]);
       const history = result[storageKey] || [];
       debugLog('[Background] Retrieved', history.length, 'comments for video', targetVideoId, 'from storage');
-      return { success: true, comments: history };
+      return { success: true, comments: history, avatars: await loadAvatars(targetVideoId) };
     }
     
   } catch (error) {
     debugError('[Background] Error getting comments history:', error);
-    return { success: true, comments: [] };
+    return { success: true, comments: [], avatars: {} };
   }
 }
 

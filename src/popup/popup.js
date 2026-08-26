@@ -57,6 +57,8 @@ class PopupController {
     constructor() {
         this.isMonitoring = false;
         this.comments = [];
+        // DOMモードのアバターURL（発言者名 -> URL）。背景側から受け取る
+        this.avatarsByAuthor = {};
         this.currentTab = null;
         this.currentVideoId = null;
         this.monitoringVideoId = null; // バックグラウンドが実際に監視中の動画ID
@@ -676,6 +678,8 @@ class PopupController {
         chrome.runtime.onMessage.addListener((request, _sender, _sendResponse) => {
             console.log('[Popup] Received message:', request.action, 'with', request.comments?.length || 0, 'comments');
             if (request.action === 'newSpecialComments') {
+                // formatComment がアバターを引けるよう、コメントより先に取り込む
+                Object.assign(this.avatarsByAuthor, request.avatars || {});
                 this.addNewComments(request.comments);
             } else if (request.action === 'monitoringAutoStopped') {
                 this.handleAutoStop(request.reason);
@@ -934,6 +938,7 @@ class PopupController {
             });
             
             if (historyResponse?.success && historyResponse.comments && historyResponse.comments.length > 0) {
+                Object.assign(this.avatarsByAuthor, historyResponse.avatars || {});
                 const formattedComments = this.formatHistoryComments(historyResponse.comments);
                 this.comments = formattedComments;
                 this.renderComments();
@@ -1177,6 +1182,7 @@ class PopupController {
             // content script が存在しない場合は無視
         }
         this.comments = [];
+        this.avatarsByAuthor = {};
         this.renderComments(true); // コメントクリア時はトップにスクロール
     }
     
@@ -1224,7 +1230,8 @@ class PopupController {
                 displayName: comment.displayName,
                 message: comment.message,
                 timestamp: new Date(comment.publishedAt).toLocaleTimeString('ja-JP'),
-                profileImageUrl: null
+                // 新着はコメントに同梱、履歴は発言者マップから引く
+                profileImageUrl: comment.avatarUrl || this.avatarsByAuthor[comment.displayName] || null
             };
         }
 
@@ -1278,6 +1285,23 @@ class PopupController {
                 commentsArea.classList.remove('scrolled-to-bottom');
             }
         }
+    }
+
+    // 画像URLは外部由来なので https のみ通す（javascript:/data: を弾く）
+    safeAvatarUrl(url) {
+        return typeof url === 'string' && url.startsWith('https://') ? url : null;
+    }
+
+    // アバター1つぶんのHTML。URLが無い／読み込めない場合は頭文字にフォールバックする
+    avatarHtml(comment) {
+        // サロゲートペア（絵文字など）を1文字として扱う
+        const initial = Array.from(comment.displayName || '?')[0] || '?';
+        const fallback = `<span class="comment-avatar comment-avatar--fallback" aria-hidden="true">${this.escapeHtml(initial)}</span>`;
+        const url = this.safeAvatarUrl(comment.profileImageUrl);
+        if (!url) return fallback;
+        return `<img class="comment-avatar" src="${this.escapeHtml(url)}" alt="" `
+             + `loading="lazy" decoding="async" width="20" height="20" `
+             + `data-initial="${this.escapeHtml(initial)}">`;
     }
 
     renderComments(forceScrollToTop = false, forceScrollToBottom = false) {
@@ -1383,6 +1407,7 @@ class PopupController {
             return `
                 <div class="comment-item">
                     <div class="comment-header">
+                        ${this.avatarHtml(comment)}
                         <span class="comment-role ${comment.roleClass}">${comment.role}</span>
                         <span class="${authorClass}" data-username="${this.escapeHtml(comment.displayName)}">${this.escapeHtml(comment.displayName)}</span>
                         <span class="comment-time">${comment.timestamp}</span>
@@ -1392,6 +1417,18 @@ class PopupController {
             `;
         }).join('');
         
+        // 画像が404などで読めなかったら頭文字表示に差し替える
+        // （MV3のCSPはインラインの onerror= を禁止するのでJSから張る）
+        this.elements.commentsList.querySelectorAll('img.comment-avatar').forEach(img => {
+            img.addEventListener('error', () => {
+                const span = document.createElement('span');
+                span.className = 'comment-avatar comment-avatar--fallback';
+                span.setAttribute('aria-hidden', 'true');
+                span.textContent = img.dataset.initial || '?';
+                img.replaceWith(span);
+            }, { once: true });
+        });
+
         // ユーザー名のクリックイベントを追加
         this.elements.commentsList.querySelectorAll('.comment-author').forEach(element => {
             element.addEventListener('click', (e) => {
