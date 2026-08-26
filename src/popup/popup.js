@@ -21,13 +21,24 @@ async function loadTheme() {
   }
 }
 
-// ストレージ変更時にテーマをリアルタイム反映
+// 生成中のコントローラ。ストレージ変更を再描画へ橋渡しするために保持する
+let popupController = null;
+
+// ストレージ変更時に表示設定をリアルタイム反映。
+// ドロワー・オプション画面・別ウィンドウのどこで変えても、経路はここ1本に集約する
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.theme) {
     const newTheme = changes.theme.newValue || 'light';
     document.documentElement.setAttribute('data-theme', newTheme);
     const toggle = document.getElementById('dark-mode-toggle');
     if (toggle) toggle.checked = (newTheme === 'dark');
+  }
+
+  if (changes.timeHour12 || changes.timeShowSeconds) {
+    popupController?.applyTimeSettings({
+      hour12: changes.timeHour12?.newValue,
+      showSeconds: changes.timeShowSeconds?.newValue
+    });
   }
 });
 
@@ -86,6 +97,10 @@ class PopupController {
 
         // 自動スクロール追従フラグ（ユーザーが意図的に上スクロールしていない限りtrue）
         this.autoScroll = true;
+
+        // 時刻表示の設定。既定は従来どおり「24時間表記・秒あり」
+        this.timeHour12 = false;
+        this.timeShowSeconds = true;
         
         debugLog('[YouTube Special Comments] Popup controller starting...');
         this.initializeElements();
@@ -166,6 +181,10 @@ class PopupController {
     
     // 基本設定の初期化（Content Scriptチェックを除く）
     async completeBasicInitialization() {
+        // 時刻設定は描画より先に確定させる（履歴復元が下の Promise.all 内で走るため、
+        // 並列に混ぜると一瞬だけ旧形式で描かれてそのまま残る）
+        await this.loadTimeSettings();
+
         // 初期状態設定
         this.updateMonitoringButtons(false);
         this.updateMonitoringButtonStates();
@@ -1198,7 +1217,7 @@ class PopupController {
             return !this.comments.some(existingComment => 
                 existingComment.message === newComment.message &&
                 existingComment.displayName === newComment.displayName &&
-                existingComment.timestamp === newComment.timestamp
+                existingComment.publishedAt === newComment.publishedAt
             );
         });
         
@@ -1229,7 +1248,9 @@ class PopupController {
                 roleClass,
                 displayName: comment.displayName,
                 message: comment.message,
-                timestamp: new Date(comment.publishedAt).toLocaleTimeString('ja-JP'),
+                // 整形は描画時に行う。ここで文字列に固めると表示形式の切り替えが
+                // 既存コメントに効かなくなる
+                publishedAt: comment.publishedAt,
                 // 新着はコメントに同梱、履歴は発言者マップから引く
                 profileImageUrl: comment.avatarUrl || this.avatarsByAuthor[comment.displayName] || null
             };
@@ -1261,7 +1282,7 @@ class PopupController {
             roleClass: roleClass,
             displayName: authorDetails.displayName,
             message: snippet.displayMessage,
-            timestamp: new Date(snippet.publishedAt).toLocaleTimeString('ja-JP'),
+            publishedAt: snippet.publishedAt,
             profileImageUrl: authorDetails.profileImageUrl
         };
     }
@@ -1300,8 +1321,72 @@ class PopupController {
         const url = this.safeAvatarUrl(comment.profileImageUrl);
         if (!url) return fallback;
         return `<img class="comment-avatar" src="${this.escapeHtml(url)}" alt="" `
-             + `loading="lazy" decoding="async" width="20" height="20" `
+             + `loading="lazy" decoding="async" width="24" height="24" `
              + `data-initial="${this.escapeHtml(initial)}">`;
+    }
+
+    // 時刻表示の設定を読み込む。未設定時は従来の見た目（24時間・秒あり）を維持する
+    async loadTimeSettings() {
+        try {
+            const { timeHour12, timeShowSeconds } =
+                await chrome.storage.local.get(['timeHour12', 'timeShowSeconds']);
+            this.timeHour12 = timeHour12 === true;
+            this.timeShowSeconds = timeShowSeconds !== false;
+        } catch (error) {
+            console.error('[YouTube Special Comments] Error loading time settings:', error);
+        }
+        this.syncTimeToggleUI();
+    }
+
+    // ストレージ変更から呼ばれる。渡された値だけ更新して全件を描き直す
+    applyTimeSettings({ hour12, showSeconds } = {}) {
+        if (hour12 !== undefined) this.timeHour12 = (hour12 === true);
+        if (showSeconds !== undefined) this.timeShowSeconds = (showSeconds !== false);
+        this.syncTimeToggleUI();
+        this.renderComments();
+    }
+
+    // ドロワーのトグル表示を現在値に合わせる（オプション画面側で変えた場合の追従）
+    syncTimeToggleUI() {
+        const hour12Toggle = document.getElementById('time-hour12-toggle');
+        const secondsToggle = document.getElementById('time-seconds-toggle');
+        if (hour12Toggle) hour12Toggle.checked = this.timeHour12;
+        if (secondsToggle) secondsToggle.checked = this.timeShowSeconds;
+    }
+
+    // toLocaleTimeString('ja-JP', {hour12:true}) は「午後10:34」になりAM/PMにならない。
+    // ロケール実装差にも左右されるので自前で組む
+    formatTimestamp(raw) {
+        const date = new Date(raw);
+        if (Number.isNaN(date.getTime())) return '';
+
+        const pad = n => String(n).padStart(2, '0');
+        const hours24 = date.getHours();
+
+        let text = this.timeHour12
+            ? `${hours24 % 12 || 12}:${pad(date.getMinutes())}`
+            : `${pad(hours24)}:${pad(date.getMinutes())}`;
+
+        if (this.timeShowSeconds) text += `:${pad(date.getSeconds())}`;
+        if (this.timeHour12) text += hours24 < 12 ? ' AM' : ' PM';
+
+        return text;
+    }
+
+    // 一覧の役割バッジ。文字ではなくアイコンで出し、意味は title/aria-label で補う。
+    // 一般コメントはバッジ無し（特別コメントだけが目に留まるようにする）
+    roleBadgeHtml(comment) {
+        const icons = {
+            'role-owner':     '\u{1F451}',
+            'role-moderator': '\u{1F527}',
+            'role-sponsor':   '\u{2B50}'
+        };
+        const icon = icons[comment.roleClass];
+        if (!icon) return '';
+
+        const label = this.escapeHtml(comment.role);
+        return `<span class="comment-role comment-role--icon ${comment.roleClass}" `
+             + `title="${label}" role="img" aria-label="${label}">${icon}</span>`;
     }
 
     renderComments(forceScrollToTop = false, forceScrollToBottom = false) {
@@ -1408,9 +1493,9 @@ class PopupController {
                 <div class="comment-item">
                     <div class="comment-header">
                         ${this.avatarHtml(comment)}
-                        <span class="comment-role ${comment.roleClass}">${comment.role}</span>
+                        ${this.roleBadgeHtml(comment)}
                         <span class="${authorClass}" data-username="${this.escapeHtml(comment.displayName)}">${this.escapeHtml(comment.displayName)}</span>
-                        <span class="comment-time">${comment.timestamp}</span>
+                        <span class="comment-time">${this.formatTimestamp(comment.publishedAt)}</span>
                     </div>
                     <div class="comment-message">${this.escapeHtml(comment.message)}</div>
                 </div>
@@ -2037,7 +2122,7 @@ class PopupController {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    new PopupController();
+    popupController = new PopupController();
     initDrawer();
 });
 
@@ -2070,6 +2155,22 @@ function initDrawer() {
     backdrop.addEventListener('click', closeDrawer);
 
     drawer.addEventListener('click', (e) => e.stopPropagation());
+
+    // ドロワー内 時刻表示トグル。
+    // 描画への反映は書き込まない（storage.onChanged 側が拾って再描画する）
+    const timeHour12Toggle = document.getElementById('time-hour12-toggle');
+    if (timeHour12Toggle) {
+        timeHour12Toggle.addEventListener('change', async () => {
+            await chrome.storage.local.set({ timeHour12: timeHour12Toggle.checked });
+        });
+    }
+
+    const timeSecondsToggle = document.getElementById('time-seconds-toggle');
+    if (timeSecondsToggle) {
+        timeSecondsToggle.addEventListener('change', async () => {
+            await chrome.storage.local.set({ timeShowSeconds: timeSecondsToggle.checked });
+        });
+    }
 
     // ドロワー内ダークモードトグル
     const darkToggle = document.getElementById('dark-mode-toggle');

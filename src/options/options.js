@@ -47,6 +47,8 @@ class OptionsController {
             debugModeSwitch: document.getElementById('debug-mode'),
             autoStartSwitch: document.getElementById('auto-start'),
             themeToggle: document.getElementById('theme-toggle'),
+            timeHour12Toggle: document.getElementById('time-hour12'),
+            timeSecondsToggle: document.getElementById('time-seconds'),
             toast: document.getElementById('toast')
         };
     }
@@ -58,6 +60,8 @@ class OptionsController {
         this.elements.debugModeSwitch.addEventListener('change', () => this.saveSettings());
         this.elements.autoStartSwitch.addEventListener('change', () => this.saveAutoStart());
         this.elements.themeToggle.addEventListener('change', () => this.saveTheme());
+        this.elements.timeHour12Toggle.addEventListener('change', () => this.saveTimeFormat());
+        this.elements.timeSecondsToggle.addEventListener('change', () => this.saveTimeFormat());
         
         this.elements.apiKeyInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
@@ -76,7 +80,7 @@ class OptionsController {
                 chrome.runtime.sendMessage({ action: 'getApiKey' }),
                 chrome.runtime.sendMessage({ action: 'getDebugMode' }),
                 chrome.runtime.sendMessage({ action: 'getAutoStart' }),
-                chrome.storage.local.get(['theme'])
+                chrome.storage.local.get(['theme', 'timeHour12', 'timeShowSeconds'])
             ]);
 
             if (apiResponse.apiKey) {
@@ -92,6 +96,10 @@ class OptionsController {
             }
 
             this.elements.themeToggle.checked = (themeResult.theme === 'dark');
+
+            // 未設定時は従来の見た目（24時間表記・秒あり）に合わせる
+            this.elements.timeHour12Toggle.checked = (themeResult.timeHour12 === true);
+            this.elements.timeSecondsToggle.checked = (themeResult.timeShowSeconds !== false);
 
             this.updateButtonStates();
         } catch (error) {
@@ -148,6 +156,18 @@ class OptionsController {
             });
         } catch (error) {
             console.error('Error saving auto-start setting:', error);
+        }
+    }
+
+    async saveTimeFormat() {
+        try {
+            // ポップアップ側は chrome.storage.onChanged を見て再描画する
+            await chrome.storage.local.set({
+                timeHour12: this.elements.timeHour12Toggle.checked,
+                timeShowSeconds: this.elements.timeSecondsToggle.checked
+            });
+        } catch (error) {
+            console.error('Error saving time format setting:', error);
         }
     }
 
