@@ -183,10 +183,11 @@ popup.js
    むしろ現状より軽くなる。C（差分描画）は `renderComments()` の構造変更に
    なるので別タスクのまま。
 
-   検証事項: `content-visibility` は画面外要素の高さを推定値で持つため、
-   「一番下へスクロール」の着地位置がわずかにずれる可能性がある
-   （`scrollTop = scrollHeight` を使っている箇所）。実機で要確認。
-   ブラウザのページ内検索（Ctrl+F）の挙動も併せて見ること。
+   ~~検証事項~~ → **検証済み**: 懸念した「一番下へスクロール」の着地ずれは
+   Chromium 2000件で再現しなかった（`scrollTop` が `scrollHeight - clientHeight`
+   と完全一致し、`isAtBottom()` も true）。`contain-intrinsic-size: auto` が
+   一度描画した実寸を記憶するため。ただしポップアップの実サイズでの最終確認は
+   実機で行うこと。
 
 4. **フォールバック表示を必ず用意する**
    URLが取れない（旧履歴・DOM構造変化・画像404）ケースは必ず出る。
@@ -197,14 +198,16 @@ popup.js
 
 ## 5. 実装ステップ（推奨順）
 
+**実装状況**: Phase 1〜4 は実装・テスト済み（Phase 5 のトグルは未着手）。
+
 | Phase | 内容 | 変更ファイル | 規模 |
 |---|---|---|---|
-| 1 | APIモードのアバター表示 | `popup.js` / `popup.css` | 約30行。**まずここだけで動くものが見える** |
-| 2 | DOMモードの取得 | `dom-chat.js` / `service-worker.js` / `popup.js` | 約80行 |
-| 1.5 | `content-visibility` の1行追加（§4-3） | `popup.css` | 1行。**アバターより先に入れてよい** |
-| 3 | マップのクリーンアップ連動 | `service-worker.js` | 約20行 |
-| 4 | 回帰テスト追加 | `test/service-worker.test.js` | 約40行 |
-| 5 | （任意）オプションでON/OFF | `options.*` | 約20行 |
+| ✅ 1 | APIモードのアバター表示 | `popup.js` / `popup.css` | 約30行。**まずここだけで動くものが見える** |
+| ✅ 2 | DOMモードの取得 | `dom-chat.js` / `service-worker.js` / `popup.js` | 約80行 |
+| ✅ 1.5 | `content-visibility` の1行追加（§4-3） | `popup.css` | 1行。**アバターより先に入れてよい** |
+| ✅ 3 | マップのクリーンアップ連動 | `service-worker.js` | 約20行 |
+| ✅ 4 | 回帰テスト追加 | `test/service-worker.test.js` | 約40行 |
+| ⬜ 5 | （任意）オプションでON/OFF | `options.*` | 約20行 |
 
 Phase 5 を入れるかは好み。アイコン非表示のほうが情報密度が高いと感じる人は
 いるはずなので、`showAvatars` トグル（既定ON）はあってよい。

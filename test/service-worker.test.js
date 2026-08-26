@@ -220,6 +220,129 @@ describe('DOMモードのコメント取り込み', () => {
   });
 });
 
+describe('アバターの取り込み', () => {
+  // 発言者ごとに1つだけ持つ設計。コメント件数に比例させると、同じURLを
+  // 何百回も履歴に書くことになり、過去に障害を出した肥大化を再発させる。
+  const AVATAR = 'https://yt3.ggpht.com/AAA=s64-c-k-c0x00ffffff-no-rj';
+
+  const startedSession = (sw, filters) => sw.setState({
+    isMonitoring: true, chatMode: 'dom', tabId: 3, currentVideoId: 'V',
+    commentsHistory: [], processedMessageIds: new Set(), avatarsByAuthor: {},
+    ...(filters ? { commentFilters: filters } : {})
+  });
+
+  test('アバターは発言者ごとのマップに入り、コメント本体には残らない', async () => {
+    const { chrome, store } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    startedSession(sw);
+
+    // 同じ人が3回発言しても、保存されるURLは1つだけ
+    await sw.handleDomChatMessages([
+      { ...domComment(1), displayName: '常連さん', avatarUrl: AVATAR },
+      { ...domComment(2), displayName: '常連さん', avatarUrl: AVATAR },
+      { ...domComment(3), displayName: '常連さん', avatarUrl: AVATAR }
+    ], senderFor(3, 'V'));
+    await sw.getCommentsHistory('V');
+
+    assert.deepEqual({ ...sw.monitoringState.avatarsByAuthor }, { '常連さん': AVATAR });
+    assert.equal(store['commentAvatars_V']['常連さん'], AVATAR);
+
+    const saved = store['commentsHistory_V'];
+    assert.equal(saved.length, 3);
+    for (const comment of saved) {
+      assert.ok(!('avatarUrl' in comment), 'コメント本体にURLが残っている');
+    }
+  });
+
+  test('新着通知には追加分のアバターだけが載る', async () => {
+    const { chrome, calls } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    startedSession(sw);
+
+    await sw.handleDomChatMessages(
+      [{ ...domComment(1), displayName: 'A', avatarUrl: AVATAR }], senderFor(3, 'V'));
+    await sw.handleDomChatMessages(
+      [{ ...domComment(2), displayName: 'A', avatarUrl: AVATAR }], senderFor(3, 'V'));
+
+    // Service Worker は vm コンテキスト内で動くため、そこで作られたオブジェクトは
+    // プロトタイプが別realmになる。deepEqual を通すために展開して比較する
+    const deltas = calls.runtimeMessages
+      .filter(m => m.action === 'newSpecialComments')
+      .map(m => ({ ...m.avatars }));
+    assert.deepEqual(deltas[0], { A: AVATAR });
+    assert.deepEqual(deltas[1], {}, '既知のアバターを毎回送り直している');
+  });
+
+  test('フィルターで除外された種別のアバターは取り込まない', async () => {
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    startedSession(sw, { owner: true, moderator: true, sponsor: true, normal: false });
+
+    await sw.handleDomChatMessages([
+      { ...domComment(1), role: 'normal', displayName: '一般人', avatarUrl: AVATAR },
+      { ...domComment(2), role: 'owner', displayName: '配信者', avatarUrl: AVATAR }
+    ], senderFor(3, 'V'));
+
+    assert.deepEqual(Object.keys(sw.monitoringState.avatarsByAuthor), ['配信者']);
+  });
+
+  test('上限を超えたアバターは古い方から捨てられる', async () => {
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    startedSession(sw);
+
+    const over = sw.MAX_AVATARS_PER_VIDEO + 10;
+    await sw.handleDomChatMessages(
+      Array.from({ length: over }, (_, i) =>
+        ({ ...domComment(i), displayName: `視聴者${i}`, avatarUrl: `${AVATAR}#${i}` })),
+      senderFor(3, 'V'));
+
+    const names = Object.keys(sw.monitoringState.avatarsByAuthor);
+    assert.equal(names.length, sw.MAX_AVATARS_PER_VIDEO);
+    assert.ok(!names.includes('視聴者0'), '古いアバターが残っている');
+    assert.ok(names.includes(`視聴者${over - 1}`), '最新のアバターが消えている');
+  });
+
+  test('履歴のクリーンアップでアバターも一緒に消える', async () => {
+    // 片方だけ残ると、参照されないアバターが永久にストレージを食う
+    const { chrome, store } = createChromeMock({ tabs: watchTab(7, 'ACTIVE') });
+    const base = Date.parse('2026-08-01T00:00:00Z');
+    ['ACTIVE', 'v1', 'v2', 'v3', 'v4', 'v5', 'v6'].forEach((videoId, i) => {
+      store[`commentsHistory_${videoId}`] = [domComment(1, base + i * 86400000)];
+      store[`commentAvatars_${videoId}`] = { 誰か: AVATAR };
+    });
+    store.monitoringState = activeSession(7, 'ACTIVE');
+
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    await sw.cleanupOldCommentHistories();
+
+    const avatarKeys = Object.keys(store).filter(k => k.startsWith('commentAvatars_')).sort();
+    const remaining = historyKeys(store).map(k => k.replace('commentsHistory_', ''));
+    assert.deepEqual(avatarKeys.map(k => k.replace('commentAvatars_', '')), remaining,
+      '履歴とアバターの残り方がずれている');
+  });
+
+  test('同じ動画の監視を再開するとアバターが復元される', async () => {
+    const { chrome, store } = createChromeMock({ tabs: watchTab(3, 'V') });
+    store['commentsHistory_V'] = [domComment(1)];
+    store['commentAvatars_V'] = { 常連さん: AVATAR };
+
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    await sw.startDomMonitoring(3, 'V');
+
+    assert.equal(sw.monitoringState.avatarsByAuthor['常連さん'], AVATAR);
+
+    const result = await sw.getCommentsHistory('V');
+    assert.equal(result.avatars['常連さん'], AVATAR, 'ポップアップにアバターが渡っていない');
+  });
+});
+
 describe('ユーティリティ', () => {
   test('URL から videoId を抽出できる', async () => {
     const sw = loadServiceWorker(createChromeMock().chrome);

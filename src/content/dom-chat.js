@@ -56,6 +56,7 @@ function extractMessage(el) {
 
   const displayName = authorEl.textContent.trim();
   const message = extractText(messageEl);
+  const avatarUrl = extractAvatarUrl(el);
   const authorType = el.getAttribute('author-type') || '';
   const role = authorType === 'owner' ? 'owner'
              : authorType === 'moderator' ? 'moderator'
@@ -67,7 +68,17 @@ function extractMessage(el) {
   const pos = Array.from(el.parentNode?.children || []).indexOf(el);
   const id = `dom_${hash}_${pos}`;
 
-  return { id, role, displayName, message, publishedAt: new Date().toISOString() };
+  return { id, role, displayName, message, publishedAt: new Date().toISOString(), avatarUrl };
+}
+
+// アバター画像のURL。取れなくても null を返すだけでコメント取得は止めない
+function extractAvatarUrl(el) {
+  const img = el.querySelector('#author-photo img') || el.querySelector('img#img');
+  const src = img?.getAttribute('src') || '';
+  // YouTubeのDOM由来＝外部入力。javascript: や data: を弾く
+  if (!src.startsWith('https://')) return null;
+  // 末尾の "=s32-..." はサイズ指定。高DPI向けに2倍で要求する
+  return src.replace(/=s\d+-/, '=s64-');
 }
 
 function extractText(el) {
