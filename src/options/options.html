@@ -47,6 +47,30 @@
             </section>
 
             <section class="section">
+                <h2>コメント時刻の表示</h2>
+                <div class="form-group">
+                    <label for="time-hour12">12時間表記（AM/PM）</label>
+                    <div class="switch-container">
+                        <input type="checkbox" id="time-hour12" class="debug-switch">
+                        <label for="time-hour12" class="switch-label"></label>
+                    </div>
+                </div>
+                <p class="help-text">
+                    ONにすると <code>10:34 PM</code>、OFFにすると <code>22:34</code> の形式で表示します。
+                </p>
+                <div class="form-group">
+                    <label for="time-seconds">秒を表示</label>
+                    <div class="switch-container">
+                        <input type="checkbox" id="time-seconds" class="debug-switch">
+                        <label for="time-seconds" class="switch-label"></label>
+                    </div>
+                </div>
+                <p class="help-text">
+                    OFFにすると <code>22:34:56</code> の秒を省いて <code>22:34</code> と表示します。
+                </p>
+            </section>
+
+            <section class="section">
                 <h2>デバッグモード</h2>
                 <div class="form-group">
                     <label for="debug-mode">デバッグモード</label>

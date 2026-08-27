@@ -58,10 +58,17 @@
     --border:        rgba(0, 0, 0, 0.10);
     --border-strong: rgba(0, 0, 0, 0.18);
 
-    --owner-bg:      rgba(255, 112, 67, 0.15);
-    --moderator-bg:  rgba(92, 158, 245, 0.15);
-    --sponsor-bg:    rgba(74, 222, 128, 0.15);
-    --normal-bg:     rgba(110, 110, 122, 0.12);
+    /* 役割色はダークテーマ用の明るい値のままだと白背景で沈むので暗いカットに差し替える
+       （発言者名を役割色で塗るようになったため、コントラストが可読性に直結する） */
+    --owner:         #c2410c;
+    --moderator:     #1d4ed8;
+    --sponsor:       #15803d;
+    --normal:        #5a5a66;
+
+    --owner-bg:      rgba(194, 65, 12, 0.12);
+    --moderator-bg:  rgba(29, 78, 216, 0.12);
+    --sponsor-bg:    rgba(21, 128, 61, 0.12);
+    --normal-bg:     rgba(90, 90, 102, 0.12);
 }
 
 /* ═══════════════════════════════════════════
@@ -79,14 +86,20 @@ html {
 }
 
 body {
-    font-family: -apple-system, 'Hiragino Sans', 'Yu Gothic UI', 'Segoe UI', sans-serif;
+    /* Windowsの 'Yu Gothic' Regular は線が細いので 'Yu Gothic Medium' を先に置く。
+       -webkit-font-smoothing: antialiased はmacOSで文字を痩せさせるため使わない */
+    font-family:
+        -apple-system, BlinkMacSystemFont,
+        'Hiragino Sans', 'Hiragino Kaku Gothic ProN',
+        'Yu Gothic Medium', 'Yu Gothic UI', 'Yu Gothic',
+        Meiryo,
+        'Segoe UI', Roboto, sans-serif;
     font-size: 13px;
     background: var(--bg-base);
     color: var(--text-primary);
     width: 420px;
     height: 600px;
     overflow: hidden;
-    -webkit-font-smoothing: antialiased;
 }
 
 /* ═══════════════════════════════════════════
@@ -533,10 +546,23 @@ body {
     background: #fff;
 }
 
+/* 色クラスを持たないトグル（ダークモード・時刻表示）のON色。
+   これが無いとONでもトラック色が変わらず、ライトテーマでは
+   白トラック＋白ノブになって ON/OFF を見分けられなかった。
+   役割スライダー（.owner-slider 等）は同じ詳細度なので、必ずこの下に置くこと */
+.filter-toggle-container input:checked + .toggle-slider { background: var(--accent); }
+
 .filter-toggle-container input:checked + .owner-slider     { background: var(--owner); }
 .filter-toggle-container input:checked + .moderator-slider { background: var(--moderator); }
 .filter-toggle-container input:checked + .sponsor-slider   { background: var(--sponsor); }
 .filter-toggle-container input:checked + .normal-slider    { background: var(--normal); }
+
+/* ライトテーマではトラックもノブも白系で背景に溶けるため、地の色を入れ替える */
+[data-theme="light"] .toggle-slider { background: rgba(0, 0, 0, 0.18); }
+[data-theme="light"] .toggle-slider::before {
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
 
 .toggle-label {
     font-size: 12px;
@@ -560,6 +586,17 @@ body {
 .role-moderator { background: var(--moderator-bg); color: var(--moderator); }
 .role-sponsor   { background: var(--sponsor-bg);   color: var(--sponsor); }
 .role-normal    { background: var(--normal-bg);     color: var(--normal); }
+
+/* コメント一覧の役割バッジはアイコンで出す。「モデレーター」の文字バッジは
+   420px幅では横を食いすぎるので、その分を名前と本文に回す。
+   ドロワーのフィルター側は文字バッジのまま（.comment-role 単体） */
+.comment-role--icon {
+    background: none;
+    padding: 0;
+    font-size: 12px;
+    line-height: 1;
+    flex-shrink: 0;
+}
 
 /* Theme row in drawer */
 .drawer-theme-row {
@@ -904,24 +941,27 @@ body {
 
 /* Comment card */
 .comment-item {
-    padding: 10px 14px 10px 18px;
+    padding: 11px 14px 11px 18px;
     border-bottom: 1px solid var(--border);
     transition: background 0.12s;
     position: relative;
     /* 新着のたびに全件を作り直すため、画面外の行までレイアウトすると
        件数に比例して重くなる。2000件で実測約16倍の差が出る */
     content-visibility: auto;
-    contain-intrinsic-size: auto 60px;
+    /* 本文14px/行間1.6・アバター24px に合わせた1行ぶんの見積り。
+       実寸とずれるとスクロールバーが跳ねるので、余白やサイズを触ったら更新する */
+    contain-intrinsic-size: auto 76px;
 }
 
 .comment-item:hover { background: rgba(255,255,255,0.03); }
 .comment-item:last-child { border-bottom: none; }
 
-/* Left border accent by role */
-.comment-item:has(.role-owner)::before     { background: var(--owner); }
-.comment-item:has(.role-moderator)::before { background: var(--moderator); }
-.comment-item:has(.role-sponsor)::before   { background: var(--sponsor); }
-.comment-item:has(.role-normal)::before    { background: var(--normal); }
+/* 行の役割色を1つの変数に集約する。継承で降ろすので、左ラインにも発言者名にも
+   同じ値が効き、`.comment-author.selected` などとの詳細度争いも起きない */
+.comment-item:has(.role-owner)     { --role-color: var(--owner); }
+.comment-item:has(.role-moderator) { --role-color: var(--moderator); }
+.comment-item:has(.role-sponsor)   { --role-color: var(--sponsor); }
+.comment-item:has(.role-normal)    { --role-color: var(--normal); }
 
 .comment-item::before {
     content: '';
@@ -931,6 +971,7 @@ body {
     bottom: 0;
     width: 3px;
     border-radius: 0 2px 2px 0;
+    background: var(--role-color, var(--normal));
 }
 
 .comment-header {
@@ -941,13 +982,15 @@ body {
 }
 
 .comment-author {
-    font-weight: 600;
-    font-size: 12px;
-    color: var(--text-secondary);
+    font-weight: 700;
+    font-size: 12.5px;
+    /* 役割ごとに色が付く。一般コメントだけ --normal で沈むので、
+       特別コメントが自然に浮き上がる */
+    color: var(--role-color, var(--text-secondary));
     cursor: pointer;
     padding: 3px 6px;
     border-radius: var(--radius-sm);
-    transition: background 0.15s, color 0.15s;
+    transition: background 0.15s;
     flex: 1;
     min-width: 0;
     overflow: hidden;
@@ -955,22 +998,20 @@ body {
     white-space: nowrap;
 }
 
-.comment-author:hover { background: rgba(255,255,255,0.08); color: var(--text-primary); }
+/* hoverで色は変えない（役割色を保つ）。背景だけでクリック可能なことを示す */
+.comment-author:hover { background: rgba(255,255,255,0.08); }
+[data-theme="light"] .comment-author:hover { background: rgba(0,0,0,0.07); }
 
-[data-theme="light"] .comment-author {
-    background: #ebebeb;
-}
-[data-theme="light"] .comment-author:hover { background: #dcdcdc; }
-
-.comment-author.selected {
+.comment-author.selected,
+[data-theme="light"] .comment-author.selected {
     background: var(--moderator);
     color: #fff;
 }
 
 /* Author avatar */
 .comment-avatar {
-    width: 20px;
-    height: 20px;
+    width: 24px;
+    height: 24px;
     border-radius: 50%;
     flex-shrink: 0;
     /* 読み込み中と失敗時の下地。レイアウトを動かさないため寸法は固定 */
@@ -982,7 +1023,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 700;
     line-height: 1;
     color: var(--text-muted);
@@ -993,6 +1034,7 @@ body {
 
 .comment-time {
     font-size: 11px;
+    font-weight: 500;
     color: var(--text-muted);
     flex-shrink: 0;
     font-variant-numeric: tabular-nums;
@@ -1000,8 +1042,9 @@ body {
 }
 
 .comment-message {
-    font-size: 13px;
-    line-height: 1.5;
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1.6;
     color: var(--text-primary);
     word-wrap: break-word;
     word-break: break-word;
