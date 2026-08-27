@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YouTube特別コメントフィルター",
-  "version": "1.9.1",
+  "version": "1.9.2",
   "description": "APIキー不要。YouTubeライブチャットの配信者・モデレーター・メンバーのコメントだけを抽出して表示。キーワード検索や発言者での絞り込みにも対応。",
 
   "permissions": ["storage", "unlimitedStorage", "activeTab", "scripting", "tabs"],
