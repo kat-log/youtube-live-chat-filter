@@ -546,10 +546,23 @@ body {
     background: #fff;
 }
 
+/* 色クラスを持たないトグル（ダークモード・時刻表示）のON色。
+   これが無いとONでもトラック色が変わらず、ライトテーマでは
+   白トラック＋白ノブになって ON/OFF を見分けられなかった。
+   役割スライダー（.owner-slider 等）は同じ詳細度なので、必ずこの下に置くこと */
+.filter-toggle-container input:checked + .toggle-slider { background: var(--accent); }
+
 .filter-toggle-container input:checked + .owner-slider     { background: var(--owner); }
 .filter-toggle-container input:checked + .moderator-slider { background: var(--moderator); }
 .filter-toggle-container input:checked + .sponsor-slider   { background: var(--sponsor); }
 .filter-toggle-container input:checked + .normal-slider    { background: var(--normal); }
+
+/* ライトテーマではトラックもノブも白系で背景に溶けるため、地の色を入れ替える */
+[data-theme="light"] .toggle-slider { background: rgba(0, 0, 0, 0.18); }
+[data-theme="light"] .toggle-slider::before {
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
 
 .toggle-label {
     font-size: 12px;
