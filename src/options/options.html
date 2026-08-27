@@ -22,9 +22,9 @@
                     <button type="button" id="toggle-visibility" class="toggle-btn">表示</button>
                 </div>
                 <p class="help-text">
-                    YouTube Data API v3のキーが必要です。
-                    <a href="https://console.developers.google.com/" target="_blank">Google Cloud Console</a>
-                    で取得できます。
+                    APIモードを使う場合のみ必要です。標準のDOMモードはAPIキーなしで動作します。
+                    キーは<a href="https://console.developers.google.com/" target="_blank">Google Cloud Console</a>
+                    で取得できます。取得モードはポップアップの設定（歯車）から切り替えられます。
                 </p>
                 <div class="form-actions">
                     <button id="save-settings" class="btn btn-primary">設定を保存</button>
@@ -96,7 +96,7 @@
                 </div>
                 <p class="help-text">
                     ONにすると、YouTubeライブ配信ページを開いた時に自動でコメント取得を開始します。
-                    APIキーが未設定の場合、またはライブ配信中でない場合は自動開始しません。
+                    DOMモードはAPIキーなしで自動開始します。APIモードの場合は、APIキーが未設定だと自動開始しません。
                 </p>
             </section>
 
@@ -104,11 +104,11 @@
                 <h2>使い方</h2>
                 <div class="instructions">
                     <ol>
-                        <li>上記でYouTube Data API Keyを設定してください</li>
                         <li>YouTubeのライブ配信ページを開いてください</li>
                         <li>拡張機能のアイコンをクリックしてポップアップを開いてください</li>
-                        <li>「取得開始」ボタンをクリックして特別コメントの取得を開始してください</li>
+                        <li>自動で始まらない場合は「開始」ボタンをクリックしてください</li>
                         <li>配信者、モデレーター、メンバー、一般コメントを個別にフィルタリングして表示できます</li>
+                        <li>APIモードを使う場合のみ、上記でYouTube Data API Keyを設定してください</li>
                     </ol>
                 </div>
             </section>
