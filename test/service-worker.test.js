@@ -220,6 +220,61 @@ describe('DOMモードのコメント取り込み', () => {
   });
 });
 
+describe('監視開始時の全件スキャン', () => {
+  // dom-chat.js は監視開始前からDOMを見ており、流れたコメントを送信済み扱いで
+  // 抱えている。force を付けないと開始時に1件も送られず、
+  // 「クリック以降のコメントしか見られない」状態になる
+  const sweepRequests = calls => calls.tabMessages
+    .filter(m => m.message.action === 'requestInitialSweep');
+
+  test('監視開始時に force 付きで全件スキャンを要求する', async () => {
+    const { chrome, calls } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    await sw.startDomMonitoring(3, 'V');
+    await settle();
+
+    const requests = sweepRequests(calls);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].tabId, 3);
+    assert.equal(requests[0].message.force, true, 'force が無いと過去分が送られてこない');
+  });
+
+  test('同じ動画の監視を張り直したときも force 付きで要求する', async () => {
+    const { chrome, calls } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    await sw.startDomMonitoring(3, 'V');
+    await sw.startDomMonitoring(3, 'V'); // content script と popup の自動開始が競合したケース
+    await settle();
+
+    const requests = sweepRequests(calls);
+    assert.equal(requests.length, 2);
+    assert.ok(requests.every(r => r.message.force === true));
+  });
+
+  test('全件スキャンで再送された既存履歴のコメントは重複しない', async () => {
+    // 開始時の履歴復元と全件スキャンが噛み合わないと、再開のたびに
+    // 同じコメントが積み上がっていく
+    const { chrome, store } = createChromeMock({ tabs: watchTab(3, 'V') });
+    store['commentsHistory_V'] = [domComment(1), domComment(2)];
+
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    await sw.startDomMonitoring(3, 'V');
+    // 全件スキャンは履歴にある2件＋開始前に流れた新しい1件を送ってくる
+    await sw.handleDomChatMessages(
+      [domComment(1), domComment(2), domComment(3)], senderFor(3, 'V'));
+
+    const history = sw.monitoringState.commentsHistory;
+    assert.equal(history.length, 3, '既存の履歴とスキャン分が二重に積まれている');
+    assert.deepEqual(history.map(c => c.id), ['dom_1', 'dom_2', 'dom_3']);
+  });
+});
+
 describe('アバターの取り込み', () => {
   // 発言者ごとに1つだけ持つ設計。コメント件数に比例させると、同じURLを
   // 何百回も履歴に書くことになり、過去に障害を出した肥大化を再発させる。

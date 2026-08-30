@@ -218,6 +218,9 @@ const MAX_HISTORY_VIDEOS = 5;
 // 同じURLを何百回も保存することになり、履歴の肥大化を招くため。
 const AVATAR_KEY_PREFIX = 'commentAvatars_';
 const MAX_AVATARS_PER_VIDEO = 500;
+// 履歴から重複判定用IDへ引き継ぐ件数。processedMessageIds の上限（1000件で
+// 半分に間引く）に合わせてあり、これより多く積んでもすぐ捨てられる
+const MAX_RESTORED_PROCESSED_IDS = 500;
 
 // 新着コメントからアバターURLを取り出してマップへ入れ、追加分だけを返す。
 // URLはコメント側から落とすので、履歴の1件あたりのサイズは変わらない。
@@ -520,7 +523,7 @@ async function restoreStateFromStorage() {
       monitoringState.avatarsByAuthor = await loadAvatars(monitoringState.currentVideoId);
 
       // 復元した履歴のIDを重複判定に反映（復帰直後の再送を弾く）
-      for (const comment of monitoringState.commentsHistory.slice(-500)) {
+      for (const comment of monitoringState.commentsHistory.slice(-MAX_RESTORED_PROCESSED_IDS)) {
         if (comment?.id) monitoringState.processedMessageIds.add(comment.id);
       }
     }
@@ -1239,7 +1242,7 @@ async function startDomMonitoring(tabId, videoId) {
       monitoringState.currentVideoId === videoId &&
       monitoringState.tabId === tabId) {
     debugLog('[Background] DOM monitoring already active for this video, reusing session');
-    chrome.tabs.sendMessage(tabId, { action: 'requestInitialSweep' }).catch(() => {});
+    chrome.tabs.sendMessage(tabId, { action: 'requestInitialSweep', force: true }).catch(() => {});
     return { success: true };
   }
 
@@ -1272,13 +1275,20 @@ async function startDomMonitoring(tabId, videoId) {
     normal: true
   };
 
+  // 開始直後の全件スキャンには既に履歴にあるコメントも含まれるため、
+  // 復元した履歴のIDを既読として引き継ぐ（restoreStateと同じ扱い）
+  const processedMessageIds = new Set();
+  for (const comment of existingHistory.slice(-MAX_RESTORED_PROCESSED_IDS)) {
+    if (comment?.id) processedMessageIds.add(comment.id);
+  }
+
   monitoringState = {
     isMonitoring: true,
     liveChatId: null,
     pageToken: null,
     tabId: tabId,
     pollingInterval: null,
-    processedMessageIds: new Set(),
+    processedMessageIds,
     commentFilters: currentFilters,
     commentsHistory: existingHistory,
     avatarsByAuthor: existingAvatars,
@@ -1312,8 +1322,10 @@ async function startDomMonitoring(tabId, videoId) {
     debugLog('[Background] dom-chat.js injection skipped:', e.message);
   }
 
-  // 注入済みガードで再実行がスキップされた場合でも初期スキャンを確実に実行
-  chrome.tabs.sendMessage(tabId, { action: 'requestInitialSweep' }).catch(() => {});
+  // 注入済みガードで再実行がスキップされた場合でも初期スキャンを確実に実行。
+  // force を付けるのは、開始前に流れたコメントを dom-chat.js が送信済み扱いで
+  // 抱えているため。全件送り直させ、既出分はここの processedMessageIds で弾く
+  chrome.tabs.sendMessage(tabId, { action: 'requestInitialSweep', force: true }).catch(() => {});
 
   return { success: true };
 }
