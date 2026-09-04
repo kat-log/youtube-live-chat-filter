@@ -1,3 +1,10 @@
+// 二重注入防止
+// このファイルはmanifestの自動注入に加えて、service-workerのreinjectContentScripts()
+// からも注入される。トップレベルのlet/class宣言は同じisolated worldに残るため、
+// ガードなしで再注入するとSyntaxErrorになりスクリプト全体が評価されない
+if (window.__ytSpecialCommentsInitialized) { /* noop */ } else {
+window.__ytSpecialCommentsInitialized = true;
+
 // デバッグモードによる統一ログ関数
 let debugMode = false;
 
@@ -48,6 +55,11 @@ class YouTubeLiveChatMonitor {
     loadDebugMode();
     
     debugLog('[YouTube Special Comments] Content script initialized');
+    
+    // メッセージリスナーだけは待たずに登録する。
+    // Service Worker起動待ちの間にpopupからpingが来ると「未注入」と誤判定され、
+    // 不要なContent Script再注入を招くため
+    this.setupMessageListener();
     
     // Service Workerの初期化を待ってから開始
     this.waitForServiceWorkerAndInit();
@@ -186,7 +198,7 @@ class YouTubeLiveChatMonitor {
   }
 
   init() {
-    this.setupMessageListener();
+    // setupMessageListener()はconstructorで済ませている
 
     if (this.isYouTubeLivePage()) {
       debugLog('[YouTube Special Comments] YouTube watch page detected');
@@ -647,3 +659,4 @@ if (document.readyState === 'loading') {
   debugLog('[YouTube Special Comments] Document ready, initializing...');
   new YouTubeLiveChatMonitor();
 }
+} // end guard

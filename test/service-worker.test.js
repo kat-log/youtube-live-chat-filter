@@ -398,6 +398,61 @@ describe('アバターの取り込み', () => {
   });
 });
 
+describe('Content Script の再注入', () => {
+  // 再注入は二重注入を招きやすく、content-script.js のトップレベル宣言と衝突すると
+  // SyntaxError でスクリプトが丸ごと読み込まれない（拡張機能一覧に Error が出る）
+  const watchPageScript = {
+    matches: ['*://*.youtube.com/watch*'],
+    js: ['content/content-script.js']
+  };
+  const completeTab = id => ({ id, url: `https://www.youtube.com/watch?v=V${id}`, status: 'complete' });
+
+  test('既に動いているタブには再注入しない', async () => {
+    const { chrome, calls } = createChromeMock({
+      contentScripts: [watchPageScript],
+      queryTabs: [completeTab(1)],
+      onTabMessage: () => ({ success: true })  // ping に応答する = 生きている
+    });
+
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    await sw.reinjectContentScripts('manual');
+
+    assert.equal(calls.executeScript.length, 0);
+  });
+
+  test('応答しないタブには再注入する', async () => {
+    const { chrome, calls } = createChromeMock({
+      contentScripts: [watchPageScript],
+      queryTabs: [completeTab(1)],
+      onTabMessage: () => { throw new Error('Could not establish connection'); }
+    });
+
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    await sw.reinjectContentScripts('manual');
+
+    assert.equal(calls.executeScript.length, 1);
+    assert.deepEqual(calls.executeScript[0].files, ['content/content-script.js']);
+    assert.equal(calls.executeScript[0].target.tabId, 1);
+  });
+
+  test('タブを指定したときは他のタブに注入しない', async () => {
+    const { chrome, calls } = createChromeMock({
+      contentScripts: [watchPageScript],
+      queryTabs: [completeTab(1), completeTab(2)],
+      onTabMessage: () => { throw new Error('Could not establish connection'); }
+    });
+
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    await sw.reinjectContentScripts('manual', 2);
+
+    assert.equal(calls.executeScript.length, 1);
+    assert.equal(calls.executeScript[0].target.tabId, 2);
+  });
+});
+
 describe('ユーティリティ', () => {
   test('URL から videoId を抽出できる', async () => {
     const sw = loadServiceWorker(createChromeMock().chrome);

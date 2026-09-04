@@ -607,9 +607,21 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   await cleanupOldCommentHistories();
 });
 
+// Content Scriptが生きているかをpingで確認する
+async function isContentScriptAlive(tabId) {
+  try {
+    const response = await chrome.tabs.sendMessage(tabId, { action: 'ping' });
+    return !!response;
+  } catch (e) {
+    return false;
+  }
+}
+
 // Content Script自動再注入機能
-async function reinjectContentScripts(reason) {
-  debugLog('[Background] 🔄 Starting content script re-injection for reason:', reason);
+// targetTabId を渡すとそのタブだけを対象にする（popupからの修復要求など）
+async function reinjectContentScripts(reason, targetTabId = null) {
+  debugLog('[Background] 🔄 Starting content script re-injection for reason:', reason,
+           targetTabId !== null ? `(tab ${targetTabId} only)` : '(all matching tabs)');
   
   try {
     // manifest.jsonからcontent_scriptsを取得
@@ -627,8 +639,15 @@ async function reinjectContentScripts(reason) {
     for (const cs of contentScripts) {
       debugLog('[Background] Processing content script with matches:', cs.matches);
       
+      // pingに応答するのはcontent-script.jsだけ。dom-chat.jsのエントリで
+      // 生存確認すると、同じタブのcontent-script.jsが応答してしまい誤判定になる
+      const canProbe = (cs.js || []).includes('content/content-script.js');
+      
       // 対象URLにマッチするタブを取得
-      const tabs = await chrome.tabs.query({ url: cs.matches });
+      let tabs = await chrome.tabs.query({ url: cs.matches });
+      if (targetTabId !== null) {
+        tabs = tabs.filter(tab => tab.id === targetTabId);
+      }
       totalTabsChecked += tabs.length;
       
       debugLog('[Background] Found', tabs.length, 'tabs matching', cs.matches);
@@ -644,6 +663,13 @@ async function reinjectContentScripts(reason) {
           // タブの読み込み状態を確認
           if (tab.status !== 'complete') {
             debugLog('[Background] Skipping incomplete tab:', tab.url);
+            continue;
+          }
+          
+          // 既にContent Scriptが動いているタブへの再注入は不要。
+          // 注入側のガードでSyntaxErrorにはならないが、無駄な注入を避ける
+          if (canProbe && await isContentScriptAlive(tab.id)) {
+            debugLog('[Background] Skipping tab with live content script:', tab.id);
             continue;
           }
           
@@ -739,7 +765,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   
   // 手動Content Script再注入
   if (request.action === 'reinjectContentScripts') {
-    reinjectContentScripts('manual')
+    reinjectContentScripts('manual', request.tabId ?? null)
       .then(() => sendResponse({ success: true }))
       .catch(error => sendResponse({ success: false, error: error.message }));
     return true;

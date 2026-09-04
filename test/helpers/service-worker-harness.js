@@ -17,10 +17,20 @@ const SW_PATH = path.join(__dirname, '..', '..', 'src', 'background', 'service-w
 /**
  * chrome API のモックを作る。
  * @param {object}  [options]
- * @param {number}  [options.quotaBytes] storage.local の容量上限（超えると set() が reject）
- * @param {object}  [options.tabs]       tabId をキーにしたタブ情報（chrome.tabs.get が返す）
+ * @param {number}  [options.quotaBytes]     storage.local の容量上限（超えると set() が reject）
+ * @param {object}  [options.tabs]           tabId をキーにしたタブ情報（chrome.tabs.get が返す）
+ * @param {object[]}[options.contentScripts] getManifest() が返す content_scripts
+ * @param {object[]}[options.queryTabs]      chrome.tabs.query() が返すタブ一覧
+ * @param {Function}[options.onTabMessage]   tabs.sendMessage の応答を作る。
+ *                                           throw すると「応答なし」を再現できる
  */
-function createChromeMock({ quotaBytes = Infinity, tabs = {} } = {}) {
+function createChromeMock({
+  quotaBytes = Infinity,
+  tabs = {},
+  contentScripts = [],
+  queryTabs = [],
+  onTabMessage = () => undefined
+} = {}) {
   const store = {};
   const calls = { badge: [], executeScript: [], tabMessages: [], runtimeMessages: [] };
 
@@ -56,7 +66,7 @@ function createChromeMock({ quotaBytes = Infinity, tabs = {} } = {}) {
     runtime: {
       id: 'test-extension-id',
       lastError: null,
-      getManifest: () => ({ version: 'test', content_scripts: [] }),
+      getManifest: () => ({ version: 'test', content_scripts: contentScripts }),
       onMessage: { addListener: fn => { chrome.__onMessage = fn; } },
       onInstalled: { addListener: fn => { chrome.__onInstalled = fn; } },
       onStartup: { addListener: () => {} },
@@ -66,12 +76,15 @@ function createChromeMock({ quotaBytes = Infinity, tabs = {} } = {}) {
     },
     tabs: {
       onRemoved: { addListener: () => {} },
-      async query() { return []; },
+      async query() { return structuredClone(queryTabs); },
       async get(tabId) {
         if (!(tabId in tabs)) throw new Error(`No tab with id: ${tabId}`);
         return tabs[tabId];
       },
-      async sendMessage(tabId, message) { calls.tabMessages.push({ tabId, message }); }
+      async sendMessage(tabId, message) {
+        calls.tabMessages.push({ tabId, message });
+        return onTabMessage(tabId, message);
+      }
     },
     scripting: {
       async executeScript(options) { calls.executeScript.push(options); return []; }
@@ -97,6 +110,7 @@ function loadServiceWorker(chrome) {
       get monitoringState() { return monitoringState; },
       setState: (patch) => Object.assign(monitoringState, patch),
       cleanupOldCommentHistories,
+      reinjectContentScripts,
       handleDomChatMessages,
       startDomMonitoring,
       stopBackgroundMonitoring,

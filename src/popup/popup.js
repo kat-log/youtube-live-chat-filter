@@ -315,10 +315,12 @@ class PopupController {
         console.log('[YouTube Special Comments] Checking content script injection status...');
         
         try {
-            // Content Scriptとの通信をテスト（タイムアウト短め）
+            // Content Scriptとの通信をテスト
+            // 短すぎるとページ読み込み直後の初期化中を「未注入」と誤判定し、
+            // 不要な再注入を招くため3秒待つ
             const response = await this.sendTabMessageWithTimeout(this.currentTab.id, {
                 action: 'ping'
-            }, 1500);
+            }, 3000);
             
             if (response) {
                 console.log('[YouTube Special Comments] ✅ Content script is properly injected');
@@ -348,9 +350,12 @@ class PopupController {
             console.log('[YouTube Special Comments] Last injection result:', injectionResult);
             
             // 2. 手動でContent Script再注入を要求
+            // 対象は現在のタブのみ。全タブに注入すると、正常に動いている
+            // 他のYouTubeタブにまで不要な注入を行うことになる
             console.log('[YouTube Special Comments] Requesting manual content script re-injection...');
             const reinjectResponse = await this.sendMessageWithRetry({
-                action: 'reinjectContentScripts'
+                action: 'reinjectContentScripts',
+                tabId: this.currentTab?.id
             }, 2);
             
             if (reinjectResponse && reinjectResponse.success) {
@@ -440,7 +445,8 @@ class PopupController {
             this.showInitializationStatus('Content Scriptを再注入中...');
             
             const reinjectResponse = await this.sendMessageWithRetry({
-                action: 'reinjectContentScripts'
+                action: 'reinjectContentScripts',
+                tabId: this.currentTab?.id
             }, 3);
             
             if (!reinjectResponse || !reinjectResponse.success) {
