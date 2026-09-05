@@ -120,6 +120,11 @@ function loadServiceWorker(chrome) {
       extractVideoIdFromUrl,
       latestTimestampOf,
       safeStorageSet,
+      normalizeCommentFilters,
+      isCommentEnabled,
+      apiCommentKind,
+      commentPreview,
+      DEFAULT_COMMENT_FILTERS,
       MAX_COMMENTS_PER_VIDEO,
       MAX_HISTORY_VIDEOS,
       MAX_AVATARS_PER_VIDEO

@@ -27,6 +27,11 @@
     --sponsor-bg:    rgba(74, 222, 128, 0.12);
     --normal:        #6e6e7a;
     --normal-bg:     rgba(110, 110, 122, 0.12);
+    /* スパチャ／メンバーイベントは役割とは別軸。メンバー色（緑）と衝突しない色を当てる */
+    --superchat:     #fbbf24;
+    --superchat-bg:  rgba(251, 191, 36, 0.12);
+    --membership:    #c084fc;
+    --membership-bg: rgba(192, 132, 252, 0.12);
 
     --radius-sm:     4px;
     --radius-md:     8px;
@@ -64,11 +69,15 @@
     --moderator:     #1d4ed8;
     --sponsor:       #15803d;
     --normal:        #5a5a66;
+    --superchat:     #b45309;
+    --membership:    #7e22ce;
 
     --owner-bg:      rgba(194, 65, 12, 0.12);
     --moderator-bg:  rgba(29, 78, 216, 0.12);
     --sponsor-bg:    rgba(21, 128, 61, 0.12);
     --normal-bg:     rgba(90, 90, 102, 0.12);
+    --superchat-bg:  rgba(180, 83, 9, 0.12);
+    --membership-bg: rgba(126, 34, 206, 0.12);
 }
 
 /* ═══════════════════════════════════════════
@@ -556,6 +565,8 @@ body {
 .filter-toggle-container input:checked + .moderator-slider { background: var(--moderator); }
 .filter-toggle-container input:checked + .sponsor-slider   { background: var(--sponsor); }
 .filter-toggle-container input:checked + .normal-slider    { background: var(--normal); }
+.filter-toggle-container input:checked + .superchat-slider  { background: var(--superchat); }
+.filter-toggle-container input:checked + .membership-slider { background: var(--membership); }
 
 /* ライトテーマではトラックもノブも白系で背景に溶けるため、地の色を入れ替える */
 [data-theme="light"] .toggle-slider { background: rgba(0, 0, 0, 0.18); }
@@ -586,6 +597,8 @@ body {
 .role-moderator { background: var(--moderator-bg); color: var(--moderator); }
 .role-sponsor   { background: var(--sponsor-bg);   color: var(--sponsor); }
 .role-normal    { background: var(--normal-bg);     color: var(--normal); }
+.role-superchat  { background: var(--superchat-bg);  color: var(--superchat); }
+.role-membership { background: var(--membership-bg); color: var(--membership); }
 
 /* コメント一覧の役割バッジはアイコンで出す。「モデレーター」の文字バッジは
    420px幅では横を食いすぎるので、その分を名前と本文に回す。
@@ -855,6 +868,8 @@ body {
 .moderator-count { background: var(--moderator-bg); color: var(--moderator); }
 .sponsor-count   { background: var(--sponsor-bg);   color: var(--sponsor); }
 .normal-count    { background: var(--normal-bg);     color: var(--normal); }
+.superchat-count  { background: var(--superchat-bg);  color: var(--superchat); }
+.membership-count { background: var(--membership-bg); color: var(--membership); }
 
 /* User filter status */
 .user-filter-status {
@@ -963,6 +978,26 @@ body {
 .comment-item:has(.role-sponsor)   { --role-color: var(--sponsor); }
 .comment-item:has(.role-normal)    { --role-color: var(--normal); }
 
+/* スパチャ・メンバーイベントは発言者の役割より種別を立てたいので、
+   役割の指定より後ろに置いて上書きする */
+.comment-item.kind-superchat,
+.comment-item.kind-supersticker { --role-color: var(--superchat); --kind-bg: var(--superchat-bg); }
+.comment-item.kind-membership,
+.comment-item.kind-gift         { --role-color: var(--membership); --kind-bg: var(--membership-bg); }
+
+/* 有料・イベント行は流れの中で見落とされやすいので、地の色でも差を付ける。
+   .comment-item:hover より後ろにあり同じ詳細度なのでホバーを打ち消してしまう。
+   ホバーの手応えは地の色を保ったまま内側の影で出す */
+.comment-item.kind-superchat,
+.comment-item.kind-supersticker,
+.comment-item.kind-membership,
+.comment-item.kind-gift { background: var(--kind-bg); }
+
+.comment-item.kind-superchat:hover,
+.comment-item.kind-supersticker:hover,
+.comment-item.kind-membership:hover,
+.comment-item.kind-gift:hover { box-shadow: inset 0 0 0 999px rgba(128, 128, 128, 0.08); }
+
 .comment-item::before {
     content: '';
     position: absolute;
@@ -1039,6 +1074,33 @@ body {
     flex-shrink: 0;
     font-variant-numeric: tabular-nums;
     font-family: 'SF Mono', 'Consolas', monospace;
+}
+
+.comment-kind--icon {
+    font-size: 12px;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+/* 金額は発言者名の右。長い名前に押し潰されないよう縮小させない */
+.comment-amount {
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--superchat);
+    background: var(--superchat-bg);
+    padding: 2px 6px;
+    border-radius: var(--radius-pill);
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+}
+
+/* 「新規メンバー」「◯か月連続のメンバー」など。本文がある場合はその上に出る */
+.comment-event {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--role-color, var(--text-secondary));
+    margin-bottom: 4px;
+    word-break: break-word;
 }
 
 .comment-message {

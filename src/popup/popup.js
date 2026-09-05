@@ -64,6 +64,55 @@ function debugError(prefix, ...args) {
 // 初期化時にデバッグモードを読み込み
 loadDebugMode();
 
+// フィルターの軸は「役割4種」＋「種別2種」。スーパーチャットやメンバー加入は
+// 一般視聴者・メンバーのどちらからも飛んでくるので、役割とは別枠で数えて絞る
+const FILTER_KEYS = ['owner', 'moderator', 'sponsor', 'normal', 'superchat', 'membership'];
+
+const FILTER_PRESETS = {
+    special: { owner: true,  moderator: true,  sponsor: false, normal: false, superchat: true,  membership: true  },
+    all:     { owner: true,  moderator: true,  sponsor: true,  normal: true,  superchat: true,  membership: true  },
+    none:    { owner: false, moderator: false, sponsor: false, normal: false, superchat: false, membership: false }
+};
+
+const ROLE_LABELS = {
+    owner:     ['配信者',       'role-owner'],
+    moderator: ['モデレーター', 'role-moderator'],
+    member:    ['メンバー',     'role-sponsor'],
+    normal:    ['一般',         'role-normal']
+};
+
+// APIのメッセージ種別 → 表示上の種別。ここに無いものはテキスト扱い
+// （Service Worker 側で表示できない種別は既に落とされている）
+const KIND_BY_API_TYPE = {
+    textMessageEvent: 'text',
+    superChatEvent: 'superchat',
+    superStickerEvent: 'supersticker',
+    newSponsorEvent: 'membership',
+    memberMilestoneChatEvent: 'membership',
+    membershipGiftingEvent: 'gift'
+};
+
+// 種別バッジ。役割バッジ（王冠など）とは別に、行の性格を1文字で示す
+const KIND_ICONS = {
+    superchat:    ['\u{1F4B0}', 'スーパーチャット'],
+    supersticker: ['\u{1F4B0}', 'スーパーステッカー'],
+    membership:   ['\u{2728}',  'メンバーシップ'],
+    gift:         ['\u{1F381}', 'メンバーシップギフト']
+};
+
+// 種別が付いているものは種別で、通常のコメントは役割で数える／絞る
+function filterKeyOf(comment) {
+    const kind = comment.kind || 'text';
+    if (kind === 'superchat' || kind === 'supersticker') return 'superchat';
+    if (kind === 'membership' || kind === 'gift') return 'membership';
+    switch (comment.roleClass) {
+        case 'role-owner':     return 'owner';
+        case 'role-moderator': return 'moderator';
+        case 'role-sponsor':   return 'sponsor';
+        default:               return 'normal';
+    }
+}
+
 class PopupController {
     constructor() {
         this.isMonitoring = false;
@@ -77,12 +126,7 @@ class PopupController {
         this.initializationComplete = false;
         
         // 個別フィルターの状態
-        this.commentFilters = {
-            owner: true,
-            moderator: true,
-            sponsor: true,
-            normal: true
-        };
+        this.commentFilters = { ...FILTER_PRESETS.all };
         
         // ユーザーフィルタリング用の状態
         this.selectedUser = null; // 絞り込み対象のユーザー名（null = 全ユーザー表示）
@@ -587,6 +631,8 @@ class PopupController {
             moderatorToggle: document.getElementById('moderator-toggle'),
             sponsorToggle: document.getElementById('sponsor-toggle'),
             normalToggle: document.getElementById('normal-toggle'),
+            superchatToggle: document.getElementById('superchat-toggle'),
+            membershipToggle: document.getElementById('membership-toggle'),
             
             // プリセットボタン
             presetSpecial: document.getElementById('preset-special'),
@@ -603,6 +649,8 @@ class PopupController {
             moderatorCount: document.getElementById('moderator-count'),
             sponsorCount: document.getElementById('sponsor-count'),
             normalCount: document.getElementById('normal-count'),
+            superchatCount: document.getElementById('superchat-count'),
+            membershipCount: document.getElementById('membership-count'),
             
             loading: document.getElementById('loading'),
             errorMessage: document.getElementById('error-message'),
@@ -650,17 +698,11 @@ class PopupController {
             }
         });
         
-        // 個別フィルタートグル
-        this.elements.ownerToggle.addEventListener('change', () => this.onFilterToggleChange('owner'));
-        this.elements.moderatorToggle.addEventListener('change', () => this.onFilterToggleChange('moderator'));
-        this.elements.sponsorToggle.addEventListener('change', () => this.onFilterToggleChange('sponsor'));
-        this.elements.normalToggle.addEventListener('change', () => this.onFilterToggleChange('normal'));
-        
-        // コメント数バッジクリックによる直接フィルター
-        this.elements.ownerCount.addEventListener('click', () => this.toggleBadgeFilter('owner'));
-        this.elements.moderatorCount.addEventListener('click', () => this.toggleBadgeFilter('moderator'));
-        this.elements.sponsorCount.addEventListener('click', () => this.toggleBadgeFilter('sponsor'));
-        this.elements.normalCount.addEventListener('click', () => this.toggleBadgeFilter('normal'));
+        // 個別フィルタートグルと、コメント数バッジクリックによる直接フィルター
+        for (const key of FILTER_KEYS) {
+            this.elements[key + 'Toggle'].addEventListener('change', () => this.onFilterToggleChange(key));
+            this.elements[key + 'Count'].addEventListener('click', () => this.toggleBadgeFilter(key));
+        }
         
         // プリセットボタン
         this.elements.presetSpecial.addEventListener('click', () => this.applyPreset('special'));
@@ -1218,12 +1260,16 @@ class PopupController {
         
         const formattedComments = newComments.map(comment => this.formatComment(comment));
         
-        // 重複チェック：既存のコメントと同じタイムスタンプ・メッセージ・ユーザー名のものを除外
+        // 重複チェック：既存のコメントと同じタイムスタンプ・メッセージ・ユーザー名のものを除外。
+        // 本文なしのスパチャは金額しか差が無く、全件スキャンで拾う過去分の時刻は
+        // 分単位なので、金額とイベント文言も見ないと別々の投げ銭が1件に潰れる
         const uniqueComments = formattedComments.filter(newComment => {
-            return !this.comments.some(existingComment => 
+            return !this.comments.some(existingComment =>
                 existingComment.message === newComment.message &&
                 existingComment.displayName === newComment.displayName &&
-                existingComment.publishedAt === newComment.publishedAt
+                existingComment.publishedAt === newComment.publishedAt &&
+                existingComment.amountText === newComment.amountText &&
+                existingComment.eventText === newComment.eventText
             );
         });
         
@@ -1241,19 +1287,18 @@ class PopupController {
     }
     
     formatComment(comment) {
-        // DOM モード：authorDetails がなく role/displayName/message を持つ
-        if (comment.role && comment.displayName && comment.message && !comment.authorDetails) {
-            const map = {
-                owner:     ['配信者',     'role-owner'],
-                moderator: ['モデレーター', 'role-moderator'],
-                member:    ['メンバー',    'role-sponsor']
-            };
-            const [role, roleClass] = map[comment.role] || ['一般', 'role-normal'];
+        // DOM モードのコメントは authorDetails を持たない。
+        // スパチャやメンバー加入は本文が空のことがあるので、本文の有無では判定しない
+        if (!comment.authorDetails) {
+            const [role, roleClass] = ROLE_LABELS[comment.role] || ROLE_LABELS.normal;
             return {
+                kind: comment.kind || 'text',
                 role,
                 roleClass,
-                displayName: comment.displayName,
-                message: comment.message,
+                displayName: comment.displayName || '',
+                message: comment.message || '',
+                amountText: comment.amountText || null,
+                eventText: comment.eventText || null,
                 // 整形は描画時に行う。ここで文字列に固めると表示形式の切り替えが
                 // 既存コメントに効かなくなる
                 publishedAt: comment.publishedAt,
@@ -1263,34 +1308,85 @@ class PopupController {
         }
 
         const authorDetails = comment.authorDetails;
-        const snippet = comment.snippet;
+        const snippet = comment.snippet || {};
 
-        let role = '';
-        let roleClass = '';
-
+        let roleKey = 'normal';
         if (authorDetails.isChatOwner) {
-            role = '配信者';
-            roleClass = 'role-owner';
+            roleKey = 'owner';
         } else if (authorDetails.isChatModerator) {
-            role = 'モデレーター';
-            roleClass = 'role-moderator';
+            roleKey = 'moderator';
         } else if (authorDetails.isChatSponsor) {
-            role = 'メンバー';
-            roleClass = 'role-sponsor';
-        } else {
-            // 一般コメント
-            role = '一般';
-            roleClass = 'role-normal';
+            roleKey = 'member';
         }
-        
+        const [role, roleClass] = ROLE_LABELS[roleKey];
+
+        const kind = KIND_BY_API_TYPE[snippet.type] || 'text';
+        const { message, amountText, eventText } = this.formatApiDetail(kind, snippet);
+
         return {
+            kind,
             role: role,
             roleClass: roleClass,
             displayName: authorDetails.displayName,
-            message: snippet.displayMessage,
+            message,
+            amountText,
+            eventText,
             publishedAt: snippet.publishedAt,
             profileImageUrl: authorDetails.profileImageUrl
         };
+    }
+
+    // APIの snippet から本文・金額・イベント文言を取り出す。
+    // 種別ごとに詳細の入れ物が違い、displayMessage が無いものもある
+    formatApiDetail(kind, snippet) {
+        const fallback = snippet.displayMessage || '';
+
+        if (kind === 'superchat') {
+            const details = snippet.superChatDetails || {};
+            return {
+                message: details.userComment || '',
+                amountText: details.amountDisplayString || null,
+                eventText: null
+            };
+        }
+
+        if (kind === 'supersticker') {
+            const details = snippet.superStickerDetails || {};
+            return {
+                message: details.superStickerMetadata?.altText || fallback,
+                amountText: details.amountDisplayString || null,
+                eventText: 'スーパーステッカー'
+            };
+        }
+
+        if (kind === 'membership') {
+            const milestone = snippet.memberMilestoneChatDetails;
+            const newSponsor = snippet.newSponsorDetails;
+            if (milestone) {
+                const level = milestone.memberLevelName ? ` · ${milestone.memberLevelName}` : '';
+                return {
+                    message: milestone.userComment || '',
+                    amountText: null,
+                    eventText: `${milestone.memberMonth}か月連続のメンバー${level}`
+                };
+            }
+            const level = newSponsor?.memberLevelName ? ` · ${newSponsor.memberLevelName}` : '';
+            const label = newSponsor?.isUpgrade ? 'メンバーシップをアップグレード' : '新規メンバー';
+            return { message: '', amountText: null, eventText: `${label}${level}` };
+        }
+
+        if (kind === 'gift') {
+            const details = snippet.membershipGiftingDetails;
+            const level = details?.giftMembershipsLevelName ? ` · ${details.giftMembershipsLevelName}` : '';
+            const count = details?.giftMembershipsCount;
+            return {
+                message: '',
+                amountText: null,
+                eventText: count ? `メンバーシップギフト ${count}個${level}` : 'メンバーシップギフト'
+            };
+        }
+
+        return { message: fallback, amountText: null, eventText: null };
     }
     
     // スクロール位置が一番下かどうかを判定
@@ -1395,6 +1491,28 @@ class PopupController {
              + `title="${label}" role="img" aria-label="${label}">${icon}</span>`;
     }
 
+    // 種別バッジ。スパチャ・メンバーイベントだけに付き、通常のコメントには出ない
+    kindBadgeHtml(comment) {
+        const entry = KIND_ICONS[comment.kind];
+        if (!entry) return '';
+
+        const [icon, label] = entry;
+        return `<span class="comment-kind comment-kind--icon" `
+             + `title="${label}" role="img" aria-label="${label}">${icon}</span>`;
+    }
+
+    // スパチャの金額。DOMモードは表示文字列、APIモードは amountDisplayString をそのまま出す
+    amountHtml(comment) {
+        if (!comment.amountText) return '';
+        return `<span class="comment-amount">${this.escapeHtml(comment.amountText)}</span>`;
+    }
+
+    // 「新規メンバー」「◯か月連続のメンバー」など、本文とは別に出す一行
+    eventTextHtml(comment) {
+        if (!comment.eventText) return '';
+        return `<div class="comment-event">${this.escapeHtml(comment.eventText)}</div>`;
+    }
+
     renderComments(forceScrollToTop = false, forceScrollToBottom = false) {
         console.log('[Popup] === renderComments called ===');
         console.log('[Popup] Total comments:', this.comments.length);
@@ -1406,26 +1524,9 @@ class PopupController {
         // スクロール位置を保存
         const previousScrollTop = this.elements.commentsList.scrollTop;
         
-        // 役割フィルターとユーザーフィルターの両方を適用
+        // 役割・種別フィルターとユーザーフィルターの両方を適用
         const filteredComments = this.comments.filter(comment => {
-            // 役割フィルター
-            let roleMatch = false;
-            switch (comment.roleClass) {
-                case 'role-owner':
-                    roleMatch = this.commentFilters.owner;
-                    break;
-                case 'role-moderator':
-                    roleMatch = this.commentFilters.moderator;
-                    break;
-                case 'role-sponsor':
-                    roleMatch = this.commentFilters.sponsor;
-                    break;
-                case 'role-normal':
-                    roleMatch = this.commentFilters.normal;
-                    break;
-                default:
-                    roleMatch = false;
-            }
+            const roleMatch = this.commentFilters[filterKeyOf(comment)] === true;
             
             // ユーザーフィルター
             const userMatch = !this.selectedUser || comment.displayName === this.selectedUser;
@@ -1436,7 +1537,8 @@ class PopupController {
                 const kw = this.searchKeyword.toLowerCase();
                 keywordMatch =
                     (comment.displayName || '').toLowerCase().includes(kw) ||
-                    (comment.message || '').toLowerCase().includes(kw);
+                    (comment.message || '').toLowerCase().includes(kw) ||
+                    (comment.eventText || '').toLowerCase().includes(kw);
             }
 
             return roleMatch && userMatch && keywordMatch;
@@ -1445,13 +1547,9 @@ class PopupController {
         console.log('[Popup] Filtered comments:', filteredComments.length);
         
         // コメント数の集計
-        const counts = {
-            owner: this.comments.filter(c => c.roleClass === 'role-owner').length,
-            moderator: this.comments.filter(c => c.roleClass === 'role-moderator').length,
-            sponsor: this.comments.filter(c => c.roleClass === 'role-sponsor').length,
-            normal: this.comments.filter(c => c.roleClass === 'role-normal').length
-        };
-        
+        const counts = Object.fromEntries(FILTER_KEYS.map(key => [key, 0]));
+        for (const comment of this.comments) counts[filterKeyOf(comment)]++;
+
         // コメント数表示を更新
         this.elements.totalCount.textContent = `${filteredComments.length}件`;
         this.updateSearchMatchCount(filteredComments.length);
@@ -1459,23 +1557,14 @@ class PopupController {
         this.elements.moderatorCount.textContent = `モデレーター: ${counts.moderator}`;
         this.elements.sponsorCount.textContent = `メンバー: ${counts.sponsor}`;
         this.elements.normalCount.textContent = `一般: ${counts.normal}`;
-        
-        // フィルター状態に応じてバッジのアクティブ・非アクティブ表示を切り替え
-        const badgeElements = {
-            owner: this.elements.ownerCount,
-            moderator: this.elements.moderatorCount,
-            sponsor: this.elements.sponsorCount,
-            normal: this.elements.normalCount
-        };
+        this.elements.superchatCount.textContent = `スパチャ: ${counts.superchat}`;
+        this.elements.membershipCount.textContent = `加入・ギフト: ${counts.membership}`;
 
-        for (const [key, element] of Object.entries(badgeElements)) {
-            if (element) {
-                if (this.commentFilters[key]) {
-                    element.classList.remove('filter-inactive');
-                } else {
-                    element.classList.add('filter-inactive');
-                }
-            }
+        // フィルター状態に応じてバッジのアクティブ・非アクティブ表示を切り替え
+        for (const key of FILTER_KEYS) {
+            const element = this.elements[key + 'Count'];
+            if (!element) continue;
+            element.classList.toggle('filter-inactive', !this.commentFilters[key]);
         }
         
         if (filteredComments.length === 0) {
@@ -1495,15 +1584,24 @@ class PopupController {
             const isSelected = this.selectedUser === comment.displayName;
             const authorClass = isSelected ? 'comment-author selected' : 'comment-author';
             
+            // 金額だけのスパチャやギフト告知は本文が無いので、空の行を作らない
+            const messageHtml = comment.message
+                ? `<div class="comment-message">${this.escapeHtml(comment.message)}</div>`
+                : '';
+            const kindClass = comment.kind && comment.kind !== 'text' ? ` kind-${comment.kind}` : '';
+
             return `
-                <div class="comment-item">
+                <div class="comment-item${kindClass}">
                     <div class="comment-header">
                         ${this.avatarHtml(comment)}
                         ${this.roleBadgeHtml(comment)}
+                        ${this.kindBadgeHtml(comment)}
                         <span class="${authorClass}" data-username="${this.escapeHtml(comment.displayName)}">${this.escapeHtml(comment.displayName)}</span>
+                        ${this.amountHtml(comment)}
                         <span class="comment-time">${this.formatTimestamp(comment.publishedAt)}</span>
                     </div>
-                    <div class="comment-message">${this.escapeHtml(comment.message)}</div>
+                    ${this.eventTextHtml(comment)}
+                    ${messageHtml}
                 </div>
             `;
         }).join('');
@@ -1695,31 +1793,27 @@ class PopupController {
     }
     
     updateFilterUI() {
-        this.elements.ownerToggle.checked = this.commentFilters.owner;
-        this.elements.moderatorToggle.checked = this.commentFilters.moderator;
-        this.elements.sponsorToggle.checked = this.commentFilters.sponsor;
-        this.elements.normalToggle.checked = this.commentFilters.normal;
-        
+        for (const key of FILTER_KEYS) {
+            this.elements[key + 'Toggle'].checked = this.commentFilters[key] === true;
+        }
+
         this.updatePresetButtons();
         this.renderComments(false, true); // フィルターが変更されたら再描画（一番下にスクロール）
     }
     
     updatePresetButtons() {
-        // すべてのプリセットボタンを非アクティブに
-        this.elements.presetSpecial.classList.remove('btn-preset-active');
-        this.elements.presetAll.classList.remove('btn-preset-active');
-        this.elements.presetNone.classList.remove('btn-preset-active');
-        
-        // 現在の状態に応じてアクティブなプリセットを設定
-        if (this.commentFilters.owner && this.commentFilters.moderator && 
-            !this.commentFilters.sponsor && !this.commentFilters.normal) {
-            this.elements.presetSpecial.classList.add('btn-preset-active');
-        } else if (this.commentFilters.owner && this.commentFilters.moderator && 
-                   this.commentFilters.sponsor && this.commentFilters.normal) {
-            this.elements.presetAll.classList.add('btn-preset-active');
-        } else if (!this.commentFilters.owner && !this.commentFilters.moderator && 
-                   !this.commentFilters.sponsor && !this.commentFilters.normal) {
-            this.elements.presetNone.classList.add('btn-preset-active');
+        const buttons = {
+            special: this.elements.presetSpecial,
+            all: this.elements.presetAll,
+            none: this.elements.presetNone
+        };
+
+        // 現在の状態と一致するプリセットだけをアクティブにする
+        for (const [name, button] of Object.entries(buttons)) {
+            const matches = FILTER_KEYS.every(
+                key => this.commentFilters[key] === FILTER_PRESETS[name][key]
+            );
+            button.classList.toggle('btn-preset-active', matches);
         }
     }
     
@@ -1751,20 +1845,10 @@ class PopupController {
         
         if (isOnlyActive) {
             // 既にそのカテゴリのみのフィルターが有効な状態でクリックされた場合は、フィルター解除（すべて有効）にする
-            this.commentFilters = {
-                owner: true,
-                moderator: true,
-                sponsor: true,
-                normal: true
-            };
+            this.commentFilters = { ...FILTER_PRESETS.all };
         } else {
             // それ以外の場合は、クリックされたカテゴリのみを有効にし、他を無効にする
-            this.commentFilters = {
-                owner: false,
-                moderator: false,
-                sponsor: false,
-                normal: false
-            };
+            this.commentFilters = { ...FILTER_PRESETS.none };
             this.commentFilters[filterType] = true;
         }
 
@@ -1784,32 +1868,8 @@ class PopupController {
     async applyPreset(presetType) {
         console.log('[YouTube Special Comments] Applying preset:', presetType);
         
-        switch (presetType) {
-            case 'special':
-                this.commentFilters = {
-                    owner: true,
-                    moderator: true,
-                    sponsor: false,
-                    normal: false
-                };
-                break;
-            case 'all':
-                this.commentFilters = {
-                    owner: true,
-                    moderator: true,
-                    sponsor: true,
-                    normal: true
-                };
-                break;
-            case 'none':
-                this.commentFilters = {
-                    owner: false,
-                    moderator: false,
-                    sponsor: false,
-                    normal: false
-                };
-                break;
-        }
+        if (!FILTER_PRESETS[presetType]) return;
+        this.commentFilters = { ...FILTER_PRESETS[presetType] };
         
         try {
             await this.sendMessageWithRetry({

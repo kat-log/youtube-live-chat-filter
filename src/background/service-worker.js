@@ -186,6 +186,72 @@ function analyzeError(error) {
   };
 }
 
+// === コメント種別とフィルター =============================================
+// 役割（配信者/モデレーター/メンバー/一般）とは別に、スーパーチャットと
+// メンバーシップのイベントを独立した軸として扱う。スパチャは一般視聴者も
+// 投げられるので、役割だけで絞ると取りこぼす。
+const DEFAULT_COMMENT_FILTERS = {
+  owner: true,
+  moderator: true,
+  sponsor: true,
+  normal: true,
+  superchat: true,
+  membership: true
+};
+
+// 旧バージョンが保存したフィルターには superchat / membership が無い。
+// 欠けているキーは既定値で補い、想定外のキーは捨てる
+function normalizeCommentFilters(filters) {
+  const normalized = { ...DEFAULT_COMMENT_FILTERS };
+  if (filters && typeof filters === 'object') {
+    for (const key of Object.keys(DEFAULT_COMMENT_FILTERS)) {
+      if (typeof filters[key] === 'boolean') normalized[key] = filters[key];
+    }
+  }
+  return normalized;
+}
+
+// 種別が付いているものは種別で、通常のコメントは役割で絞る
+function isCommentEnabled(kind, role, filters) {
+  if (kind === 'superchat' || kind === 'supersticker') return filters.superchat;
+  if (kind === 'membership' || kind === 'gift') return filters.membership;
+  if (role === 'owner')     return filters.owner;
+  if (role === 'moderator') return filters.moderator;
+  if (role === 'member')    return filters.sponsor;
+  return filters.normal;
+}
+
+// APIのメッセージ種別 → 拡張機能側の kind。
+// ここに無いイベント（チャット終了・削除済み・ギフト受領など）は表示対象外
+const KIND_BY_API_TYPE = {
+  textMessageEvent: 'text',
+  superChatEvent: 'superchat',
+  superStickerEvent: 'supersticker',
+  newSponsorEvent: 'membership',
+  memberMilestoneChatEvent: 'membership',
+  membershipGiftingEvent: 'gift'
+};
+
+// 表示できない種別は null。type を持たない古い履歴はテキスト扱いにする
+function apiCommentKind(item) {
+  const type = item?.snippet?.type;
+  if (!type) return 'text';
+  return KIND_BY_API_TYPE[type] || null;
+}
+
+function apiCommentRole(authorDetails) {
+  if (authorDetails?.isChatOwner) return 'owner';
+  if (authorDetails?.isChatModerator) return 'moderator';
+  if (authorDetails?.isChatSponsor) return 'member';
+  return 'normal';
+}
+
+// ログ用の本文プレビュー。displayMessage を持たない種別でも落ちないようにする
+function commentPreview(comment) {
+  const text = comment?.snippet?.displayMessage || comment?.message || '';
+  return text.substring(0, 30);
+}
+
 // グローバル状態管理
 let monitoringState = {
   isMonitoring: false,
@@ -194,12 +260,7 @@ let monitoringState = {
   tabId: null,
   pollingInterval: null,
   processedMessageIds: new Set(),
-  commentFilters: {
-    owner: true,
-    moderator: true,
-    sponsor: true,
-    normal: true
-  },
+  commentFilters: { ...DEFAULT_COMMENT_FILTERS },
   commentsHistory: [], // 現在監視中のVideo IDの履歴
   avatarsByAuthor: {},  // { [displayName]: アバターURL } DOMモード用
   currentVideoId: null,
@@ -495,7 +556,7 @@ async function restoreStateFromStorage() {
     const saved = result.monitoringState;
 
     if (result.commentFilters) {
-      monitoringState.commentFilters = result.commentFilters;
+      monitoringState.commentFilters = normalizeCommentFilters(result.commentFilters);
     }
 
     if (!saved || !saved.isMonitoring) {
@@ -977,35 +1038,17 @@ async function fetchLiveChatMessages(liveChatId, pageToken = null) {
     
     // コメントフィルターの状態を取得
     const filtersResult = await chrome.storage.local.get(['commentFilters']);
-    const commentFilters = filtersResult.commentFilters || {
-      owner: true,
-      moderator: true,
-      sponsor: true,
-      normal: true
-    };
-    
+    const commentFilters = normalizeCommentFilters(filtersResult.commentFilters);
+
+    // 表示できない種別（チャット終了・削除済みなど）を落としたうえで、
     // 個別フィルターに基づいてコメントをフィルタリング
     const filteredComments = data.items.filter(item => {
-      const authorDetails = item.authorDetails;
-      
-      if (authorDetails.isChatOwner) {
-        return commentFilters.owner;
-      } else if (authorDetails.isChatModerator) {
-        return commentFilters.moderator;
-      } else if (authorDetails.isChatSponsor) {
-        return commentFilters.sponsor;
-      } else {
-        // 一般コメント
-        return commentFilters.normal;
-      }
+      const kind = apiCommentKind(item);
+      if (!kind) return false;
+      return isCommentEnabled(kind, apiCommentRole(item.authorDetails), commentFilters);
     });
-    
-    debugLog('[Background] Individual filters applied:', {
-      owner: commentFilters.owner,
-      moderator: commentFilters.moderator, 
-      sponsor: commentFilters.sponsor,
-      normal: commentFilters.normal
-    });
+
+    debugLog('[Background] Individual filters applied:', commentFilters);
     debugLog('[Background] Returning', filteredComments.length, 'filtered comments out of', data.items.length, 'total');
     
     return {
@@ -1061,12 +1104,7 @@ async function startBackgroundMonitoring(liveChatId, tabId, videoId) {
   }
   
   // 現在のフィルター設定を保持
-  const currentFilters = monitoringState.commentFilters || {
-    owner: true,
-    moderator: true,
-    sponsor: true,
-    normal: true
-  };
+  const currentFilters = normalizeCommentFilters(monitoringState.commentFilters);
   
   monitoringState = {
     isMonitoring: true,
@@ -1179,7 +1217,7 @@ function startPollingLoop() {
             return false;
           }
           monitoringState.processedMessageIds.add(messageId);
-          debugLog('[Background] New comment added:', messageId, comment.snippet.displayMessage.substring(0, 30));
+          debugLog('[Background] New comment added:', messageId, commentPreview(comment));
           return true;
         });
         
@@ -1294,12 +1332,7 @@ async function startDomMonitoring(tabId, videoId) {
     existingAvatars = await loadAvatars(videoId);
   }
 
-  const currentFilters = monitoringState.commentFilters || {
-    owner: true,
-    moderator: true,
-    sponsor: true,
-    normal: true
-  };
+  const currentFilters = normalizeCommentFilters(monitoringState.commentFilters);
 
   // 開始直後の全件スキャンには既に履歴にあるコメントも含まれるため、
   // 復元した履歴のIDを既読として引き継ぐ（restoreStateと同じ扱い）
@@ -1386,14 +1419,12 @@ async function handleDomChatMessages(messages, sender = null) {
     return;
   }
 
-  const filters = monitoringState.commentFilters;
+  const filters = normalizeCommentFilters(monitoringState.commentFilters);
   const newMessages = messages.filter(msg => {
     if (monitoringState.processedMessageIds.has(msg.id)) return false;
     monitoringState.processedMessageIds.add(msg.id);
-    if (msg.role === 'owner')     return filters.owner;
-    if (msg.role === 'moderator') return filters.moderator;
-    if (msg.role === 'member')    return filters.sponsor;
-    return filters.normal;
+    // kind が無いのは旧バージョンの dom-chat.js が送ったテキストコメント
+    return isCommentEnabled(msg.kind || 'text', msg.role, filters);
   });
 
   if (!newMessages.length) return;
@@ -1533,21 +1564,17 @@ async function notifyPopupOfError(errorAnalysis) {
 async function setCommentFilters(filters) {
   debugLog('[Background] Setting comment filters:', filters);
   
-  await chrome.storage.local.set({ commentFilters: filters });
-  monitoringState.commentFilters = filters;
-  
-  return { success: true, filters: filters };
+  const normalized = normalizeCommentFilters(filters);
+  await chrome.storage.local.set({ commentFilters: normalized });
+  monitoringState.commentFilters = normalized;
+
+  return { success: true, filters: normalized };
 }
 
 // コメントフィルターの状態を取得
 async function getCommentFilters() {
   const result = await chrome.storage.local.get(['commentFilters']);
-  const commentFilters = result.commentFilters || {
-    owner: true,
-    moderator: true,
-    sponsor: true,
-    normal: true
-  };
+  const commentFilters = normalizeCommentFilters(result.commentFilters);
   
   return { success: true, filters: commentFilters };
 }

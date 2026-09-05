@@ -490,3 +490,131 @@ describe('ユーティリティ', () => {
     assert.equal(diagnostics.storage.historyEntriesCount, 1);
   });
 });
+
+describe('スーパーチャットとメンバーシップ', () => {
+  // スパチャは一般視聴者からも飛んでくるので、役割で絞ると取りこぼす。
+  // 種別（kind）を役割とは別の軸として扱えているかをここで固定する
+  const startedSession = (sw, filters) => sw.setState({
+    isMonitoring: true, chatMode: 'dom', tabId: 3, currentVideoId: 'V',
+    commentsHistory: [], processedMessageIds: new Set(), avatarsByAuthor: {},
+    ...(filters ? { commentFilters: filters } : {})
+  });
+
+  const kindsOf = sw => sw.monitoringState.commentsHistory.map(c => c.kind);
+
+  test('一般視聴者のスパチャは「一般」を切っていても残る', async () => {
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    startedSession(sw, {
+      owner: true, moderator: true, sponsor: true, normal: false,
+      superchat: true, membership: true
+    });
+
+    await sw.handleDomChatMessages([
+      { ...domComment(1), role: 'normal', kind: 'superchat', amountText: '¥1,000' },
+      { ...domComment(2), role: 'normal', kind: 'text' }
+    ], senderFor(3, 'V'));
+
+    assert.deepEqual(kindsOf(sw), ['superchat']);
+  });
+
+  test('種別を切ると、その発言者の役割が有効でも残らない', async () => {
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    startedSession(sw, {
+      owner: true, moderator: true, sponsor: true, normal: true,
+      superchat: false, membership: true
+    });
+
+    await sw.handleDomChatMessages([
+      { ...domComment(1), role: 'member', kind: 'superchat', amountText: '¥500' },
+      { ...domComment(2), role: 'member', kind: 'supersticker', amountText: '¥200' },
+      { ...domComment(3), role: 'member', kind: 'membership', eventText: '新規メンバー' },
+      { ...domComment(4), role: 'member', kind: 'gift', eventText: 'ギフト5個' }
+    ], senderFor(3, 'V'));
+
+    assert.deepEqual(kindsOf(sw), ['membership', 'gift']);
+  });
+
+  test('旧バージョンが保存した4項目のフィルターでも新しい種別は表示される', async () => {
+    // 更新直後は storage に superchat / membership が無い。欠けたキーを
+    // false と解釈すると、アップデートした瞬間にスパチャが消える
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    startedSession(sw, { owner: true, moderator: true, sponsor: true, normal: true });
+
+    await sw.handleDomChatMessages([
+      { ...domComment(1), role: 'normal', kind: 'superchat', amountText: '¥1,000' },
+      { ...domComment(2), role: 'member', kind: 'membership', eventText: '新規メンバー' }
+    ], senderFor(3, 'V'));
+
+    assert.deepEqual(kindsOf(sw), ['superchat', 'membership']);
+  });
+
+  test('kind を持たない旧 dom-chat.js のコメントは従来どおり役割で絞られる', async () => {
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    startedSession(sw, {
+      owner: true, moderator: true, sponsor: true, normal: false,
+      superchat: true, membership: true
+    });
+
+    await sw.handleDomChatMessages([
+      { ...domComment(1), role: 'normal' },
+      { ...domComment(2), role: 'owner' }
+    ], senderFor(3, 'V'));
+
+    assert.equal(sw.monitoringState.commentsHistory.length, 1);
+    assert.equal(sw.monitoringState.commentsHistory[0].role, 'owner');
+  });
+
+  test('フィルターの欠けたキーは既定値で補い、想定外のキーは捨てる', async () => {
+    const { chrome } = createChromeMock();
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    // vm コンテキスト側で作られたオブジェクトはプロトタイプが別realmになるため、
+    // 展開してこちら側のプレーンオブジェクトに直してから比べる
+    const normalized = filters => ({ ...sw.normalizeCommentFilters(filters) });
+    const defaults = { ...sw.DEFAULT_COMMENT_FILTERS };
+
+    assert.deepEqual(normalized({ normal: false }), { ...defaults, normal: false });
+    assert.deepEqual(normalized(null), defaults);
+    assert.deepEqual(normalized({ owner: 'yes', unknown: true }), defaults);
+  });
+
+  test('APIの種別は kind に対応づけられ、表示できないものは落とされる', async () => {
+    const { chrome } = createChromeMock();
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    const kindOf = type => sw.apiCommentKind({ snippet: { type } });
+    assert.equal(kindOf('textMessageEvent'), 'text');
+    assert.equal(kindOf('superChatEvent'), 'superchat');
+    assert.equal(kindOf('superStickerEvent'), 'supersticker');
+    assert.equal(kindOf('newSponsorEvent'), 'membership');
+    assert.equal(kindOf('memberMilestoneChatEvent'), 'membership');
+    assert.equal(kindOf('membershipGiftingEvent'), 'gift');
+    assert.equal(kindOf('chatEndedEvent'), null);
+    assert.equal(kindOf('messageDeletedEvent'), null);
+    // type を持たない古い履歴はテキスト扱い
+    assert.equal(sw.apiCommentKind({ snippet: {} }), 'text');
+  });
+
+  test('displayMessage を持たないイベントでもログ用プレビューで落ちない', async () => {
+    // ここで例外が出るとポーリングの catch に落ち、pageToken が進まないまま
+    // リトライを繰り返して監視が事実上止まる
+    const { chrome } = createChromeMock();
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    assert.equal(sw.commentPreview({ snippet: { type: 'membershipGiftingEvent' } }), '');
+    assert.equal(sw.commentPreview({ snippet: { displayMessage: 'こんにちは' } }), 'こんにちは');
+    assert.equal(sw.commentPreview({ message: 'DOMモードのコメント' }), 'DOMモードのコメント');
+    assert.equal(sw.commentPreview(undefined), '');
+  });
+});
