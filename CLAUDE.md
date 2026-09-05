@@ -31,20 +31,25 @@ npm test
 
 ### テストについて
 
-依存パッケージなし。`test/helpers/service-worker-harness.js` が chrome API を
-モックした vm コンテキストで `service-worker.js` を丸ごと評価し、内部の関数と
-状態をテストへ露出させる。
+依存パッケージなし。ハーネスが vm コンテキストで対象スクリプトを丸ごと評価し、
+内部の関数と状態をテストへ露出させる。
 
-対象は **Service Worker の状態機械** に限定している。過去に2度、
-「数時間使い込まないと発現せず手動再現が困難」なバグが本番で発覚しているため
-（Service Worker終了時のコメント取りこぼし、ストレージ肥大化による監視停止）、
-その周辺を重点的に固定している。
+- `test/helpers/service-worker-harness.js` — chrome API をモックして
+  `service-worker.js` を読み込む
+- `test/helpers/dom-chat-harness.js` — 最小のDOMと、明示的に進める `setTimeout`
+  をモックして `dom-chat.js` を読み込む
+
+対象は「数時間使い込まないと発現せず手動再現が困難」なバグに絞っている。
+これまでに3度、その種のバグが本番で発覚しているため（Service Worker終了時の
+コメント取りこぼし、ストレージ肥大化による監視停止、**新着ステッカーだけ画像が
+落ちる取得タイミング**）、その周辺を重点的に固定している。
 
 モックの限界として、以下は検証できない:
 
 - 実ブラウザの挙動（本物のquotaの出方、Service Workerが終了するタイミング、
   メッセージパッシングの実挙動）
-- `dom-chat.js` のYouTube DOMスクレイピング（YouTube側のDOM変更には無力）
+- YouTube側のDOM変更。dom-chat のモックはセレクタ文字列の完全一致でしか引けず、
+  検証できるのは「どのタイミングで何を読むか」という段取りだけ
 - ポップアップ／オプション画面のUI
 
 `monitoringState` は `startDomMonitoring` などで丸ごと再代入されるため、
