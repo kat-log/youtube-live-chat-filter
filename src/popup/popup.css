@@ -968,6 +968,10 @@ body {
     contain-intrinsic-size: auto 76px;
 }
 
+/* ステッカーの行は画像96pxぶん背が高い。共通の見積りのままだと画面外の行の
+   高さがずれ、スクロール中にバーが跳ねる（実測197px＝通常行74＋イベント行19＋画像104） */
+.comment-item.kind-supersticker { contain-intrinsic-size: auto 197px; }
+
 .comment-item:hover { background: rgba(255,255,255,0.03); }
 .comment-item:last-child { border-bottom: none; }
 
@@ -1101,6 +1105,16 @@ body {
     color: var(--role-color, var(--text-secondary));
     margin-bottom: 4px;
     word-break: break-word;
+}
+
+/* スーパーステッカーの画像。アニメーションWebPがそのまま再生される。
+   読み込み中や失敗時に行の高さが動かないよう、寸法は固定して確保しておく */
+.comment-sticker {
+    display: block;
+    width: 96px;
+    height: 96px;
+    margin: 2px 0 6px;
+    object-fit: contain;
 }
 
 .comment-message {

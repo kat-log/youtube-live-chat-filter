@@ -105,6 +105,9 @@ function extractMessage(el, kind, useDomTimestamp = false) {
     result.kind = kind;
     if (detail.amountText) result.amountText = detail.amountText;
     if (detail.eventText) result.eventText = detail.eventText;
+    // ステッカーの画像URL。IDの元になるキーには混ぜない（混ぜると更新前後で
+    // 同じステッカーに違うIDが振られ、保存済み履歴と重複する）
+    if (detail.stickerUrl) result.stickerUrl = detail.stickerUrl;
   }
 
   return result;
@@ -127,8 +130,14 @@ function extractDetail(el, kind) {
 
   if (kind === 'supersticker') {
     // ステッカーは画像のみ。alt にステッカー名が入る
-    const alt = el.querySelector('#sticker img')?.getAttribute('alt')?.trim() || '';
-    return { message: alt, amountText: extractAmount(el), eventText: 'スーパーステッカー' };
+    const img = el.querySelector('#sticker img');
+    const alt = img?.getAttribute('alt')?.trim() || '';
+    return {
+      message: alt,
+      amountText: extractAmount(el),
+      eventText: 'スーパーステッカー',
+      stickerUrl: extractStickerUrl(img)
+    };
   }
 
   if (kind === 'membership') {
@@ -145,6 +154,27 @@ function extractDetail(el, kind) {
   const eventText = textOf(el.querySelector('#primary-text'));
   if (!eventText) return null;
   return { message: '', amountText: null, eventText };
+}
+
+// ステッカー画像のURL。チャット上の実物は小さい静止版（=s40-rp など）のことがあるので、
+// サイズ指定だけをYouTube自身が使う大きいアニメーション版（=s96-rwa）に差し替える。
+// 中身はアニメーションWebPなので、受け取り側は img に貼るだけで動く。
+// src はプロトコル相対（//lh3...）で入っているため、絶対URLに解決される .src から取る
+const STICKER_IMAGE_HOSTS = ['lh3.googleusercontent.com', 'yt3.ggpht.com'];
+const STICKER_IMAGE_SIZE = '=s96-rwa';
+
+function extractStickerUrl(img) {
+  if (!img?.src) return null;
+  let url;
+  try {
+    url = new URL(img.src);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:') return null;
+  if (!STICKER_IMAGE_HOSTS.includes(url.hostname)) return null;
+  // パスは「/<ID>=s40-rp」の形。ID部分に = は入らないので、最初の = 以降を捨てて付け直す
+  return `${url.origin}${url.pathname.split('=')[0]}${STICKER_IMAGE_SIZE}`;
 }
 
 // 「¥500」「$5.00」などの金額表記。DOM変更で別物を拾ったときのために長さで足切りする
