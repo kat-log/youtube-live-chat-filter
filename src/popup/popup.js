@@ -100,6 +100,9 @@ const KIND_ICONS = {
     gift:         ['\u{1F381}', 'メンバーシップギフト']
 };
 
+// ステッカー画像の配信ホスト。dom-chat.js が組み立てるURLと同じものだけを通す
+const STICKER_IMAGE_HOSTS = ['lh3.googleusercontent.com', 'yt3.ggpht.com'];
+
 // 種別が付いているものは種別で、通常のコメントは役割で数える／絞る
 function filterKeyOf(comment) {
     const kind = comment.kind || 'text';
@@ -1299,6 +1302,8 @@ class PopupController {
                 message: comment.message || '',
                 amountText: comment.amountText || null,
                 eventText: comment.eventText || null,
+                // スーパーステッカーの画像URL。DOMモードでしか付かない
+                stickerUrl: comment.stickerUrl || null,
                 // 整形は描画時に行う。ここで文字列に固めると表示形式の切り替えが
                 // 既存コメントに効かなくなる
                 publishedAt: comment.publishedAt,
@@ -1425,6 +1430,28 @@ class PopupController {
         return `<img class="comment-avatar" src="${this.escapeHtml(url)}" alt="" `
              + `loading="lazy" decoding="async" width="24" height="24" `
              + `data-initial="${this.escapeHtml(initial)}">`;
+    }
+
+    // ステッカー画像のURL。https に加えて配信ホストも確認する
+    // （本文と違い img の src に流し込むので、素性の知れないURLは載せない）
+    safeStickerUrl(url) {
+        const safe = this.safeAvatarUrl(url);
+        if (!safe) return null;
+        try {
+            return STICKER_IMAGE_HOSTS.includes(new URL(safe).hostname) ? safe : null;
+        } catch {
+            return null;
+        }
+    }
+
+    // スーパーステッカーの画像。中身はアニメーションWebPで、img に貼るだけで再生される。
+    // URLが無い／読み込めない場合も、ステッカー名は本文として別に出ているので情報は消えない
+    stickerHtml(comment) {
+        if (comment.kind !== 'supersticker') return '';
+        const url = this.safeStickerUrl(comment.stickerUrl);
+        if (!url) return '';
+        return `<img class="comment-sticker" src="${this.escapeHtml(url)}" alt="" `
+             + `loading="lazy" decoding="async" width="96" height="96">`;
     }
 
     // 時刻表示の設定を読み込む。未設定時は従来の見た目（24時間・秒あり）を維持する
@@ -1601,6 +1628,7 @@ class PopupController {
                         <span class="comment-time">${this.formatTimestamp(comment.publishedAt)}</span>
                     </div>
                     ${this.eventTextHtml(comment)}
+                    ${this.stickerHtml(comment)}
                     ${messageHtml}
                 </div>
             `;
@@ -1616,6 +1644,11 @@ class PopupController {
                 span.textContent = img.dataset.initial || '?';
                 img.replaceWith(span);
             }, { once: true });
+        });
+
+        // ステッカー画像が読めなかったら取り除く。ステッカー名の行はそのまま残る
+        this.elements.commentsList.querySelectorAll('img.comment-sticker').forEach(img => {
+            img.addEventListener('error', () => img.remove(), { once: true });
         });
 
         // ユーザー名のクリックイベントを追加
