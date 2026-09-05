@@ -701,7 +701,14 @@ class PopupController {
         // 個別フィルタートグルと、コメント数バッジクリックによる直接フィルター
         for (const key of FILTER_KEYS) {
             this.elements[key + 'Toggle'].addEventListener('change', () => this.onFilterToggleChange(key));
-            this.elements[key + 'Count'].addEventListener('click', () => this.toggleBadgeFilter(key));
+            const badge = this.elements[key + 'Count'];
+            badge.addEventListener('click', () => this.toggleBadgeFilter(key));
+            // role="button" を持たせた span なので、Enter/Space の既定動作は自前で補う
+            badge.addEventListener('keydown', (e) => {
+                if (e.key !== 'Enter' && e.key !== ' ') return;
+                e.preventDefault();
+                this.toggleBadgeFilter(key);
+            });
         }
         
         // プリセットボタン
@@ -1564,7 +1571,12 @@ class PopupController {
         for (const key of FILTER_KEYS) {
             const element = this.elements[key + 'Count'];
             if (!element) continue;
-            element.classList.toggle('filter-inactive', !this.commentFilters[key]);
+            const enabled = !!this.commentFilters[key];
+            element.classList.toggle('filter-inactive', !enabled);
+            // バッジ単体でも状態を確かめられるように、見た目に加えて文言でも示す
+            element.title = enabled ? 'クリックで非表示にする（現在: 表示中）'
+                                    : 'クリックで表示する（現在: 非表示）';
+            element.setAttribute('aria-pressed', String(enabled));
         }
         
         if (filteredComments.length === 0) {

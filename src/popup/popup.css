@@ -26,7 +26,10 @@
     --sponsor:       #4ade80;
     --sponsor-bg:    rgba(74, 222, 128, 0.12);
     --normal:        #6e6e7a;
-    --normal-bg:     rgba(110, 110, 122, 0.12);
+    /* バッジ・チップの文字色。--normal は一覧の発言者名を意図的に沈ませるための値で、
+       10pxのバッジに使うと暗い地に溶けて読めない。表示用に一段明るい値を分けて持つ */
+    --normal-chip:   #a3a3b2;
+    --normal-bg:     rgba(150, 150, 165, 0.16);
     /* スパチャ／メンバーイベントは役割とは別軸。メンバー色（緑）と衝突しない色を当てる */
     --superchat:     #fbbf24;
     --superchat-bg:  rgba(251, 191, 36, 0.12);
@@ -69,6 +72,7 @@
     --moderator:     #1d4ed8;
     --sponsor:       #15803d;
     --normal:        #5a5a66;
+    --normal-chip:   #4b4b57;
     --superchat:     #b45309;
     --membership:    #7e22ce;
 
@@ -596,7 +600,7 @@ body {
 .role-owner     { background: var(--owner-bg);     color: var(--owner); }
 .role-moderator { background: var(--moderator-bg); color: var(--moderator); }
 .role-sponsor   { background: var(--sponsor-bg);   color: var(--sponsor); }
-.role-normal    { background: var(--normal-bg);     color: var(--normal); }
+.role-normal    { background: var(--normal-bg);     color: var(--normal-chip); }
 .role-superchat  { background: var(--superchat-bg);  color: var(--superchat); }
 .role-membership { background: var(--membership-bg); color: var(--membership); }
 
@@ -841,14 +845,18 @@ body {
     font-size: 10px;
     font-weight: 600;
     padding: 1px 6px;
+    /* 非アクティブ時に輪郭線へ切り替えるので、常に1px分の場所を確保しておく
+       （border-widthが変わると幅が動いて折り返し位置が跳ねる） */
+    border: 1px solid transparent;
     border-radius: var(--radius-pill);
+    background: var(--chip-bg);
+    color: var(--chip-color);
     cursor: pointer;
     user-select: none;
-    transition: opacity 0.2s ease, transform 0.1s ease, filter 0.2s ease;
+    transition: transform 0.1s ease, background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
 }
 
 .comment-count-item:hover {
-    opacity: 0.85;
     transform: translateY(-1px);
 }
 
@@ -856,20 +864,35 @@ body {
     transform: translateY(0);
 }
 
+.comment-count-item:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+/* ON/OFFを opacity の濃淡だけで表していたため、もともと地味な「一般」バッジは
+   単体で見ると点いているのか消えているのか分からなかった。
+   非アクティブは「色付きの塗り」から「グレーの輪郭＋取り消し線」へ形ごと変えて、
+   他のバッジと見比べなくても状態が読めるようにする */
 .comment-count-item.filter-inactive {
-    opacity: 0.3;
+    background: transparent;
+    border-color: var(--border-strong);
+    color: var(--text-secondary);
+    text-decoration: line-through;
+    text-decoration-color: var(--text-muted);
 }
 
+/* ホバーでは点けたときの地の色だけ先に出す（取り消し線は残してONと混同させない） */
 .comment-count-item.filter-inactive:hover {
-    opacity: 0.75;
+    background: var(--chip-bg);
+    border-color: transparent;
 }
 
-.owner-count     { background: var(--owner-bg);     color: var(--owner); }
-.moderator-count { background: var(--moderator-bg); color: var(--moderator); }
-.sponsor-count   { background: var(--sponsor-bg);   color: var(--sponsor); }
-.normal-count    { background: var(--normal-bg);     color: var(--normal); }
-.superchat-count  { background: var(--superchat-bg);  color: var(--superchat); }
-.membership-count { background: var(--membership-bg); color: var(--membership); }
+.owner-count      { --chip-color: var(--owner);       --chip-bg: var(--owner-bg); }
+.moderator-count  { --chip-color: var(--moderator);   --chip-bg: var(--moderator-bg); }
+.sponsor-count    { --chip-color: var(--sponsor);     --chip-bg: var(--sponsor-bg); }
+.normal-count     { --chip-color: var(--normal-chip); --chip-bg: var(--normal-bg); }
+.superchat-count  { --chip-color: var(--superchat);   --chip-bg: var(--superchat-bg); }
+.membership-count { --chip-color: var(--membership);  --chip-bg: var(--membership-bg); }
 
 /* User filter status */
 .user-filter-status {
