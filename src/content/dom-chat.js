@@ -60,18 +60,47 @@ function handleMutations(mutations) {
     for (const node of mutation.addedNodes) {
       const kind = kindOf(node);
       if (!kind) continue;
-      const msg = extractMessage(node, kind);
-      if (msg && !seenIds.has(msg.id)) {
-        if (seenIds.size > 2000) seenIds.clear();
-        seenIds.add(msg.id);
-        messages.push(msg);
+
+      // ステッカーの画像は行がDOMに入った直後にはまだ無い。yt-img-shadow が
+      // あとから img を作るため、その場で読むと画像もステッカー名（alt）も空になる。
+      // 生えるまで待ってから取り込む
+      if (kind === 'supersticker' && !isStickerImageReady(node)) {
+        waitForStickerImage(node, new Date());
+        continue;
       }
+
+      const msg = takeMessage(node, kind);
+      if (msg) messages.push(msg);
     }
   }
   if (messages.length > 0) sendMessages(messages);
 }
 
-function extractMessage(el, kind, useDomTimestamp = false) {
+// 新着1件を取り込む。既に送った行なら null を返す
+function takeMessage(node, kind, receivedAt = null) {
+  const msg = extractMessage(node, kind, false, receivedAt);
+  if (!msg || seenIds.has(msg.id)) return null;
+  if (seenIds.size > 2000) seenIds.clear();
+  seenIds.add(msg.id);
+  return msg;
+}
+
+// ステッカーの画像が生えるのを待って取り込む。待っている間に投稿時刻が
+// ずれないよう、受信時刻は行を見つけた時点のものを持ち回る。
+// 生えてこなくても打ち切って取り込む（画像なしで従来どおりの表示になる）
+const STICKER_IMAGE_POLL_MS = 100;
+const STICKER_IMAGE_MAX_POLLS = 15; // 最長で約1.5秒
+
+function waitForStickerImage(node, receivedAt, remaining = STICKER_IMAGE_MAX_POLLS) {
+  if (remaining > 0 && !isStickerImageReady(node)) {
+    setTimeout(() => waitForStickerImage(node, receivedAt, remaining - 1), STICKER_IMAGE_POLL_MS);
+    return;
+  }
+  const msg = takeMessage(node, 'supersticker', receivedAt);
+  if (msg) sendMessages([msg]);
+}
+
+function extractMessage(el, kind, useDomTimestamp = false, receivedAt = null) {
   const displayName = textOf(el.querySelector('#author-name'));
   if (!displayName) return null;
 
@@ -87,7 +116,7 @@ function extractMessage(el, kind, useDomTimestamp = false) {
 
   // 新着は受信時刻がそのまま投稿時刻。過去分だけDOMの時刻表示（分単位）で補う
   const domDate = useDomTimestamp ? parseTimestampText(timestampText) : null;
-  const publishedAt = (domDate || new Date()).toISOString();
+  const publishedAt = (domDate || receivedAt || new Date()).toISOString();
 
   const result = {
     id,
@@ -130,7 +159,7 @@ function extractDetail(el, kind) {
 
   if (kind === 'supersticker') {
     // ステッカーは画像のみ。alt にステッカー名が入る
-    const img = el.querySelector('#sticker img');
+    const img = stickerImgOf(el);
     const alt = img?.getAttribute('alt')?.trim() || '';
     return {
       message: alt,
@@ -156,12 +185,22 @@ function extractDetail(el, kind) {
   return { message: '', amountText: null, eventText };
 }
 
-// ステッカー画像のURL。チャット上の実物は小さい静止版（=s40-rp など）のことがあるので、
-// サイズ指定だけをYouTube自身が使う大きいアニメーション版（=s96-rwa）に差し替える。
+// ステッカー画像は yt-img-shadow の中の img。行がDOMに入った直後は
+// この img ごと存在しないので、読む前に生えているかを確かめる
+function stickerImgOf(el) {
+  return el.querySelector('#sticker img');
+}
+
+function isStickerImageReady(el) {
+  return !!stickerImgOf(el)?.getAttribute('src');
+}
+
+// ステッカー画像のURL。表示は96pxなので、高DPIでも滲まないよう2倍で要求する。
 // 中身はアニメーションWebPなので、受け取り側は img に貼るだけで動く。
-// src はプロトコル相対（//lh3...）で入っているため、絶対URLに解決される .src から取る
+// src はプロトコル相対（//lh3...）で入っているため、絶対URLに解決される
+// .src から取る（getAttribute だと https チェックで弾かれる）
 const STICKER_IMAGE_HOSTS = ['lh3.googleusercontent.com', 'yt3.ggpht.com'];
-const STICKER_IMAGE_SIZE = '=s96-rwa';
+const STICKER_IMAGE_SIZE = '=s192-rwa';
 
 function extractStickerUrl(img) {
   if (!img?.src) return null;
