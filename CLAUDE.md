@@ -52,13 +52,32 @@ npm test
 
 ## 設計概要
 
-YouTube Data API v3を使用してライブチャットメッセージを取得し、以下のフラグを持つコメントのみを抽出します：
+ライブチャットのメッセージを取得し、フィルターに合うものだけをポップアップ画面に
+リアルタイム表示する。取得元は2モードある。
 
-- `isChatModerator`: モデレーターのコメント
-- `isChatSponsor`: メンバー（スポンサー）のコメント  
-- `isChatOwner`: 配信者本人のコメント
+- **DOMモード（既定・APIキー不要）**: `dom-chat.js` がライブチャットのDOMを直接監視する
+- **APIモード**: YouTube Data API v3 の `liveChatMessages` をポーリングする
 
-抽出されたコメントは拡張機能のポップアップ画面にリアルタイムで表示されます。
+### フィルターの2軸
+
+役割（発言者が誰か）と種別（何のメッセージか）は別の軸として扱う。
+スーパーチャットは一般視聴者からも飛んでくるため、役割だけで絞ると取りこぼす。
+
+| 軸 | フィルターキー | 対象 |
+| --- | --- | --- |
+| 役割 | `owner` / `moderator` / `sponsor` / `normal` | 配信者 / モデレーター / メンバー / 一般（APIモードでは `isChatOwner` などのフラグ、DOMモードでは `author-type` 属性で判定） |
+| 種別 | `superchat` | スーパーチャット・スーパーステッカー |
+| 種別 | `membership` | メンバー新規加入・継続（マイルストーン）・メンバーギフト |
+
+種別が付いているメッセージは種別のフィルターで絞り、役割のフィルターは見ない。
+判定は Service Worker の `isCommentEnabled()` に集約している。
+
+保存済みの設定に新しいキーが無い場合（旧バージョンからの更新直後）は
+`normalizeCommentFilters()` が既定値で補うため、更新した瞬間にスパチャが消えることはない。
+
+なお、ギフトの受領告知（`giftMembershipReceivedEvent` /
+`yt-live-chat-sponsorships-gift-redemption-announcement-renderer`）は
+受け取った人数ぶん流れて量が多いため、意図的に対象外にしている。
 
 ## 次のステップ
 

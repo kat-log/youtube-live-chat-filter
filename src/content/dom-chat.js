@@ -9,6 +9,20 @@ const idByElement = new WeakMap();
 // 同一内容・同一時刻のコメントを区別するための連番（キーごとの出現回数）
 const occurrenceByKey = new Map();
 
+// 監視対象のチャット行。スーパーチャットやメンバーシップのイベントは
+// テキストコメントとは別のタグで流れてくるため、タグ名から種別を引く
+const KIND_BY_TAG = {
+  'yt-live-chat-text-message-renderer': 'text',
+  'yt-live-chat-paid-message-renderer': 'superchat',
+  'yt-live-chat-paid-sticker-renderer': 'supersticker',
+  'yt-live-chat-membership-item-renderer': 'membership',
+  'yt-live-chat-sponsorships-gift-purchase-announcement-renderer': 'gift'
+};
+
+function kindOf(node) {
+  return KIND_BY_TAG[node.tagName?.toLowerCase()] || null;
+}
+
 // 監視開始前のコメントも拾えるよう、既にDOMにある分を全件送り直す。
 // 送信済みかどうかは background 側がIDで弾くため、force でも重複はしない。
 function doInitialSweep(force = false) {
@@ -16,13 +30,13 @@ function doInitialSweep(force = false) {
   if (!itemList) return;
   const existingMessages = [];
   for (const node of itemList.children) {
-    if (node.tagName?.toLowerCase() === 'yt-live-chat-text-message-renderer') {
-      // 過去分は投稿時刻が「今」ではないので、DOMのタイムスタンプがあればそれを使う
-      const msg = extractMessage(node, true);
-      if (msg && (force || !seenIds.has(msg.id))) {
-        seenIds.add(msg.id);
-        existingMessages.push(msg);
-      }
+    const kind = kindOf(node);
+    if (!kind) continue;
+    // 過去分は投稿時刻が「今」ではないので、DOMのタイムスタンプがあればそれを使う
+    const msg = extractMessage(node, kind, true);
+    if (msg && (force || !seenIds.has(msg.id))) {
+      seenIds.add(msg.id);
+      existingMessages.push(msg);
     }
   }
   if (existingMessages.length > 0) sendMessages(existingMessages);
@@ -44,49 +58,131 @@ function handleMutations(mutations) {
   const messages = [];
   for (const mutation of mutations) {
     for (const node of mutation.addedNodes) {
-      if (node.tagName?.toLowerCase() === 'yt-live-chat-text-message-renderer') {
-        const msg = extractMessage(node);
-        if (msg && !seenIds.has(msg.id)) {
-          if (seenIds.size > 2000) seenIds.clear();
-          seenIds.add(msg.id);
-          messages.push(msg);
-        }
+      const kind = kindOf(node);
+      if (!kind) continue;
+      const msg = extractMessage(node, kind);
+      if (msg && !seenIds.has(msg.id)) {
+        if (seenIds.size > 2000) seenIds.clear();
+        seenIds.add(msg.id);
+        messages.push(msg);
       }
     }
   }
   if (messages.length > 0) sendMessages(messages);
 }
 
-function extractMessage(el, useDomTimestamp = false) {
-  const authorEl = el.querySelector('#author-name');
-  const messageEl = el.querySelector('#message');
-  if (!authorEl || !messageEl) return null;
+function extractMessage(el, kind, useDomTimestamp = false) {
+  const displayName = textOf(el.querySelector('#author-name'));
+  if (!displayName) return null;
 
-  const displayName = authorEl.textContent.trim();
-  const message = extractText(messageEl);
+  // 本文の在り処は種別ごとに違う。読めない形なら取り込まない
+  const detail = extractDetail(el, kind);
+  if (!detail) return null;
+
   const avatarUrl = extractAvatarUrl(el);
-  const authorType = el.getAttribute('author-type') || '';
-  const role = authorType === 'owner' ? 'owner'
-             : authorType === 'moderator' ? 'moderator'
-             : authorType === 'member' ? 'member' : 'normal';
+  const role = roleOf(el, kind);
 
-  const timestampText = el.querySelector('#timestamp')?.textContent?.trim() || '';
-  const id = messageIdFor(el, displayName, message, timestampText);
+  const timestampText = textOf(el.querySelector('#timestamp'));
+  const id = messageIdFor(el, kind, displayName, detail, timestampText);
 
   // 新着は受信時刻がそのまま投稿時刻。過去分だけDOMの時刻表示（分単位）で補う
   const domDate = useDomTimestamp ? parseTimestampText(timestampText) : null;
   const publishedAt = (domDate || new Date()).toISOString();
 
-  return { id, role, displayName, message, publishedAt, avatarUrl };
+  const result = {
+    id,
+    role,
+    displayName,
+    message: detail.message,
+    publishedAt,
+    avatarUrl
+  };
+
+  // 種別の情報は通常のコメントには載せない。1件あたり数十バイトでも
+  // 2000件×動画数ぶん積み上がり、ストレージ上限に当たると監視ごと止まる。
+  // 受け取り側は kind が無いものをテキストコメントとして扱う
+  if (kind !== 'text') {
+    result.kind = kind;
+    if (detail.amountText) result.amountText = detail.amountText;
+    if (detail.eventText) result.eventText = detail.eventText;
+  }
+
+  return result;
+}
+
+// 本文・金額・イベント文言の取り出し
+function extractDetail(el, kind) {
+  const messageEl = el.querySelector('#message');
+  const message = extractText(messageEl);
+
+  if (kind === 'text') {
+    // 本文の器そのものが無い＝想定外の形なので取り込まない（従来どおり）
+    return messageEl ? { message, amountText: null, eventText: null } : null;
+  }
+
+  if (kind === 'superchat') {
+    // 金額だけで本文なしのスパチャも普通にある
+    return { message, amountText: extractAmount(el), eventText: null };
+  }
+
+  if (kind === 'supersticker') {
+    // ステッカーは画像のみ。alt にステッカー名が入る
+    const alt = el.querySelector('#sticker img')?.getAttribute('alt')?.trim() || '';
+    return { message: alt, amountText: extractAmount(el), eventText: 'スーパーステッカー' };
+  }
+
+  if (kind === 'membership') {
+    // 新規加入は #header-subtext だけ、継続（マイルストーン）は #header-primary-text に
+    // 「◯か月連続」が入り、本人のコメントが #message に付くことがある
+    const primary = textOf(el.querySelector('#header-primary-text'));
+    const subtext = textOf(el.querySelector('#header-subtext'));
+    const eventText = [primary, subtext].filter(Boolean).join(' · ');
+    if (!eventText && !message) return null;
+    return { message, amountText: null, eventText };
+  }
+
+  // gift:「◯◯さんがメンバーシップギフトを贈りました」の一文が本体
+  const eventText = textOf(el.querySelector('#primary-text'));
+  if (!eventText) return null;
+  return { message: '', amountText: null, eventText };
+}
+
+// 「¥500」「$5.00」などの金額表記。DOM変更で別物を拾ったときのために長さで足切りする
+function extractAmount(el) {
+  const amount = textOf(el.querySelector('#purchase-amount') ||
+                        el.querySelector('#purchase-amount-chip'));
+  return amount && amount.length <= 24 ? amount : null;
+}
+
+// 発言者の役割。有料メッセージやメンバーイベントの行には author-type が
+// 付かないことがあるので、バッジと種別からも補う
+function roleOf(el, kind) {
+  const authorType = el.getAttribute('author-type') || '';
+  if (authorType === 'owner') return 'owner';
+  if (authorType === 'moderator') return 'moderator';
+  if (authorType === 'member') return 'member';
+
+  if (el.querySelector('yt-live-chat-author-badge-renderer[type="moderator"]')) return 'moderator';
+  if (el.querySelector('yt-live-chat-author-badge-renderer[type="member"]')) return 'member';
+  // 加入・ギフトのイベントは発言者が必ずメンバー
+  if (kind === 'membership' || kind === 'gift') return 'member';
+  return 'normal';
 }
 
 // IDは「同じコメントなら再スキャンでもリロード後でも同じ値」であることが条件。
 // 位置ではなく内容＋出現回数から作るので、DOMの間引きで値がずれない。
-function messageIdFor(el, displayName, message, timestampText) {
+function messageIdFor(el, kind, displayName, detail, timestampText) {
   const cached = idByElement.get(el);
   if (cached) return cached;
 
-  const key = `${displayName}\u0000${message}\u0000${timestampText}`;
+  // テキストコメントのキーは旧版と同じ形のまま保つ。拡張機能を更新しても
+  // 同じコメントには同じIDが振られ、保存済み履歴と重複しない
+  let key = `${displayName}\u0000${detail.message}\u0000${timestampText}`;
+  if (kind !== 'text') {
+    // 本文なしのスパチャは金額しか違いが無いので、キーに混ぜて衝突を避ける
+    key += `\u0000${kind}\u0000${detail.amountText || ''}\u0000${detail.eventText || ''}`;
+  }
+
   // 整数ハッシュでID生成（btoa のマルチバイト問題を回避）
   const hash = key.split('').reduce((a, c) => (Math.imul(31, a) + c.charCodeAt(0)) | 0, 0);
   const occurrence = occurrenceByKey.get(key) || 0;
@@ -136,7 +232,12 @@ function extractAvatarUrl(el) {
   return src.replace(/=s\d+-/, '=s64-');
 }
 
+function textOf(el) {
+  return el?.textContent?.trim() || '';
+}
+
 function extractText(el) {
+  if (!el) return '';
   let text = '';
   for (const node of el.childNodes) {
     if (node.nodeType === Node.TEXT_NODE) text += node.textContent;
