@@ -32,12 +32,17 @@ function doInitialSweep(force = false) {
   for (const node of itemList.children) {
     const kind = kindOf(node);
     if (!kind) continue;
-    // 過去分は投稿時刻が「今」ではないので、DOMのタイムスタンプがあればそれを使う
-    const msg = extractMessage(node, kind, true);
-    if (msg && (force || !seenIds.has(msg.id))) {
-      seenIds.add(msg.id);
-      existingMessages.push(msg);
+
+    // 過去分は投稿時刻が「今」ではないので、DOMのタイムスタンプがあればそれを使う。
+    // ステッカーはチャットを開いた直後だと画像がまだ読み込まれていないことがあるので、
+    // 新着と同じく生えるまで待つ
+    if (kind === 'supersticker' && !isStickerImageReady(node)) {
+      waitForStickerImage(node, { useDomTimestamp: true, force });
+      continue;
     }
+
+    const msg = takeMessage(node, kind, { useDomTimestamp: true, force });
+    if (msg) existingMessages.push(msg);
   }
   if (existingMessages.length > 0) sendMessages(existingMessages);
 }
@@ -65,7 +70,7 @@ function handleMutations(mutations) {
       // あとから img を作るため、その場で読むと画像もステッカー名（alt）も空になる。
       // 生えるまで待ってから取り込む
       if (kind === 'supersticker' && !isStickerImageReady(node)) {
-        waitForStickerImage(node, new Date());
+        waitForStickerImage(node, { receivedAt: new Date() });
         continue;
       }
 
@@ -76,10 +81,11 @@ function handleMutations(mutations) {
   if (messages.length > 0) sendMessages(messages);
 }
 
-// 新着1件を取り込む。既に送った行なら null を返す
-function takeMessage(node, kind, receivedAt = null) {
-  const msg = extractMessage(node, kind, false, receivedAt);
-  if (!msg || seenIds.has(msg.id)) return null;
+// 1件取り込む。既に送った行なら null を返す（force のときは送り直す）
+function takeMessage(node, kind, { receivedAt = null, useDomTimestamp = false, force = false } = {}) {
+  const msg = extractMessage(node, kind, useDomTimestamp, receivedAt);
+  if (!msg) return null;
+  if (!force && seenIds.has(msg.id)) return null;
   if (seenIds.size > 2000) seenIds.clear();
   seenIds.add(msg.id);
   return msg;
@@ -91,12 +97,12 @@ function takeMessage(node, kind, receivedAt = null) {
 const STICKER_IMAGE_POLL_MS = 100;
 const STICKER_IMAGE_MAX_POLLS = 15; // 最長で約1.5秒
 
-function waitForStickerImage(node, receivedAt, remaining = STICKER_IMAGE_MAX_POLLS) {
+function waitForStickerImage(node, options, remaining = STICKER_IMAGE_MAX_POLLS) {
   if (remaining > 0 && !isStickerImageReady(node)) {
-    setTimeout(() => waitForStickerImage(node, receivedAt, remaining - 1), STICKER_IMAGE_POLL_MS);
+    setTimeout(() => waitForStickerImage(node, options, remaining - 1), STICKER_IMAGE_POLL_MS);
     return;
   }
-  const msg = takeMessage(node, 'supersticker', receivedAt);
+  const msg = takeMessage(node, 'supersticker', options);
   if (msg) sendMessages([msg]);
 }
 

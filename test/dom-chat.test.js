@@ -109,6 +109,33 @@ describe('スーパーステッカーの取り込み', () => {
     assert.equal(h.messages().length, 1);
   });
 
+  test('チャットを開いた直後の全件スキャンでも、画像が揃うまで待つ', () => {
+    // 過去分は画像が読み込み済みのことが多いが、開いた直後は間に合っていない
+    // ことがある。新着と同じ待ちがここにも要る
+    const row = stickerRow({ timestamp: '23:02' });
+    const h = loadDomChat({ rows: [row] }); // 読み込みと同時に全件スキャンが走る
+
+    assert.equal(h.sendCount(), 0, '画像が無いうちに送ってしまっている');
+
+    row.attachSticker();
+    h.flush();
+
+    const messages = h.messages();
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].stickerUrl, 'https://lh3.googleusercontent.com/STICKER=s192-rwa');
+    // 過去分なので投稿時刻はDOMの時刻表示（分単位）から作る
+    assert.equal(new Date(messages[0].publishedAt).getSeconds(), 0, '受信時刻で上書きしている');
+  });
+
+  test('全件スキャンで画像が揃っている行はその場で取り込む', () => {
+    const row = stickerRow();
+    row.attachSticker();
+    const h = loadDomChat({ rows: [row] });
+
+    assert.equal(h.sendCount(), 1, '揃っている行まで遅延させている');
+    assert.equal(h.messages()[0].stickerUrl, 'https://lh3.googleusercontent.com/STICKER=s192-rwa');
+  });
+
   test('通常のコメントは待たずにその場で送る', () => {
     const h = loadDomChat();
 
