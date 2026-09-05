@@ -19,8 +19,12 @@ const DOM_CHAT_PATH = path.join(__dirname, '..', '..', 'src', 'content', 'dom-ch
  *
  * setTimeout は積むだけにして、テストから明示的に進める。実時間を待たずに
  * 「YouTubeがまだ画像を作っていない」状況を何度でも再現するため。
+ *
+ * @param {object}   [options]
+ * @param {object[]} [options.rows] 読み込み時点で既にチャットにある行。
+ *                                  attachObserver の全件スキャンが拾う
  */
-function loadDomChat() {
+function loadDomChat({ rows = [] } = {}) {
   const timers = [];
   const sent = [];
 
@@ -29,9 +33,9 @@ function loadDomChat() {
     Node: { TEXT_NODE: 3 },
     URL,
     console,
-    // attachObserver をその場で張り付かせる。空の #items を返さないと
+    // attachObserver をその場で張り付かせる。#items を返さないと
     // 500ms ごとの再試行タイマーがテスト対象のタイマーに混ざる
-    document: { querySelector: () => ({ children: [] }) },
+    document: { querySelector: () => ({ children: rows }) },
     MutationObserver: class { observe() {} },
     setTimeout: fn => timers.push(fn),
     chrome: {
