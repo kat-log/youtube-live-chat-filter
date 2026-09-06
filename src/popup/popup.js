@@ -116,6 +116,25 @@ function filterKeyOf(comment) {
     }
 }
 
+// 検索キーワードとコメントを比べる前に文字種を揃える。
+// IMEで打つと「！」「１」「ｶﾅ」のような全角・半角の揺れが混ざり、
+// 見た目が同じでも includes() が外れる（前後の空白も同じ理由で落とす）
+function normalizeForSearch(text) {
+    return String(text ?? '').normalize('NFKC').toLowerCase().trim();
+}
+
+// コメント1件ぶんの検索対象文字列。1文字打つたびに全件を正規化し直すと
+// 数千件で目に見えて遅くなるので、コメントごとに1度だけ作って持たせる
+function searchTextOf(comment) {
+    if (comment._searchText === undefined) {
+        comment._searchText = normalizeForSearch(
+            [comment.displayName, comment.message, comment.eventText, comment.amountText]
+                .filter(Boolean).join('\n')
+        );
+    }
+    return comment._searchText;
+}
+
 class PopupController {
     constructor() {
         this.isMonitoring = false;
@@ -134,8 +153,10 @@ class PopupController {
         // ユーザーフィルタリング用の状態
         this.selectedUser = null; // 絞り込み対象のユーザー名（null = 全ユーザー表示）
 
-        // キーワード検索フィルタリング用の状態
+        // キーワード検索フィルタリング用の状態。
+        // 入力そのまま（表示用）と、正規化済みの比較用を分けて持つ
         this.searchKeyword = '';
+        this.searchQuery = '';
         this._searchDebounceTimer = null;
 
         // 取得モード
@@ -734,6 +755,8 @@ class PopupController {
 
         // キーワード検索関連のイベント
         this.elements.searchKeywordInput.addEventListener('input', () => this.onSearchInput());
+        // IMEの確定で input が飛ばない環境があり、変換前のかなのまま検索してしまう
+        this.elements.searchKeywordInput.addEventListener('compositionend', () => this.onSearchInput());
         this.elements.clearSearchBtn.addEventListener('click', () => this.clearSearch());
 
         // モード切替
@@ -1565,15 +1588,10 @@ class PopupController {
             // ユーザーフィルター
             const userMatch = !this.selectedUser || comment.displayName === this.selectedUser;
             
-            // キーワード検索フィルター（大文字小文字を区別しない）
-            let keywordMatch = true;
-            if (this.searchKeyword.length > 0) {
-                const kw = this.searchKeyword.toLowerCase();
-                keywordMatch =
-                    (comment.displayName || '').toLowerCase().includes(kw) ||
-                    (comment.message || '').toLowerCase().includes(kw) ||
-                    (comment.eventText || '').toLowerCase().includes(kw);
-            }
+            // キーワード検索フィルター。対象は画面に見えている範囲ではなく
+            // this.comments（取得済みの全件）で、スクロール位置とは無関係
+            const keywordMatch = !this.searchQuery ||
+                searchTextOf(comment).includes(this.searchQuery);
 
             return roleMatch && userMatch && keywordMatch;
         });
@@ -1608,6 +1626,7 @@ class PopupController {
         
         if (filteredComments.length === 0) {
             console.log('[Popup] No filtered comments to display, showing placeholder');
+            this.updateEmptyStateMessage();
             this.elements.noComments.style.display = 'block';
             this.elements.commentsList.style.display = 'none';
             return;
@@ -2156,6 +2175,7 @@ class PopupController {
     onSearchInput() {
         const value = this.elements.searchKeywordInput.value;
         this.searchKeyword = value;
+        this.searchQuery = normalizeForSearch(value);
         this.elements.clearSearchBtn.style.display = value.length > 0 ? 'inline-block' : 'none';
         const wrapper = this.elements.searchKeywordInput.closest('.search-input-wrapper');
         wrapper.classList.toggle('is-active', value.length > 0);
@@ -2165,6 +2185,7 @@ class PopupController {
 
     clearSearch() {
         this.searchKeyword = '';
+        this.searchQuery = '';
         this.elements.searchKeywordInput.value = '';
         this.elements.clearSearchBtn.style.display = 'none';
         this.elements.searchMatchCount.style.display = 'none';
@@ -2173,12 +2194,36 @@ class PopupController {
     }
 
     updateSearchMatchCount(matchCount) {
-        if (this.searchKeyword.length > 0) {
+        if (this.searchQuery.length > 0) {
             this.elements.searchMatchCount.textContent = `${matchCount}件一致`;
             this.elements.searchMatchCount.style.display = 'inline-block';
         } else {
             this.elements.searchMatchCount.style.display = 'none';
         }
+    }
+
+    // 0件のときに理由まで出す。「まだコメントがありません」だけだと、
+    // 検索が全件に効いているのか、そもそも取得できていないのかが見分けられない
+    updateEmptyStateMessage() {
+        const total = this.comments.length;
+
+        if (total === 0) {
+            this.elements.noComments.textContent = 'まだコメントがありません';
+            return;
+        }
+
+        if (this.searchQuery) {
+            // キーワードだけなら当たるのに0件なら、消しているのは役割・ユーザーの絞り込み
+            const keywordHits = this.comments
+                .filter(comment => searchTextOf(comment).includes(this.searchQuery)).length;
+            this.elements.noComments.textContent = keywordHits > 0
+                ? `「${this.searchKeyword.trim()}」に一致する${keywordHits}件は、いまのフィルターで非表示です`
+                : `「${this.searchKeyword.trim()}」に一致するコメントはありません（取得済み${total}件すべてを検索）`;
+            return;
+        }
+
+        this.elements.noComments.textContent =
+            `表示できるコメントがありません（取得済み${total}件はフィルターで非表示です）`;
     }
     
     updateUserFilterStatus() {
