@@ -116,11 +116,24 @@ function filterKeyOf(comment) {
     }
 }
 
+// 目に見えないのに検索を外す文字。YouTubeのライブチャットからコメントを
+// コピーすると、先頭などにゼロ幅スペースや方向制御文字が紛れ込む。
+// 貼り付けた見た目は同じでも includes() が外れ、1件もヒットしなくなる
+// （入力欄が空に見えるのに0件になるのも、消し残ったこれが原因）
+const INVISIBLE_CHARS = /[\u00AD\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g;
+
 // 検索キーワードとコメントを比べる前に文字種を揃える。
 // IMEで打つと「！」「１」「ｶﾅ」のような全角・半角の揺れが混ざり、
-// 見た目が同じでも includes() が外れる（前後の空白も同じ理由で落とす）
+// 見た目が同じでも includes() が外れる（前後の空白も同じ理由で落とす）。
+// 空白の連なりを1個に潰すのは、チャットから名前ごとコピーしたときに
+// 区切りの改行・全角空白の違いで外れないようにするため
 function normalizeForSearch(text) {
-    return String(text ?? '').normalize('NFKC').toLowerCase().trim();
+    return String(text ?? '')
+        .normalize('NFKC')
+        .replace(INVISIBLE_CHARS, '')
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim();
 }
 
 // コメント1件ぶんの検索対象文字列。1文字打つたびに全件を正規化し直すと
@@ -2176,9 +2189,12 @@ class PopupController {
         const value = this.elements.searchKeywordInput.value;
         this.searchKeyword = value;
         this.searchQuery = normalizeForSearch(value);
-        this.elements.clearSearchBtn.style.display = value.length > 0 ? 'inline-block' : 'none';
+        // 見た目が空でも消し残ったゼロ幅文字だけが入っていることがあるので、
+        // 「検索中」の見せ方は入力そのままではなく正規化後の有無で決める
+        const isSearching = this.searchQuery.length > 0;
+        this.elements.clearSearchBtn.style.display = isSearching ? 'inline-block' : 'none';
         const wrapper = this.elements.searchKeywordInput.closest('.search-input-wrapper');
-        wrapper.classList.toggle('is-active', value.length > 0);
+        wrapper.classList.toggle('is-active', isSearching);
         clearTimeout(this._searchDebounceTimer);
         this._searchDebounceTimer = setTimeout(() => this.renderComments(false, false), 150);
     }
