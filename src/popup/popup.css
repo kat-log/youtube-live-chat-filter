@@ -952,6 +952,8 @@ body {
     font-size: 13px;
     color: var(--text-muted);
     font-style: italic;
+    /* 検索キーワードをそのまま載せるので、長い語でも横に溢れさせない */
+    overflow-wrap: anywhere;
 }
 
 /* Comments list — the star of the show */
