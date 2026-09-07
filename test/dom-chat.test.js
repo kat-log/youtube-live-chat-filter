@@ -146,3 +146,34 @@ describe('スーパーステッカーの取り込み', () => {
     assert.equal(h.messages()[0].kind, undefined, 'テキストには種別を載せない');
   });
 });
+
+// チャットのDOMが現れないフレームに注入されたときの振る舞い（#1）。
+//
+// service-worker は allFrames で dom-chat.js を注入するため、watch のトップフレームなど
+// ライブチャットが存在しないフレームにも届く。そこで attachObserver が無限に再試行すると、
+// 500ms ごとの querySelector がセッションの最後まで回り続ける。
+describe('チャットが無いフレームでの自衛', () => {
+  test('#items が見つからないとき、再試行は上限で止まる', () => {
+    const h = loadDomChat({ hasItemList: false });
+
+    assert.equal(h.pendingTimers(), 1, '最初の再試行が予約されていない');
+
+    // 尽きなければ flush が例外を投げる（＝再試行が止まっていない）
+    const ticks = h.flush();
+
+    assert.equal(ticks, 60, '再試行の回数が想定と違う（500ms x 60 = 30秒）');
+    assert.equal(h.pendingTimers(), 0, '諦めたあとにもタイマーが残っている');
+    assert.equal(h.sendCount(), 0);
+    assert.equal(h.warnings().length, 1, '諦めたことがログに残っていない');
+  });
+
+  test('live_chat 以外のフレームでは何も仕掛けない', () => {
+    const h = loadDomChat({ pathname: '/watch', hasItemList: false });
+
+    assert.equal(h.pendingTimers(), 0, 'チャットの無いフレームで再試行を始めている');
+    assert.equal(h.domChat.window.__domChatInitialized, undefined,
+      '再注入を塞ぐと、SPA遷移でチャットのフレームになったときに拾えなくなる');
+    // ガードのブロックごと評価されないので、内部関数はどれも生えない
+    assert.equal(h.domChat.handleMutations, undefined);
+  });
+});

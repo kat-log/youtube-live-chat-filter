@@ -57,7 +57,7 @@ class OptionsController {
         this.elements.toggleVisibilityBtn.addEventListener('click', () => this.toggleApiKeyVisibility());
         this.elements.saveSettingsBtn.addEventListener('click', () => this.saveSettings());
         this.elements.testApiBtn.addEventListener('click', () => this.testApiConnection());
-        this.elements.debugModeSwitch.addEventListener('change', () => this.saveSettings());
+        this.elements.debugModeSwitch.addEventListener('change', () => this.saveDebugMode());
         this.elements.autoStartSwitch.addEventListener('change', () => this.saveAutoStart());
         this.elements.themeToggle.addEventListener('change', () => this.saveTheme());
         this.elements.timeHour12Toggle.addEventListener('change', () => this.saveTimeFormat());
@@ -110,7 +110,6 @@ class OptionsController {
     
     async saveSettings() {
         const apiKey = this.elements.apiKeyInput.value.trim();
-        const debugMode = this.elements.debugModeSwitch.checked;
         
         if (!apiKey) {
             this.showToast('APIキーを入力してください', 'error');
@@ -122,18 +121,12 @@ class OptionsController {
         this.elements.saveSettingsBtn.textContent = '保存中...';
         
         try {
-            const [apiResponse, debugResponse] = await Promise.all([
-                chrome.runtime.sendMessage({
-                    action: 'saveApiKey',
-                    apiKey: apiKey
-                }),
-                chrome.runtime.sendMessage({
-                    action: 'saveDebugMode',
-                    debugMode: debugMode
-                })
-            ]);
+            const apiResponse = await chrome.runtime.sendMessage({
+                action: 'saveApiKey',
+                apiKey: apiKey
+            });
             
-            if (apiResponse.success && debugResponse.success) {
+            if (apiResponse.success) {
                 this.showToast('設定が保存されました', 'success');
             } else {
                 this.showToast('設定の保存に失敗しました', 'error');
@@ -148,6 +141,24 @@ class OptionsController {
         }
     }
     
+    // デバッグモードはAPIキーと無関係に保存する。
+    // saveSettings() に相乗りしていたころは、APIキー未設定（DOMモードの既定構成）だと
+    // 早期 return に当たって一生ONにできなかった
+    async saveDebugMode() {
+        try {
+            const response = await chrome.runtime.sendMessage({
+                action: 'saveDebugMode',
+                debugMode: this.elements.debugModeSwitch.checked
+            });
+            if (!response || !response.success) {
+                this.showToast('デバッグモードの保存に失敗しました', 'error');
+            }
+        } catch (error) {
+            console.error('Error saving debug mode setting:', error);
+            this.showToast('デバッグモードの保存に失敗しました', 'error');
+        }
+    }
+
     async saveAutoStart() {
         try {
             await chrome.runtime.sendMessage({
@@ -193,7 +204,10 @@ class OptionsController {
         this.elements.testApiBtn.textContent = 'テスト中...';
         
         try {
-            const testUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=1&q=test&type=video&key=${apiKey}`;
+            // キーの有効性が分かればよいので、search.list（100 units）ではなく
+            // videos.list（1 unit）を叩く。IDは実在の動画である必要すら無く、
+            // キーが有効なら 200、無効なら 400/403 が返る
+            const testUrl = `https://www.googleapis.com/youtube/v3/videos?part=id&id=dQw4w9WgXcQ&key=${apiKey}`;
             
             const response = await fetch(testUrl);
             

@@ -25,10 +25,11 @@ function debugWarn(prefix, ...args) {
   }
 }
 
+// エラーだけは debugMode に関係なく必ず出す。
+// 「数時間使い込まないと出ない」種類の不具合を追うのに、既定でエラーが
+// 消えているのがいちばん困る（既定構成では debugMode を ON にする手段も無かった）
 function debugError(prefix, ...args) {
-  if (debugMode) {
-    console.error(prefix, ...args);
-  }
+  console.error(prefix, ...args);
 }
 
 // 初期化時にデバッグモードを読み込み
@@ -1369,7 +1370,10 @@ async function startDomMonitoring(tabId, videoId) {
 
   updateBadge(true);
 
-  // SPA遷移後はmanifestの自動注入が走らないため、明示的に注入する
+  // SPA遷移後はmanifestの自動注入が走らないため、明示的に注入する。
+  // チャットはiframeの中なので allFrames が要るが、そのぶんチャットと無関係な
+  // フレームにも届く。どのフレームで動くかの判断は dom-chat.js 側の
+  // location.pathname のガードに任せている（#1）
   // window.__domChatInitialized ガードにより二重注入は無害
   try {
     await chrome.scripting.executeScript({
