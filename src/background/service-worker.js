@@ -4,10 +4,13 @@
 // store.js は bucket の判定で YTF を使うので、comment.js より後に読むこと
 importScripts('../shared/comment.js', '../shared/store.js');
 
+// isCommentEnabled はここには無い。取り込みは全件で、役割・種別の絞り込みは
+// 表示側（popup）の担当になった（再設計の決定1）
 const {
   DEFAULT_COMMENT_FILTERS,
   normalizeCommentFilters,
-  isCommentEnabled,
+  isDisplayableKind,
+  bucketOf,
   apiCommentKind,
   apiCommentRole,
   stripHtmlTags
@@ -247,8 +250,25 @@ function collectAvatars(messages) {
     const url = msg.avatarUrl;
     delete msg.avatarUrl;
     if (!url || !msg.displayName) continue;
-    if (monitoringState.avatarsByAuthor[msg.displayName] === url) continue;
+
+    const known = monitoringState.avatarsByAuthor[msg.displayName];
+    // 上限に当たったとき捨てるのは挿入順の古い方。特別枠（配信者・モデレーター・
+    // スパチャ・メンバーシップ）の発言者だけは、発言のたびに末尾へ入れ直して
+    // 一般コメントの流量に押し出されないようにする。
+    // 全件取り込み（決定1）にすると、一般視聴者のアバターだけで上限に届き、
+    // 配信者のアバターが古い順に落ちる — 決定3が保持枠を分けたのと同じ問題が
+    // アバターにも出る。
+    // これで守れるのは「発言し続けているかぎり」まで。1バッチの中だけで
+    // 上限を超えるほど流れた場合と、Service Worker の復帰直後（保存済みの
+    // アバターに枠の情報が無い）は守れない。アバターにも保持枠を持たせるには
+    // 保存の形（発言者名 -> URL）を変える必要があり、それは popup の読み方を
+    // 作り直すフェーズ5 に譲る
+    if (known !== undefined && msg.bucket === 'primary') {
+      delete monitoringState.avatarsByAuthor[msg.displayName];
+    }
     monitoringState.avatarsByAuthor[msg.displayName] = url;
+    // 変わっていないURLは送り直さない（delta は「増えたぶん」だけ）
+    if (known === url) continue;
     delta[msg.displayName] = url;
   }
 
@@ -933,26 +953,26 @@ async function fetchLiveChatMessages(liveChatId, pageToken = null) {
     
     const data = await response.json();
     
-    // コメントフィルターの状態を取得
-    const filtersResult = await chrome.storage.local.get(['commentFilters']);
-    const commentFilters = normalizeCommentFilters(filtersResult.commentFilters);
-
-    // 表示できない種別（チャット終了・削除済みなど）を落としたうえで、
-    // 個別フィルターに基づいてコメントをフィルタリング
-    const filteredComments = data.items.filter(item => {
+    // 落とすのは表示できない種別（チャット終了・削除済みなど）だけ。
+    // 役割・種別の絞り込みはここではやらない（決定1）。取り込み時に捨てると
+    // 保存されないので、あとからトグルをONにしても過去分が戻らない（#4）
+    const comments = [];
+    for (const item of data.items) {
       const kind = apiCommentKind(item);
-      if (!kind) return false;
-      return isCommentEnabled(kind, apiCommentRole(item.authorDetails), commentFilters);
-    });
+      if (!kind) continue;
+      // 保持枠は取り込み口で焼き付ける（決定3）。付けずに渡すと store 側が
+      // 1件ずつ正準形に通し直すことになり、全件取り込みの流量では無駄が大きい。
+      // 枠の判定そのものは bucketOf が正で、ここには書き写さない
+      item.bucket = bucketOf({ kind, role: apiCommentRole(item.authorDetails) });
+      comments.push(item);
+    }
 
-    debugLog('[Background] Individual filters applied:', commentFilters);
-    debugLog('[Background] Returning', filteredComments.length, 'filtered comments out of', data.items.length, 'total');
-    
+    debugLog('[Background] Returning', comments.length, 'displayable comments out of', data.items.length, 'total');
+
     return {
-      comments: filteredComments,
+      comments: comments,
       nextPageToken: data.nextPageToken,
-      pollingIntervalMillis: data.pollingIntervalMillis || 5000,
-      commentFilters: commentFilters
+      pollingIntervalMillis: data.pollingIntervalMillis || 5000
     };
     
   } catch (error) {
@@ -1291,7 +1311,6 @@ async function handleDomChatMessages(messages, sender = null) {
     return;
   }
 
-  const filters = normalizeCommentFilters(monitoringState.commentFilters);
   const newMessages = messages.filter(msg => {
     // 更新前に保存された履歴のIDは旧形式。dom-chat.js が両方を載せてくるので、
     // どちらかで既出なら取り込まない（更新直後の全件スキャンで二重に積まないため）
@@ -1299,9 +1318,15 @@ async function handleDomChatMessages(messages, sender = null) {
     delete msg.legacyId; // 保存はしない。突き合わせにしか使わない
     if (monitoringState.processedMessageIds.has(msg.id)) return false;
     if (legacyId && monitoringState.processedMessageIds.has(legacyId)) return false;
+    // 落とすのは表示できない種別だけ。役割・種別の絞り込みは popup が持つ（決定1）
+    if (!isDisplayableKind(msg.kind)) return false;
+    // 既読にするのは「保存すると決めたあと」（#4）。捨てるコメントまで既読に
+    // していたので、あとからトグルをONにして全件スキャンし直しても、
+    // ここで弾かれて二度と拾えなかった
     monitoringState.processedMessageIds.add(msg.id);
-    // kind が無いのは旧バージョンの dom-chat.js が送ったテキストコメント
-    return isCommentEnabled(msg.kind || 'text', msg.role, filters);
+    // 保持枠を焼き付けてから渡す（決定3）。判定は bucketOf が正
+    msg.bucket = bucketOf(msg);
+    return true;
   });
 
   if (!newMessages.length) return;

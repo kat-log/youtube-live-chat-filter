@@ -203,7 +203,10 @@ describe('DOMモードのコメント取り込み', () => {
     assert.deepEqual(await savedIds(sw, 'V'), []);
   });
 
-  test('フィルターで除外された種別は履歴に残らない', async () => {
+  test('表示フィルターで外れる種別も履歴には残る', async () => {
+    // フェーズ4の本体（決定1）。取り込み時に捨てていたので、あとから
+    // トグルをONに戻しても過去分が戻らなかった（#4）。絞り込みは表示側の担当で、
+    // 「フィルターを切ると出ない」ことは test/popup-filters.test.js が見ている
     const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
     const sw = loadServiceWorker(chrome);
     await settle();
@@ -211,17 +214,63 @@ describe('DOMモードのコメント取り込み', () => {
     sw.setState({
       isMonitoring: true, chatMode: 'dom', tabId: 3, currentVideoId: 'V',
       processedMessageIds: new Set(),
-      commentFilters: { owner: true, moderator: true, sponsor: true, normal: false }
+      commentFilters: { owner: true, moderator: false, sponsor: false, normal: false }
     });
 
     await sw.handleDomChatMessages([
       { ...domComment(1), role: 'normal' },
-      { ...domComment(2), role: 'owner' }
+      { ...domComment(2), role: 'owner' },
+      { ...domComment(3), role: 'member' },
+      { ...domComment(4), role: 'moderator' }
+    ], senderFor(3, 'V'));
+
+    assert.deepEqual(await savedIds(sw, 'V'), ['dom_1', 'dom_2', 'dom_3', 'dom_4']);
+  });
+
+  test('表示できない種別は落とし、既読にもしない', async () => {
+    // 既読マークを付けるのは「保存すると決めたあと」（#4）。捨てるものまで
+    // 既読にすると、全件スキャンで送り直させても二度と拾えない
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    sw.setState({
+      isMonitoring: true, chatMode: 'dom', tabId: 3, currentVideoId: 'V',
+      processedMessageIds: new Set()
+    });
+
+    await sw.handleDomChatMessages([
+      { ...domComment(1), kind: 'giftRedemption' },
+      { ...domComment(2), kind: 'superchat', amountText: '¥500' }
+    ], senderFor(3, 'V'));
+
+    assert.deepEqual(await savedIds(sw, 'V'), ['dom_2']);
+    assert.deepEqual([...sw.monitoringState.processedMessageIds], ['dom_2'],
+      '保存しなかったコメントを既読にしている');
+  });
+
+  test('保持枠は取り込み口で焼き付ける', async () => {
+    // 決定3。付けずに渡すと store 側が1件ずつ正準形に通し直すことになる
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    sw.setState({
+      isMonitoring: true, chatMode: 'dom', tabId: 3, currentVideoId: 'V',
+      processedMessageIds: new Set()
+    });
+
+    await sw.handleDomChatMessages([
+      { ...domComment(1), role: 'normal' },
+      { ...domComment(2), role: 'member' },
+      { ...domComment(3), role: 'owner' },
+      { ...domComment(4), role: 'moderator' },
+      { ...domComment(5), role: 'normal', kind: 'superchat', amountText: '¥500' }
     ], senderFor(3, 'V'));
 
     const saved = await savedComments(sw, 'V');
-    assert.equal(saved.length, 1);
-    assert.equal(saved[0].role, 'owner');
+    assert.deepEqual([...saved.map(c => c.bucket)],
+      ['bulk', 'bulk', 'primary', 'primary', 'primary']);
   });
 
   test('同じコメントが再送されても重複しない', async () => {
@@ -429,6 +478,33 @@ describe('popup へ渡すコメント', () => {
     // 残りの枠は新しい方の一般コメントで埋まり、並びは古い順のまま
     assert.deepEqual(ids, ['dom_0', 'dom_17', 'dom_18', 'dom_19', 'dom_20']);
   });
+
+  test('取り込み時に非表示だったコメントも、popup には渡される', async () => {
+    // 「特別」プリセットで取り込んだあと「一般」をONに戻すと過去分が出る、
+    // というフェーズ4の約束の受け渡し口。あとは popup が絞り込むだけで、
+    // そちらは test/popup-filters.test.js が見ている
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    sw.setState({
+      isMonitoring: true, chatMode: 'dom', tabId: 3, currentVideoId: 'V',
+      processedMessageIds: new Set(),
+      // 「特別」プリセット相当（メンバーと一般が非表示）
+      commentFilters: { owner: true, moderator: true, sponsor: false, normal: false,
+        superchat: true, membership: true }
+    });
+
+    await sw.handleDomChatMessages([
+      { ...domComment(1), role: 'owner' },
+      { ...domComment(2), role: 'normal' },
+      { ...domComment(3), role: 'member' }
+    ], senderFor(3, 'V'));
+    await sw.flushCommentsHistory();
+
+    const history = await sw.getCommentsHistory('V');
+    assert.deepEqual([...history.comments.map(c => c.id)], ['dom_1', 'dom_2', 'dom_3']);
+  });
 });
 
 describe('アバターの取り込み', () => {
@@ -485,7 +561,9 @@ describe('アバターの取り込み', () => {
     assert.deepEqual(deltas[1], {}, '既知のアバターを毎回送り直している');
   });
 
-  test('フィルターで除外された種別のアバターは取り込まない', async () => {
+  test('表示フィルターで外れる発言者のアバターも取り込む', async () => {
+    // 取り込みが全件になった以上、アバターも全件ぶん要る（決定1）。
+    // 一般コメントを表示するときに、その人のアバターだけ無いことになる
     const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
     const sw = loadServiceWorker(chrome);
     await settle();
@@ -496,7 +574,61 @@ describe('アバターの取り込み', () => {
       { ...domComment(2), role: 'owner', displayName: '配信者', avatarUrl: AVATAR }
     ], senderFor(3, 'V'));
 
-    assert.deepEqual(Object.keys(sw.monitoringState.avatarsByAuthor), ['配信者']);
+    assert.deepEqual(Object.keys(sw.monitoringState.avatarsByAuthor), ['一般人', '配信者']);
+  });
+
+  test('発言し続けている配信者のアバターは、一般の流量で押し出されない', async () => {
+    // 全件取り込みにすると、一般視聴者のアバターだけで上限（500人）に届く。
+    // 挿入順の古い方から捨てるだけの作りだと、配信開始直後に発言している
+    // 配信者やモデレーターのアバターが真っ先に落ちる
+    // （決定3が保持枠を分けたのと同じ問題がアバターに出る）
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    startedSession(sw);
+
+    const owner = index => ({
+      ...domComment(index), role: 'owner', displayName: '配信者', avatarUrl: AVATAR
+    });
+
+    // 配信者が最初に発言し、そのあと一般視聴者が上限を超えるまで流れる。
+    // 配信者は途中でも発言する（実際の配信で必ず起きる並び）
+    await sw.handleDomChatMessages([owner(0)], senderFor(3, 'V'));
+
+    const viewers = Array.from({ length: sw.MAX_AVATARS_PER_VIDEO + 10 }, (_, i) => ({
+      ...domComment(i + 1), role: 'normal',
+      displayName: `視聴者${i}`, avatarUrl: `${AVATAR}#${i}`
+    }));
+    for (let at = 0; at < viewers.length; at += 50) {
+      await sw.handleDomChatMessages(viewers.slice(at, at + 50), senderFor(3, 'V'));
+      await sw.handleDomChatMessages([owner(9000 + at)], senderFor(3, 'V'));
+    }
+
+    const names = Object.keys(sw.monitoringState.avatarsByAuthor);
+    assert.equal(names.length, sw.MAX_AVATARS_PER_VIDEO);
+    assert.ok(names.includes('配信者'), '配信者のアバターが押し出されている');
+    assert.equal((await sw.store.readAvatars('V'))['配信者'], AVATAR);
+    // 押し出されるのは、古くて以後発言していない一般視聴者の方
+    assert.ok(!names.includes('視聴者0'), '一般視聴者の古い方が残っている');
+  });
+
+  test('同じアバターを送り直しても、追加分としては通知しない', async () => {
+    // 末尾へ入れ直す処理を足したので、delta が毎回ふくらんでいないかを見る
+    const { chrome, calls } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    startedSession(sw);
+
+    const owner = index => ({
+      ...domComment(index), role: 'owner', displayName: '配信者', avatarUrl: AVATAR
+    });
+    await sw.handleDomChatMessages([owner(1)], senderFor(3, 'V'));
+    await sw.handleDomChatMessages([owner(2)], senderFor(3, 'V'));
+
+    const deltas = calls.runtimeMessages
+      .filter(m => m.action === 'newSpecialComments')
+      .map(m => ({ ...m.avatars }));
+    assert.deepEqual(deltas[1], {}, '同じURLを送り直している');
   });
 
   test('上限を超えたアバターは古い方から捨てられる', async () => {
@@ -637,89 +769,11 @@ describe('ユーティリティ', () => {
   });
 });
 
-describe('スーパーチャットとメンバーシップ', () => {
-  // スパチャは一般視聴者からも飛んでくるので、役割で絞ると取りこぼす。
-  // 種別（kind）を役割とは別の軸として扱えているかをここで固定する
-  const startedSession = (sw, filters) => sw.setState({
-    isMonitoring: true, chatMode: 'dom', tabId: 3, currentVideoId: 'V',
-    processedMessageIds: new Set(), avatarsByAuthor: {},
-    ...(filters ? { commentFilters: filters } : {})
-  });
-
-  // 保存されたものの種別。kind を持たないテキストコメントは 'text' に揃えて見る
-  const kindsOf = async sw =>
-    [...(await savedComments(sw, 'V')).map(c => c.kind || 'text')];
-
-  test('一般視聴者のスパチャは「一般」を切っていても残る', async () => {
-    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
-    const sw = loadServiceWorker(chrome);
-    await settle();
-    startedSession(sw, {
-      owner: true, moderator: true, sponsor: true, normal: false,
-      superchat: true, membership: true
-    });
-
-    await sw.handleDomChatMessages([
-      { ...domComment(1), role: 'normal', kind: 'superchat', amountText: '¥1,000' },
-      { ...domComment(2), role: 'normal', kind: 'text' }
-    ], senderFor(3, 'V'));
-
-    assert.deepEqual(await kindsOf(sw), ['superchat']);
-  });
-
-  test('種別を切ると、その発言者の役割が有効でも残らない', async () => {
-    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
-    const sw = loadServiceWorker(chrome);
-    await settle();
-    startedSession(sw, {
-      owner: true, moderator: true, sponsor: true, normal: true,
-      superchat: false, membership: true
-    });
-
-    await sw.handleDomChatMessages([
-      { ...domComment(1), role: 'member', kind: 'superchat', amountText: '¥500' },
-      { ...domComment(2), role: 'member', kind: 'supersticker', amountText: '¥200' },
-      { ...domComment(3), role: 'member', kind: 'membership', eventText: '新規メンバー' },
-      { ...domComment(4), role: 'member', kind: 'gift', eventText: 'ギフト5個' }
-    ], senderFor(3, 'V'));
-
-    assert.deepEqual(await kindsOf(sw), ['membership', 'gift']);
-  });
-
-  test('旧バージョンが保存した4項目のフィルターでも新しい種別は表示される', async () => {
-    // 更新直後は storage に superchat / membership が無い。欠けたキーを
-    // false と解釈すると、アップデートした瞬間にスパチャが消える
-    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
-    const sw = loadServiceWorker(chrome);
-    await settle();
-    startedSession(sw, { owner: true, moderator: true, sponsor: true, normal: true });
-
-    await sw.handleDomChatMessages([
-      { ...domComment(1), role: 'normal', kind: 'superchat', amountText: '¥1,000' },
-      { ...domComment(2), role: 'member', kind: 'membership', eventText: '新規メンバー' }
-    ], senderFor(3, 'V'));
-
-    assert.deepEqual(await kindsOf(sw), ['superchat', 'membership']);
-  });
-
-  test('kind を持たない旧 dom-chat.js のコメントは従来どおり役割で絞られる', async () => {
-    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
-    const sw = loadServiceWorker(chrome);
-    await settle();
-    startedSession(sw, {
-      owner: true, moderator: true, sponsor: true, normal: false,
-      superchat: true, membership: true
-    });
-
-    await sw.handleDomChatMessages([
-      { ...domComment(1), role: 'normal' },
-      { ...domComment(2), role: 'owner' }
-    ], senderFor(3, 'V'));
-
-    const saved = await savedComments(sw, 'V');
-    assert.equal(saved.length, 1);
-    assert.equal(saved[0].role, 'owner');
-  });
+describe('種別とフィルターの読み取り', () => {
+  // 「スパチャは一般視聴者からも飛んでくるので役割で絞ると取りこぼす」など、
+  // フィルターの2軸そのものを確かめるテストは test/popup-filters.test.js に移した。
+  // 取り込みは全件になったので（決定1）、「Service Worker が保存するか」では
+  // もう確かめられない。ここに残すのは、取り込み口が見る種別の判定だけ
 
   test('フィルターの欠けたキーは既定値で補い、想定外のキーは捨てる', async () => {
     const { chrome } = createChromeMock();
@@ -765,5 +819,59 @@ describe('スーパーチャットとメンバーシップ', () => {
     assert.equal(sw.commentPreview({ snippet: { displayMessage: 'こんにちは' } }), 'こんにちは');
     assert.equal(sw.commentPreview({ message: 'DOMモードのコメント' }), 'DOMモードのコメント');
     assert.equal(sw.commentPreview(undefined), '');
+  });
+});
+
+describe('APIモードの取り込み', () => {
+  // DOMモードと同じ規則で動くこと。以前はAPI側だけ「フィルター → 重複判定」の
+  // 順で、同じ操作をしてもモードによって挙動が違った（#4）
+  const apiItem = (id, type, authorDetails = {}) => ({
+    id,
+    snippet: { type, publishedAt: '2026-09-07T13:02:00.000Z', displayMessage: id },
+    authorDetails: { displayName: id, ...authorDetails }
+  });
+
+  const fetched = async (sw, items) => {
+    sw.setFetch(async () => ({ ok: true, json: async () => ({ items, nextPageToken: 'next' }) }));
+    return sw.fetchLiveChatMessages('LIVE_CHAT_ID');
+  };
+
+  test('表示フィルターは適用せず、表示できない種別だけ落とす', async () => {
+    const { chrome, store } = createChromeMock();
+    store.youtubeApiKey = 'KEY';
+    // 「一般」も「スパチャ」も切った状態。それでも取り込みは全件
+    store.commentFilters = { owner: true, moderator: true, sponsor: false, normal: false,
+      superchat: false, membership: false };
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    const response = await fetched(sw, [
+      apiItem('text', 'textMessageEvent'),
+      apiItem('paid', 'superChatEvent'),
+      apiItem('joined', 'newSponsorEvent'),
+      apiItem('ended', 'chatEndedEvent'),
+      apiItem('deleted', 'messageDeletedEvent'),
+      apiItem('redeemed', 'giftMembershipReceivedEvent')
+    ]);
+
+    assert.deepEqual([...response.comments.map(c => c.id)], ['text', 'paid', 'joined']);
+  });
+
+  test('保持枠を焼き付けてから返す', async () => {
+    const { chrome, store } = createChromeMock();
+    store.youtubeApiKey = 'KEY';
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    const response = await fetched(sw, [
+      apiItem('normal', 'textMessageEvent'),
+      apiItem('member', 'textMessageEvent', { isChatSponsor: true }),
+      apiItem('mod', 'textMessageEvent', { isChatModerator: true }),
+      apiItem('owner', 'textMessageEvent', { isChatOwner: true }),
+      apiItem('paid', 'superChatEvent')
+    ]);
+
+    assert.deepEqual([...response.comments.map(c => c.bucket)],
+      ['bulk', 'bulk', 'primary', 'primary', 'primary']);
   });
 });
