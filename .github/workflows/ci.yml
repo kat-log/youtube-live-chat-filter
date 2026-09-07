@@ -1,0 +1,41 @@
+# push と PR で lint とテストを回す。
+#
+# これまでマージ済みの約35本の PR は、すべて自動チェックなしで入っていた
+# （docs/audit-2026-09.md #42）。npm test が「誰かが思い出したときだけ」走る
+# 状態を終わらせるのがこのワークフローの目的。
+#
+# ビルド手順は無い。src/ をそのまま「パッケージ化されていない拡張機能を読み込む」で
+# 使える性質は維持する（再設計の決定5）ので、ここでも build は呼ばない。
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+# 同じブランチに続けて push したとき、古い実行は打ち切る
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: lint と テスト
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # package.json の engines に合わせる（node:test を使うため 20 以上が要る）
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run lint
+
+      - run: npm test
