@@ -78,6 +78,7 @@ loadDebugMode();
 const {
     FILTER_KEYS,
     filterKeyOf,
+    isCommentEnabled,
     normalizeComment,
     normalizeForSearch,
     searchTextOf,
@@ -1485,26 +1486,35 @@ class PopupController {
         // スクロール位置を保存
         const previousScrollTop = this.elements.commentsList.scrollTop;
         
-        // 役割・種別フィルターとユーザーフィルターの両方を適用
-        const filteredComments = this.comments.filter(comment => {
-            const roleMatch = this.commentFilters[filterKeyOf(comment)] === true;
-            
+        // 母集団は1つだけにする（#18）。以前は合計が「絞り込み後」、内訳が
+        // 「this.comments 全件」で、並べて出しているのに数え方が違っていた。
+        // ここで作る scoped が唯一の母集団で、内訳もそこから数える。
+        //
+        // 役割・種別のトグルだけは scoped から引く（バッジ自身がそのトグルなので、
+        // 切った枠の件数が 0 になってしまうと、ONに戻す判断ができなくなる）。
+        // 表示中の枠ぶんの内訳を足すと、必ず合計値に一致する
+        const scoped = this.comments.filter(comment => {
             // ユーザーフィルター
             const userMatch = !this.selectedUser || comment.displayName === this.selectedUser;
-            
+
             // キーワード検索フィルター。対象は画面に見えている範囲ではなく
             // this.comments（取得済みの全件）で、スクロール位置とは無関係
             const keywordMatch = !this.searchQuery ||
                 searchTextOf(comment).includes(this.searchQuery);
 
-            return roleMatch && userMatch && keywordMatch;
+            return userMatch && keywordMatch;
         });
-        
-        console.log('[Popup] Filtered comments:', filteredComments.length);
-        
-        // コメント数の集計
+
+        // コメント数の集計。絞り込みと同じ母集団・同じ軸（filterKeyOf）で数える
         const counts = Object.fromEntries(FILTER_KEYS.map(key => [key, 0]));
-        for (const comment of this.comments) counts[filterKeyOf(comment)]++;
+        for (const comment of scoped) counts[filterKeyOf(comment)]++;
+
+        // 役割・種別の絞り込み。取り込みは全件になったので（決定1）、
+        // トグルをONに戻せば過去分もここから出てくる
+        const filteredComments = scoped.filter(
+            comment => isCommentEnabled(comment.kind, comment.role, this.commentFilters));
+
+        console.log('[Popup] Filtered comments:', filteredComments.length);
 
         // コメント数表示を更新
         this.elements.totalCount.textContent = `${filteredComments.length}件`;

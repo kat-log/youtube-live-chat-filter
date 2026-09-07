@@ -131,6 +131,10 @@ function loadServiceWorker(chrome, idb = chrome.__idb || createIndexedDBMock()) 
       commentPreview,
       flushCommentsHistory,
       readCommentsForPopup,
+      fetchLiveChatMessages,
+      // APIモードの取得を差し替える口。コンテキストの fetch は既定で
+      // 「ネットワークは使えない」を投げるので、テスト側から items を差し込む
+      setFetch: (fn) => { globalThis.fetch = fn; },
       // 履歴の保存は shared/store.js が正。テストからも同じ口を通す（決定2）
       store: self.YTFStore,
       latestTimestampOf: self.YTFStore.latestTimestampOf,

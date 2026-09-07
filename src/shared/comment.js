@@ -49,18 +49,11 @@
     return normalized;
   }
 
-  // 種別が付いているものは種別で、通常のコメントは役割で絞る
-  function isCommentEnabled(kind, role, filters) {
-    if (kind === 'superchat' || kind === 'supersticker') return filters.superchat;
-    if (kind === 'membership' || kind === 'gift') return filters.membership;
-    if (role === 'owner')     return filters.owner;
-    if (role === 'moderator') return filters.moderator;
-    if (role === 'member')    return filters.sponsor;
-    return filters.normal;
-  }
-
   // 正準形のコメント1件から、それが属するフィルターキーを引く。
-  // 絞り込みと件数の集計はどちらもこれを通す（母集団が食い違わないように）
+  // 絞り込みと件数の集計はどちらもこれを通す（母集団が食い違わないように）。
+  // フィルターの2軸（役割と種別）を判定するのはこの関数だけ。
+  // 以前は isCommentEnabled が同じ分岐をもう一度書いていて、
+  // 合計と内訳で数え方が割れる余地が残っていた（#18）
   function filterKeyOf(comment) {
     const kind = comment.kind || 'text';
     if (kind === 'superchat' || kind === 'supersticker') return 'superchat';
@@ -73,6 +66,13 @@
     }
   }
 
+  // 種別が付いているものは種別で、通常のコメントは役割で絞る。
+  // 判定は filterKeyOf に委ねているので、絞り込みと件数の集計は
+  // 必ず同じ軸で動く。取り込み時には使わない（決定1。表示側だけの関心事）
+  function isCommentEnabled(kind, role, filters) {
+    return filters[filterKeyOf({ kind, role })] === true;
+  }
+
   // === 保持枠（決定3） =====================================================
   // 枠の判定は「役割」でも「種別」でもなく流量。メンバーは製品の意味づけとしては
   // 特別だが、大きな配信では一般と同じ流量になるので bulk に入れる。
@@ -83,6 +83,19 @@
     if (kind !== 'text') return 'primary';
     if (comment.role === 'owner' || comment.role === 'moderator') return 'primary';
     return 'bulk';
+  }
+
+  // === 表示できる種別（決定1） =============================================
+  // 取り込み口で見るのはここだけになった。役割・種別のトグルは表示側の関心事で、
+  // 取り込み時に落とすと保存されないまま既読になり、あとからトグルをONにしても
+  // 二度と戻らない（#4）。落とすのは「そもそも表示する形を持たないもの」だけ。
+  // APIモードのチャット終了・削除済みイベントと、DOMモードのギフト受領告知
+  // （受け取った人数ぶん流れて量が多いので意図的に対象外）がこれに当たる
+  const DISPLAYABLE_KINDS = new Set(['text', 'superchat', 'supersticker', 'membership', 'gift']);
+
+  // kind が無いのは旧バージョンの dom-chat.js が送ったテキストコメント
+  function isDisplayableKind(kind) {
+    return DISPLAYABLE_KINDS.has(kind || 'text');
   }
 
   // === APIモードの読み取り =================================================
@@ -357,6 +370,7 @@
     isCommentEnabled,
     filterKeyOf,
     bucketOf,
+    isDisplayableKind,
     apiCommentKind,
     apiCommentRole,
     apiDetailOf,
