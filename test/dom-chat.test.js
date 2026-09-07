@@ -177,3 +177,57 @@ describe('チャットが無いフレームでの自衛', () => {
     assert.equal(h.domChat.handleMutations, undefined);
   });
 });
+
+// MutationObserver の張り方（#T3）。
+//
+// これまでのテストは handleMutations を直接呼んでいて、observe の配線を迂回していた。
+// 「どこに・何を・いくつ張ったか」が見えないと、YouTube が #items を作り直したときに
+// 無言で止まる不具合（#2）を、フェーズ7 で直したかどうか確かめられない。
+describe('チャットの監視の張り方', () => {
+  test('#items に childList で1つだけ張る', () => {
+    const h = loadDomChat();
+
+    const observations = h.observations();
+    assert.equal(observations.length, 1, '監視の数が想定と違う');
+    assert.equal(observations[0].target, h.itemList, '#items 以外を監視している');
+    // options は vm コンテキスト側で作られた物なので、deepEqual では比べられない
+    // （プロトタイプが別realm）。中身だけ見る
+    assert.equal(observations[0].options.childList, true, 'childList を購読していない');
+    assert.equal(observations[0].options.subtree, undefined);
+    assert.equal(h.disconnections().length, 0);
+  });
+
+  test('張った監視から流れてきた行を取り込む', () => {
+    const h = loadDomChat();
+
+    // handleMutations を直接呼ばず、observe されたコールバック経由で流す
+    const delivered = h.emit(added(textRow({ message: 'ただいま' })));
+
+    assert.equal(delivered, 1, '生きている監視が無い');
+    assert.equal(h.messages().length, 1);
+    assert.equal(h.messages()[0].message, 'ただいま');
+  });
+
+  test('チャットのDOMが無いフレームでは何も監視しない', () => {
+    const h = loadDomChat({ hasItemList: false });
+
+    assert.deepEqual(h.observations(), []);
+  });
+});
+
+// セレクタのモックが厳格であること（#T1 #T2）。
+// 「知らないセレクタなら例外」にしておかないと、dom-chat.js 側の綴りが変わっても
+// モックが null を返すだけで、テストは通ったまま本番でだけ壊れる
+describe('ハーネスのセレクタ', () => {
+  test('知らないセレクタを引かれたら例外にする', () => {
+    const h = loadDomChat();
+
+    assert.throws(() => h.domChat.document.querySelector('#items'),
+      /知らないセレクタ/, 'document 側が素通りしている');
+
+    const row = textRow();
+    assert.throws(() => row.querySelector('#autor-name'), /知らないセレクタ/);
+    // 既知のセレクタで、その行に無いものは null（例外にしない）
+    assert.equal(row.querySelector('#purchase-amount'), null);
+  });
+});

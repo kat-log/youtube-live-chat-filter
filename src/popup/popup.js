@@ -58,6 +58,11 @@ function debugWarn(prefix, ...args) {
 // エラーだけは debugMode に関係なく必ず出す。
 // 「数時間使い込まないと出ない」種類の不具合を追うのに、既定でエラーが
 // 消えているのがいちばん困る（既定構成では debugMode を ON にする手段も無かった）
+//
+// popup 側は現状すべて生の console.log / console.warn で書かれているため、
+// この関数はまだ呼ばれていない。呼び出し側の差し替えは #34（フェーズ5）の担当で、
+// ここで消すと SW / content script と非対称になるので残す
+// eslint-disable-next-line no-unused-vars -- 呼び出し側の差し替えはフェーズ5（#34）
 function debugError(prefix, ...args) {
   console.error(prefix, ...args);
 }
@@ -487,7 +492,7 @@ class PopupController {
             } else {
                 throw new Error('Still no response after recovery');
             }
-        } catch (error) {
+        } catch {
             console.warn('[YouTube Special Comments] ⚠️ Content script still not responding after recovery');
             // showContentScriptError()は呼び出し元(attemptContentScriptRecovery)で制御
             return false;
@@ -1078,7 +1083,7 @@ class PopupController {
                     console.log('[YouTube Special Comments] Fallback 1 successful: loaded', formattedComments.length, 'comments from content script');
                     historyLoaded = true;
                 }
-            } catch (error) {
+            } catch {
                 console.log('[YouTube Special Comments] Fallback 1: content script not ready, continuing with empty state');
             }
         }
@@ -1118,7 +1123,7 @@ class PopupController {
             } else {
                 this.updateStatus('ライブチャット未検出');
             }
-        } catch (contentError) {
+        } catch {
             console.log('[YouTube Special Comments] Content script not available');
             this.updateStatus('ライブチャット未検出');
         }
@@ -1292,7 +1297,7 @@ class PopupController {
             await this.sendTabMessageWithRetry(this.currentTab.id, {
                 action: 'clearSpecialComments'
             }, 1);
-        } catch (e) {
+        } catch {
             // content script が存在しない場合は無視
         }
         this.comments = [];
