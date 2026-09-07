@@ -20,6 +20,8 @@
 - `docs/` - 設計書などのドキュメント
   - `audit-2026-09.md` - **全体監査（2026-09）。46件の欠陥を行番号つきで列挙**
   - `redesign-plan.md` - **再設計計画。決定事項とフェーズ0〜9の実行手順**
+- `.github/workflows/ci.yml` - push と PR で lint とテストを回す
+- `eslint.config.js` - ESLint のフラット設定（ルールは最低限の2つ）
 - `src/` - Chrome拡張機能のソースコード
   - `manifest.json` - Chrome拡張機能のマニフェストファイル
   - `background/` - Background Scripts
@@ -28,6 +30,8 @@
   - `options/` - 設定画面のHTML/CSS/JS
 - `test/` - テスト（Node標準の`node:test`。拡張機能本体には同梱されない）
   - `helpers/service-worker-harness.js` - chrome APIモックとService Workerローダー
+  - `helpers/dom-chat-harness.js` - 偽DOM（セレクタは厳格）とService Workerへの送信の記録
+  - `helpers/popup-harness.js` - 偽 document（id の正は `popup.html`）と chrome APIモック
 
 ## 技術スタック
 
@@ -38,8 +42,13 @@
 ## 開発コマンド
 
 ```bash
+npm install   # 初回のみ（開発ツールは ESLint だけ）
+npm run lint
 npm test
 ```
+
+`npm ci` → `npm run lint` → `npm test` は push と PR で CI が回す
+（`.github/workflows/ci.yml`）。
 
 ビルド不要。`src/` をそのまま「パッケージ化されていない拡張機能を読み込む」で使う。
 リリース用zipは `/release` が生成する（`src/` 以下のみ同梱）。
@@ -54,8 +63,18 @@ npm test
 リリースzipは `src/` 以下だけなので devDependency は同梱物に影響しない。
 lint が無かったことで死にコードや欠落キーを見逃していた（`docs/audit-2026-09.md` #38, #10）ため、
 機械的に防げるものは道具で防ぐ方針に改めた。
+（ただし `no-unused-vars` が拾えるのは #10 型まで。#38 の死にコードは
+トップレベルの関数宣言やクラスのメソッドなので、人手で消すしかない）
 
-ESLint と CI の導入は再設計のフェーズ1で行う（`docs/redesign-plan.md`）。
+ESLint と CI はフェーズ1で導入済み。devDependency は `eslint` 1つだけで、
+`globals` などの周辺パッケージは入れていない（`eslint.config.js` に手書きで足りる）。
+
+ルールは `no-undef` と `no-unused-vars` の2つだけ。**整形ルールは入れていない。**
+インデントはファイルごとに2スペースと4スペースが混在しており（`options.js` と
+`popup.js` のクラス本体、`content-script.js` は4スペース）、いま揃えると
+再設計の差分が読めなくなるため。
+
+`eslint.config.js` の `sourceType` は `script` から変えないこと。理由は次節の最後にある。
 
 ### テストについて
 
@@ -65,10 +84,16 @@ ESLint と CI の導入は再設計のフェーズ1で行う（`docs/redesign-pl
 - `test/helpers/service-worker-harness.js` — chrome API をモックして
   `service-worker.js` を読み込む
 - `test/helpers/dom-chat-harness.js` — 最小のDOMと、明示的に進める `setTimeout`
-  をモックして `dom-chat.js` を読み込む
-- `test/helpers/popup-harness.js` — chrome API と document をモックして
-  `popup.js` を読み込む。触れるのは検索キーワードの正規化のような、DOMに
-  依存しない部分だけ（`PopupController` は DOMContentLoaded でしか生成されない）
+  をモックして `dom-chat.js` を読み込む。`querySelector` は
+  **`dom-chat.js` が実際に使うセレクタしか受け付けず、知らないものは例外**にする
+  （黙って null を返すと、セレクタ名の取り違えがテストを素通りするため）。
+  `MutationObserver` は `observe` / `disconnect` を記録する
+- `test/helpers/popup-harness.js` — chrome API と偽 document をモックして
+  `popup.js` を読み込む。偽 document が引ける id の正は `popup.html` の実物で、
+  そこに無い id を引かれたら例外にする。
+  描画のテストはまだ無い（`PopupController` は DOMContentLoaded で生成でき、
+  実際に組み立てられるところまでは届いているが、初期化が実時間の再試行を回すため、
+  `setTimeout` を差し替え可能にするのがフェーズ5 の最初の仕事）
 
 対象は「数時間使い込まないと発現せず手動再現が困難」なバグに絞っている。
 これまでに4度、その種のバグが本番で発覚しているため（Service Worker終了時の
@@ -81,11 +106,19 @@ ESLint と CI の導入は再設計のフェーズ1で行う（`docs/redesign-pl
 - 実ブラウザの挙動（本物のquotaの出方、Service Workerが終了するタイミング、
   メッセージパッシングの実挙動）
 - YouTube側のDOM変更。dom-chat のモックはセレクタ文字列の完全一致でしか引けず、
-  検証できるのは「どのタイミングで何を読むか」という段取りだけ
+  検証できるのは「どのタイミングで何を読むか」という段取りだけ。
+  **セレクタが今のYouTubeで正しいかどうかは、実ブラウザでしか確認できない**
 - ポップアップ／オプション画面のUI
 
 `monitoringState` は `startDomMonitoring` などで丸ごと再代入されるため、
 ハーネスは getter 経由で露出している。テストから直接参照を保持しないこと。
+
+**両 content script に `'use strict'` を足したり ES モジュールに変換したりしないこと。**
+どちらも二重注入ガードの `if (...) { } else { ... }` ブロックで包まれており、
+ハーネスは Annex B の sloppy モード関数巻き上げ（ブロック内の関数宣言が
+スクリプトスコープに漏れる挙動）で内部関数に到達している。触ると
+テストが原因不明の `TypeError` で全滅する（`docs/audit-2026-09.md` 末尾に詳述）。
+ESLint の `sourceType` を `module` にするのも同じ理由で不可。
 
 ## 設計概要
 
@@ -156,7 +189,7 @@ ESLint と CI の導入は再設計のフェーズ1で行う（`docs/redesign-pl
 | # | 名前 | 状態 |
 | --- | --- | --- |
 | 0 | 出血を止める（独立した5つの小修正） | **完了**（2026-09-07） |
-| 1 | 足場（CI・ESLint・テストハーネス拡張） | 未着手 |
+| 1 | 足場（CI・ESLint・テストハーネス拡張） | **完了**（2026-09-07） |
 | 2 | 型の一本化（`src/shared/comment.js`） | 未着手 |
 | 3 | IndexedDB 移行 | 未着手 |
 | 4 | 全件取り込み | 未着手 |
