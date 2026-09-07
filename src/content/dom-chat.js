@@ -1,5 +1,14 @@
-// 二重注入防止
-if (window.__domChatInitialized) { /* noop */ } else {
+// 二重注入防止と、注入先フレームの限定。
+//
+// service-worker からの明示注入は allFrames なので、host_permissions に合致する
+// フレーム全部（watch のトップフレームを含む）に届く。そこにライブチャットのDOMは
+// 無いため、そのまま走らせると attachObserver が終わらない再試行に入る（#1）。
+// manifest の自動注入は live_chat* 限定なので、ここで同じ条件を課しておけば揃う。
+//
+// パスが違うフレームでは __domChatInitialized を立てない。次に注入されたときも
+// この条件で弾かれるだけなので害は無く、SPA遷移でチャットのフレームになった場合に
+// 取りこぼさない
+if (window.__domChatInitialized || !location.pathname.startsWith('/live_chat')) { /* noop */ } else {
 window.__domChatInitialized = true;
 
 const seenIds = new Set();
@@ -47,9 +56,21 @@ function doInitialSweep(force = false) {
   if (existingMessages.length > 0) sendMessages(existingMessages);
 }
 
-function attachObserver() {
+// #items はフレームの読み込み直後にはまだ無いことがあるので待つ。ただし無限には
+// 待たない。上限が無いと、チャットが現れないフレームで500msごとの querySelector が
+// セッションが終わるまで回り続ける（#1）
+const ATTACH_MAX_RETRIES = 60; // 500ms x 60 = 30秒
+
+function attachObserver(retriesLeft = ATTACH_MAX_RETRIES) {
   const itemList = document.querySelector('yt-live-chat-item-list-renderer #items');
-  if (!itemList) { setTimeout(attachObserver, 500); return; }
+  if (!itemList) {
+    if (retriesLeft <= 0) {
+      console.warn('[DomChat] チャットの #items が見つからないため監視を諦めた:', location.href);
+      return;
+    }
+    setTimeout(() => attachObserver(retriesLeft - 1), 500);
+    return;
+  }
 
   doInitialSweep();
   new MutationObserver(handleMutations).observe(itemList, { childList: true });

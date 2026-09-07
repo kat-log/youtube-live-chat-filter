@@ -55,10 +55,11 @@ function debugWarn(prefix, ...args) {
   }
 }
 
+// エラーだけは debugMode に関係なく必ず出す。
+// 「数時間使い込まないと出ない」種類の不具合を追うのに、既定でエラーが
+// 消えているのがいちばん困る（既定構成では debugMode を ON にする手段も無かった）
 function debugError(prefix, ...args) {
-  if (debugMode) {
-    console.error(prefix, ...args);
-  }
+  console.error(prefix, ...args);
 }
 
 // 初期化時にデバッグモードを読み込み

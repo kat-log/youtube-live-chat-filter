@@ -23,19 +23,30 @@ const DOM_CHAT_PATH = path.join(__dirname, '..', '..', 'src', 'content', 'dom-ch
  * @param {object}   [options]
  * @param {object[]} [options.rows] 読み込み時点で既にチャットにある行。
  *                                  attachObserver の全件スキャンが拾う
+ * @param {boolean}  [options.hasItemList] false にすると querySelector が常に null を
+ *                                  返し、「チャットのDOMが現れないフレーム」を再現する。
+ *                                  attachObserver の再試行の打ち切りを見るためのもの
+ * @param {string}   [options.pathname] 注入先フレームのパス。live_chat 以外にすると
+ *                                  スクリプトはフレーム限定ガードで丸ごと止まる（#1）
  */
-function loadDomChat({ rows = [] } = {}) {
+function loadDomChat({ rows = [], hasItemList = true, pathname = '/live_chat' } = {}) {
   const timers = [];
   const sent = [];
+  const warnings = [];
 
   const context = vm.createContext({
     window: {},
+    // dom-chat.js は読み込み時に location.pathname を見て、チャットのフレームか
+    // どうかを判定する
+    location: { pathname, href: `https://www.youtube.com${pathname}` },
     Node: { TEXT_NODE: 3 },
     URL,
-    console,
+    // 警告は素通しにせず溜める。テストの出力を汚さずに
+    // 「諦めたときにログを出したか」を確かめられるようにするため
+    console: Object.assign({}, console, { warn: (...args) => warnings.push(args.join(' ')) }),
     // attachObserver をその場で張り付かせる。#items を返さないと
     // 500ms ごとの再試行タイマーがテスト対象のタイマーに混ざる
-    document: { querySelector: () => ({ children: rows }) },
+    document: { querySelector: () => (hasItemList ? { children: rows } : null) },
     MutationObserver: class { observe() {} },
     setTimeout: fn => timers.push(fn),
     chrome: {
@@ -58,6 +69,8 @@ function loadDomChat({ rows = [] } = {}) {
     messages: () => sent.flatMap(payload => payload.messages || []),
     sendCount: () => sent.length,
     pendingTimers: () => timers.length,
+    // console.warn に出た内容（素通ししていない）
+    warnings: () => warnings,
     /** 積まれているタイマーを1つ進める（進めた先で積まれた分は次の tick へ回る） */
     tick() {
       const fn = timers.shift();
