@@ -218,6 +218,47 @@ describe('DOMモードのコメント取り込み', () => {
 
     assert.equal(sw.monitoringState.commentsHistory.length, 1);
   });
+
+  test('更新前に保存された旧形式のIDでも重複と分かる', async () => {
+    // IDの作り方を変えた直後は、保存済み履歴のIDが旧形式（dom_<hash>_<n>）で、
+    // dom-chat.js が送ってくるのは新形式。突き合わせられないと、更新した瞬間の
+    // 全件スキャンで履歴が丸ごと二重になる（#9 の移行）
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    sw.setState({
+      isMonitoring: true, chatMode: 'dom', tabId: 3, currentVideoId: 'V',
+      commentsHistory: [], processedMessageIds: new Set(['dom_-1234567_0'])
+    });
+
+    const message = domComment(1, Date.now(), {
+      id: 'dom2_0000000100000002_0',
+      legacyId: 'dom_-1234567_0'
+    });
+    await sw.handleDomChatMessages([message], senderFor(3, 'V'));
+
+    assert.equal(sw.monitoringState.commentsHistory.length, 0, '旧IDで弾けていない');
+  });
+
+  test('旧IDに心当たりが無ければ取り込む。ただし保存はしない', async () => {
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    sw.setState({
+      isMonitoring: true, chatMode: 'dom', tabId: 3, currentVideoId: 'V',
+      commentsHistory: [], processedMessageIds: new Set()
+    });
+
+    await sw.handleDomChatMessages([
+      domComment(1, Date.now(), { id: 'dom2_0000000100000002_0', legacyId: 'dom_-1234567_0' })
+    ], senderFor(3, 'V'));
+
+    const [saved] = sw.monitoringState.commentsHistory;
+    assert.equal(saved.id, 'dom2_0000000100000002_0');
+    assert.equal('legacyId' in saved, false, '突き合わせ用のIDを履歴に残している');
+  });
 });
 
 describe('監視開始時の全件スキャン', () => {
@@ -476,18 +517,6 @@ describe('ユーティリティ', () => {
     assert.equal(sw.latestTimestampOf([{ publishedAt: iso }]), at);
     assert.equal(sw.latestTimestampOf([{ snippet: { publishedAt: iso } }]), at);
     assert.equal(sw.latestTimestampOf([]), 0);
-  });
-
-  test('診断はストレージを全件読まずに使用量を返す', async () => {
-    const { chrome, store } = createChromeMock();
-    store['commentsHistory_a'] = [domComment(1)];
-
-    const sw = loadServiceWorker(chrome);
-    await settle();
-    const { diagnostics } = await sw.getDiagnosticsInfo();
-
-    assert.equal(typeof diagnostics.storage.bytesInUse, 'number');
-    assert.equal(diagnostics.storage.historyEntriesCount, 1);
   });
 });
 

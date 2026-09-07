@@ -18,6 +18,9 @@ const path = require('node:path');
 const POPUP_DIR = path.join(__dirname, '..', '..', 'src', 'popup');
 const POPUP_PATH = path.join(POPUP_DIR, 'popup.js');
 const POPUP_HTML_PATH = path.join(POPUP_DIR, 'popup.html');
+// popup.html が popup.js より先に読み込む共有モジュール（再設計の決定7）。
+// self.YTF に代入されるので、popup.js からは同じグローバル経由で見える
+const SHARED_PATH = path.join(__dirname, '..', '..', 'src', 'shared', 'comment.js');
 
 /** popup.html に書かれている id を全部拾う。偽 document が引ける id の正はこれ */
 function idsInPopupHtml() {
@@ -98,6 +101,9 @@ function createElement(tagName, { id = null, ownerDocument = null } = {}) {
     // 完全一致の対応表だけ持たせる（dom-chat-harness の element() と同じ割り切り）
     selectors: {},
     querySelector(selector) { return el.selectors[selector] || null; },
+    // 本物の closest は祖先をたどるが、偽DOMは親子関係を持たない。
+    // querySelector と同じ対応表を引き、載っていなければ null を返す
+    closest(selector) { return el.selectors[selector] || null; },
     querySelectorAll(selector) {
       const found = el.selectors[selector];
       return found ? (Array.isArray(found) ? found : [found]) : [];
@@ -248,7 +254,13 @@ function createChromeMock({ storage = {}, onMessage = () => undefined, queryTabs
  * popup.js を評価して、中身をテストから触れるようにする。
  *
  * 読み込みだけでは PopupController は作られない（DOMContentLoaded で生成される）。
- * 描画まで見たいときは document.fire('DOMContentLoaded') を呼ぶ。
+ * 描画まで見たいときは document.fire('DOMContentLoaded') を呼ぶか、
+ * context.__popup.PopupController を直接 new する。
+ *
+ * setTimeout は dom-chat ハーネスと同じく「積むだけ」にしてある。実時間で回すと、
+ * 初期化が Service Worker への ping を8回＋1秒・2秒の待ちを挟むため、
+ * テスト1本で十数秒かかる。積むだけにしておくと初期化は最初の待ちで止まったまま
+ * になり、同期的に組み立てられた部分だけを見られる。
  *
  * @param {object} [options]
  * @param {object} [options.document] 差し替える偽 document（既定は createFakeDocument()）
@@ -256,18 +268,47 @@ function createChromeMock({ storage = {}, onMessage = () => undefined, queryTabs
  * @param {object} [options.storage]  chrome.storage.local が返す中身
  */
 function loadPopup({ document = createFakeDocument(), storage = {}, chrome = createChromeMock({ storage }) } = {}) {
+  // id -> 関数。clearTimeout で消せるように Map で持つ
+  const timers = new Map();
+  let nextTimerId = 1;
+
   const context = vm.createContext({
     console,
-    setTimeout,
-    clearTimeout,
-    setInterval,
-    clearInterval,
+    setTimeout(fn) { timers.set(nextTimerId, fn); return nextTimerId++; },
+    clearTimeout(id) { timers.delete(id); },
+    setInterval(fn) { timers.set(nextTimerId, fn); return nextTimerId++; },
+    clearInterval(id) { timers.delete(id); },
     URL,
     chrome,
     document
   });
 
-  vm.runInContext(fs.readFileSync(POPUP_PATH, 'utf8'), context);
+  // popup.js の内部（クラスと唯一のインスタンス）をテストから触れるようにする。
+  // どちらもトップレベルの let / class なので、グローバルの属性にはならない
+  const expose = `
+    ;globalThis.__popup = {
+      PopupController,
+      get controller() { return popupController; }
+    };`;
+
+  // popup.html の <script> の並びを、ハーネス側で再現する
+  context.self = context;
+  vm.runInContext(fs.readFileSync(SHARED_PATH, 'utf8'), context, { filename: SHARED_PATH });
+  vm.runInContext(fs.readFileSync(POPUP_PATH, 'utf8') + expose, context, { filename: POPUP_PATH });
+
+  Object.assign(context.__popup, {
+    /** 積まれているタイマーの数 */
+    pendingTimers: () => timers.size,
+    /** 積まれているタイマーを1つ進める（進めた先で積まれた分は次の tick へ回る） */
+    tick() {
+      const [id, fn] = timers.entries().next().value || [];
+      if (id === undefined) return false;
+      timers.delete(id);
+      fn();
+      return true;
+    }
+  });
+
   return context;
 }
 

@@ -17,6 +17,9 @@ const vm = require('node:vm');
 const path = require('node:path');
 
 const DOM_CHAT_PATH = path.join(__dirname, '..', '..', 'src', 'content', 'dom-chat.js');
+// dom-chat.js より先に読み込まれる共有モジュール（再設計の決定7）。
+// 本番では manifest の content_scripts[].js の並びがこの順序を作る
+const SHARED_PATH = path.join(__dirname, '..', '..', 'src', 'shared', 'comment.js');
 
 // チャット行の入れ物。dom-chat.js が document から引く唯一のセレクタ
 const ITEM_LIST_SELECTOR = 'yt-live-chat-item-list-renderer #items';
@@ -126,7 +129,11 @@ function loadDomChat({ rows = [], hasItemList = true, pathname = '/live_chat' } 
     }
   });
 
-  vm.runInContext(fs.readFileSync(DOM_CHAT_PATH, 'utf8'), context);
+  // shared/comment.js は self.YTF に代入する。content script の isolated world と
+  // 同じく、両方のスクリプトが同じグローバルを共有する形で再現する
+  context.self = context;
+  vm.runInContext(fs.readFileSync(SHARED_PATH, 'utf8'), context, { filename: SHARED_PATH });
+  vm.runInContext(fs.readFileSync(DOM_CHAT_PATH, 'utf8'), context, { filename: DOM_CHAT_PATH });
 
   return {
     domChat: context,

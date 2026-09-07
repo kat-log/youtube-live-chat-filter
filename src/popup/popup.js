@@ -70,9 +70,20 @@ function debugError(prefix, ...args) {
 // 初期化時にデバッグモードを読み込み
 loadDebugMode();
 
+// コメントの型・正規化・検索用の文字列は shared/comment.js が正（再設計の決定7）。
+// popup.html で popup.js より先に読み込んでいる。
+//
 // フィルターの軸は「役割4種」＋「種別2種」。スーパーチャットやメンバー加入は
 // 一般視聴者・メンバーのどちらからも飛んでくるので、役割とは別枠で数えて絞る
-const FILTER_KEYS = ['owner', 'moderator', 'sponsor', 'normal', 'superchat', 'membership'];
+const {
+    FILTER_KEYS,
+    filterKeyOf,
+    normalizeComment,
+    normalizeForSearch,
+    searchTextOf,
+    stripHtmlTags,
+    escapeAttr
+} = self.YTF;
 
 const FILTER_PRESETS = {
     special: { owner: true,  moderator: true,  sponsor: false, normal: false, superchat: true,  membership: true  },
@@ -80,22 +91,15 @@ const FILTER_PRESETS = {
     none:    { owner: false, moderator: false, sponsor: false, normal: false, superchat: false, membership: false }
 };
 
+// popup がメモリに載せるコメントの上限。決定4（IndexedDB からの範囲読み）に
+// 変えるのはフェーズ5で、それまでは全件をここに載せる
+const MAX_COMMENTS_IN_MEMORY = 10000;
+
 const ROLE_LABELS = {
     owner:     ['配信者',       'role-owner'],
     moderator: ['モデレーター', 'role-moderator'],
     member:    ['メンバー',     'role-sponsor'],
     normal:    ['一般',         'role-normal']
-};
-
-// APIのメッセージ種別 → 表示上の種別。ここに無いものはテキスト扱い
-// （Service Worker 側で表示できない種別は既に落とされている）
-const KIND_BY_API_TYPE = {
-    textMessageEvent: 'text',
-    superChatEvent: 'superchat',
-    superStickerEvent: 'supersticker',
-    newSponsorEvent: 'membership',
-    memberMilestoneChatEvent: 'membership',
-    membershipGiftingEvent: 'gift'
 };
 
 // 種別バッジ。役割バッジ（王冠など）とは別に、行の性格を1文字で示す
@@ -109,55 +113,12 @@ const KIND_ICONS = {
 // ステッカー画像の配信ホスト。dom-chat.js が組み立てるURLと同じものだけを通す
 const STICKER_IMAGE_HOSTS = ['lh3.googleusercontent.com', 'yt3.ggpht.com'];
 
-// 種別が付いているものは種別で、通常のコメントは役割で数える／絞る
-function filterKeyOf(comment) {
-    const kind = comment.kind || 'text';
-    if (kind === 'superchat' || kind === 'supersticker') return 'superchat';
-    if (kind === 'membership' || kind === 'gift') return 'membership';
-    switch (comment.roleClass) {
-        case 'role-owner':     return 'owner';
-        case 'role-moderator': return 'moderator';
-        case 'role-sponsor':   return 'sponsor';
-        default:               return 'normal';
-    }
-}
-
-// 目に見えないのに検索を外す文字。YouTubeのライブチャットからコメントを
-// コピーすると、先頭などにゼロ幅スペースや方向制御文字が紛れ込む。
-// 貼り付けた見た目は同じでも includes() が外れ、1件もヒットしなくなる
-// （入力欄が空に見えるのに0件になるのも、消し残ったこれが原因）
-const INVISIBLE_CHARS = /[\u00AD\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g;
-
-// 検索キーワードとコメントを比べる前に文字種を揃える。
-// IMEで打つと「！」「１」「ｶﾅ」のような全角・半角の揺れが混ざり、
-// 見た目が同じでも includes() が外れる（前後の空白も同じ理由で落とす）。
-// 空白の連なりを1個に潰すのは、チャットから名前ごとコピーしたときに
-// 区切りの改行・全角空白の違いで外れないようにするため
-function normalizeForSearch(text) {
-    return String(text ?? '')
-        .normalize('NFKC')
-        .replace(INVISIBLE_CHARS, '')
-        .toLowerCase()
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-// コメント1件ぶんの検索対象文字列。1文字打つたびに全件を正規化し直すと
-// 数千件で目に見えて遅くなるので、コメントごとに1度だけ作って持たせる
-function searchTextOf(comment) {
-    if (comment._searchText === undefined) {
-        comment._searchText = normalizeForSearch(
-            [comment.displayName, comment.message, comment.eventText, comment.amountText]
-                .filter(Boolean).join('\n')
-        );
-    }
-    return comment._searchText;
-}
-
 class PopupController {
     constructor() {
         this.isMonitoring = false;
         this.comments = [];
+        // this.comments に入っているコメントのID。重複判定はこれだけを見る（#3）
+        this.commentIds = new Set();
         // DOMモードのアバターURL（発言者名 -> URL）。背景側から受け取る
         this.avatarsByAuthor = {};
         this.currentTab = null;
@@ -682,7 +643,6 @@ class PopupController {
             presetAll: document.getElementById('preset-all'),
             presetNone: document.getElementById('preset-none'),
             
-            commentsTitle: document.getElementById('comments-title'),
             commentsList: document.getElementById('comments-list'),
             noComments: document.getElementById('no-comments'),
             
@@ -713,7 +673,6 @@ class PopupController {
             userFilterStatus: document.getElementById('user-filter-status'),
             filteredUsername: document.getElementById('filtered-username'),
             clearUserFilterBtn: document.getElementById('clear-user-filter'),
-            searchFilterBar: document.getElementById('search-filter-bar'),
             searchKeywordInput: document.getElementById('search-keyword-input'),
             clearSearchBtn: document.getElementById('clear-search-btn'),
             searchMatchCount: document.getElementById('search-match-count'),
@@ -1036,7 +995,7 @@ class PopupController {
     async restoreCommentHistory(currentVideoId) {
         if (!currentVideoId) {
             console.log('[YouTube Special Comments] No video ID available, clearing comments');
-            this.comments = [];
+            this.setComments([]);
             this.renderComments();
             return;
         }
@@ -1059,7 +1018,7 @@ class PopupController {
             if (historyResponse?.success && historyResponse.comments && historyResponse.comments.length > 0) {
                 Object.assign(this.avatarsByAuthor, historyResponse.avatars || {});
                 const formattedComments = this.formatHistoryComments(historyResponse.comments);
-                this.comments = formattedComments;
+                this.setComments(formattedComments);
                 this.renderComments();
                 console.log('[YouTube Special Comments] Successfully restored', formattedComments.length, 'comments');
                 historyLoaded = true;
@@ -1078,7 +1037,7 @@ class PopupController {
                 
                 if (contentResponse?.comments && contentResponse.comments.length > 0) {
                     const formattedComments = this.formatHistoryComments(contentResponse.comments);
-                    this.comments = formattedComments;
+                    this.setComments(formattedComments);
                     this.renderComments();
                     console.log('[YouTube Special Comments] Fallback 1 successful: loaded', formattedComments.length, 'comments from content script');
                     historyLoaded = true;
@@ -1091,7 +1050,7 @@ class PopupController {
         // 最終フォールバック: 空の状態で表示
         if (!historyLoaded) {
             console.log('[YouTube Special Comments] === All fallbacks failed, starting with empty comments ===');
-            this.comments = [];
+            this.setComments([]);
             this.renderComments();
             
             // 空の状態でも監視中であることを示すメッセージを表示
@@ -1300,11 +1259,18 @@ class PopupController {
         } catch {
             // content script が存在しない場合は無視
         }
-        this.comments = [];
+        this.setComments([]);
         this.avatarsByAuthor = {};
         this.renderComments(true); // コメントクリア時はトップにスクロール
     }
     
+    // this.comments と this.commentIds は必ずここを通して入れ替える。
+    // 片方だけ書き換えると、重複判定が黙って効かなくなる
+    setComments(comments) {
+        this.comments = comments;
+        this.commentIds = new Set(comments.map(comment => comment.id));
+    }
+
     addNewComments(newComments) {
         console.log('[Popup] === addNewComments called ===');
         console.log('[Popup] Received', newComments.length, 'new comments');
@@ -1312,136 +1278,49 @@ class PopupController {
         
         const formattedComments = newComments.map(comment => this.formatComment(comment));
         
-        // 重複チェック：既存のコメントと同じタイムスタンプ・メッセージ・ユーザー名のものを除外。
-        // 本文なしのスパチャは金額しか差が無く、全件スキャンで拾う過去分の時刻は
-        // 分単位なので、金額とイベント文言も見ないと別々の投げ銭が1件に潰れる
+        // 重複チェックは id だけを見る（#3）。以前は本文・発言者・時刻など5フィールドの
+        // 一致で代用していたが、DOMモードの過去分は時刻が分単位なので、
+        // 同じ人が同じ分に同じ本文を投げると2件目が消えていた（「8888」などの連投）。
+        // 全件走査（O(N x M)）でもあったのが、Set の一致判定1回になる
         const uniqueComments = formattedComments.filter(newComment => {
-            return !this.comments.some(existingComment =>
-                existingComment.message === newComment.message &&
-                existingComment.displayName === newComment.displayName &&
-                existingComment.publishedAt === newComment.publishedAt &&
-                existingComment.amountText === newComment.amountText &&
-                existingComment.eventText === newComment.eventText
-            );
+            if (this.commentIds.has(newComment.id)) return false;
+            this.commentIds.add(newComment.id);
+            return true;
         });
         
         console.log('[Popup] Adding', uniqueComments.length, 'unique comments out of', formattedComments.length, 'total');
         
         this.comments.push(...uniqueComments);
         
-        if (this.comments.length > 10000) {
-            this.comments = this.comments.slice(-10000);
-            console.log('[Popup] Trimmed comments to 10000, current count:', this.comments.length);
+        if (this.comments.length > MAX_COMMENTS_IN_MEMORY) {
+            // 切り詰めで落ちたぶんのIDも一緒に落とす（残っていると、
+            // 一度消えたコメントが二度と入らなくなる）
+            this.setComments(this.comments.slice(-MAX_COMMENTS_IN_MEMORY));
+            console.log('[Popup] Trimmed comments to', MAX_COMMENTS_IN_MEMORY, 'current count:', this.comments.length);
         }
         
         console.log('[Popup] Final comments count after adding:', this.comments.length);
         this.renderComments();
     }
     
+    // 取り込み口はここ1つ。APIモードとDOMモードの違いは normalizeComment が
+    // 吸収するので、この先に取得モードの分岐は無い（根本原因E）。
+    // 足すのは表示のためのフィールドだけ
     formatComment(comment) {
-        // DOM モードのコメントは authorDetails を持たない。
-        // スパチャやメンバー加入は本文が空のことがあるので、本文の有無では判定しない
-        if (!comment.authorDetails) {
-            const [role, roleClass] = ROLE_LABELS[comment.role] || ROLE_LABELS.normal;
-            return {
-                kind: comment.kind || 'text',
-                role,
-                roleClass,
-                displayName: comment.displayName || '',
-                message: comment.message || '',
-                amountText: comment.amountText || null,
-                eventText: comment.eventText || null,
-                // スーパーステッカーの画像URL。DOMモードでしか付かない
-                stickerUrl: comment.stickerUrl || null,
-                // 整形は描画時に行う。ここで文字列に固めると表示形式の切り替えが
-                // 既存コメントに効かなくなる
-                publishedAt: comment.publishedAt,
-                // 新着はコメントに同梱、履歴は発言者マップから引く
-                profileImageUrl: comment.avatarUrl || this.avatarsByAuthor[comment.displayName] || null
-            };
-        }
-
-        const authorDetails = comment.authorDetails;
-        const snippet = comment.snippet || {};
-
-        let roleKey = 'normal';
-        if (authorDetails.isChatOwner) {
-            roleKey = 'owner';
-        } else if (authorDetails.isChatModerator) {
-            roleKey = 'moderator';
-        } else if (authorDetails.isChatSponsor) {
-            roleKey = 'member';
-        }
-        const [role, roleClass] = ROLE_LABELS[roleKey];
-
-        const kind = KIND_BY_API_TYPE[snippet.type] || 'text';
-        const { message, amountText, eventText } = this.formatApiDetail(kind, snippet);
+        const normalized = normalizeComment(comment);
+        const [roleLabel, roleClass] = ROLE_LABELS[normalized.role] || ROLE_LABELS.normal;
 
         return {
-            kind,
-            role: role,
-            roleClass: roleClass,
-            displayName: authorDetails.displayName,
-            message,
-            amountText,
-            eventText,
-            publishedAt: snippet.publishedAt,
-            profileImageUrl: authorDetails.profileImageUrl
+            ...normalized,
+            // 表示用の役割ラベルとクラス。絞り込みと集計が見るのは
+            // 正準形の role（'owner' などのキー）のほう
+            roleLabel,
+            roleClass,
+            // 新着はコメントに同梱、履歴は発言者マップから引く
+            profileImageUrl: normalized.avatarUrl || this.avatarsByAuthor[normalized.displayName] || null
         };
     }
 
-    // APIの snippet から本文・金額・イベント文言を取り出す。
-    // 種別ごとに詳細の入れ物が違い、displayMessage が無いものもある
-    formatApiDetail(kind, snippet) {
-        const fallback = snippet.displayMessage || '';
-
-        if (kind === 'superchat') {
-            const details = snippet.superChatDetails || {};
-            return {
-                message: details.userComment || '',
-                amountText: details.amountDisplayString || null,
-                eventText: null
-            };
-        }
-
-        if (kind === 'supersticker') {
-            const details = snippet.superStickerDetails || {};
-            return {
-                message: details.superStickerMetadata?.altText || fallback,
-                amountText: details.amountDisplayString || null,
-                eventText: 'スーパーステッカー'
-            };
-        }
-
-        if (kind === 'membership') {
-            const milestone = snippet.memberMilestoneChatDetails;
-            const newSponsor = snippet.newSponsorDetails;
-            if (milestone) {
-                const level = milestone.memberLevelName ? ` · ${milestone.memberLevelName}` : '';
-                return {
-                    message: milestone.userComment || '',
-                    amountText: null,
-                    eventText: `${milestone.memberMonth}か月連続のメンバー${level}`
-                };
-            }
-            const level = newSponsor?.memberLevelName ? ` · ${newSponsor.memberLevelName}` : '';
-            const label = newSponsor?.isUpgrade ? 'メンバーシップをアップグレード' : '新規メンバー';
-            return { message: '', amountText: null, eventText: `${label}${level}` };
-        }
-
-        if (kind === 'gift') {
-            const details = snippet.membershipGiftingDetails;
-            const level = details?.giftMembershipsLevelName ? ` · ${details.giftMembershipsLevelName}` : '';
-            const count = details?.giftMembershipsCount;
-            return {
-                message: '',
-                amountText: null,
-                eventText: count ? `メンバーシップギフト ${count}個${level}` : 'メンバーシップギフト'
-            };
-        }
-
-        return { message: fallback, amountText: null, eventText: null };
-    }
     
     // スクロール位置が一番下かどうかを判定
     isAtBottom() {
@@ -1476,9 +1355,9 @@ class PopupController {
         const fallback = `<span class="comment-avatar comment-avatar--fallback" aria-hidden="true">${this.escapeHtml(initial)}</span>`;
         const url = this.safeAvatarUrl(comment.profileImageUrl);
         if (!url) return fallback;
-        return `<img class="comment-avatar" src="${this.escapeHtml(url)}" alt="" `
+        return `<img class="comment-avatar" src="${escapeAttr(url)}" alt="" `
              + `loading="lazy" decoding="async" width="24" height="24" `
-             + `data-initial="${this.escapeHtml(initial)}">`;
+             + `data-initial="${escapeAttr(initial)}">`;
     }
 
     // ステッカー画像のURL。https に加えて配信ホストも確認する
@@ -1499,7 +1378,7 @@ class PopupController {
         if (comment.kind !== 'supersticker') return '';
         const url = this.safeStickerUrl(comment.stickerUrl);
         if (!url) return '';
-        return `<img class="comment-sticker" src="${this.escapeHtml(url)}" alt="" `
+        return `<img class="comment-sticker" src="${escapeAttr(url)}" alt="" `
              + `loading="lazy" decoding="async" width="96" height="96">`;
     }
 
@@ -1562,7 +1441,7 @@ class PopupController {
         const icon = icons[comment.roleClass];
         if (!icon) return '';
 
-        const label = this.escapeHtml(comment.role);
+        const label = escapeAttr(comment.roleLabel);
         return `<span class="comment-role comment-role--icon ${comment.roleClass}" `
              + `title="${label}" role="img" aria-label="${label}">${icon}</span>`;
     }
@@ -1673,7 +1552,7 @@ class PopupController {
                         ${this.avatarHtml(comment)}
                         ${this.roleBadgeHtml(comment)}
                         ${this.kindBadgeHtml(comment)}
-                        <span class="${authorClass}" data-username="${this.escapeHtml(comment.displayName)}">${this.escapeHtml(comment.displayName)}</span>
+                        <span class="${authorClass}" data-username="${escapeAttr(comment.displayName)}">${this.escapeHtml(comment.displayName)}</span>
                         ${this.amountHtml(comment)}
                         <span class="comment-time">${this.formatTimestamp(comment.publishedAt)}</span>
                     </div>
@@ -2018,14 +1897,6 @@ class PopupController {
         }, 5000);
     }
     
-    // HTMLタグ除去ユーティリティ関数
-    stripHtmlTags(html) {
-        if (!html) return '';
-        const div = document.createElement('div');
-        div.innerHTML = html;
-        return div.textContent || div.innerText || '';
-    }
-    
     showDetailedError(errorInfo) {
         console.log('[Popup] Showing detailed error:', errorInfo);
         
@@ -2033,9 +1904,9 @@ class PopupController {
         this.elements.errorMessage.style.display = 'none';
         
         // HTMLタグを除去してから表示
-        const cleanTitle = this.stripHtmlTags(errorInfo.title || 'エラーが発生しました');
-        const cleanMessage = this.stripHtmlTags(errorInfo.message || errorInfo.originalError || '');
-        const cleanSolution = this.stripHtmlTags(errorInfo.solution || '設定を確認してください');
+        const cleanTitle = stripHtmlTags(errorInfo.title || 'エラーが発生しました');
+        const cleanMessage = stripHtmlTags(errorInfo.message || errorInfo.originalError || '');
+        const cleanSolution = stripHtmlTags(errorInfo.solution || '設定を確認してください');
         
         // 詳細エラー情報を表示
         this.elements.errorTitle.textContent = cleanTitle;

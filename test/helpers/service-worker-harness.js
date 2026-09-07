@@ -116,15 +116,17 @@ function loadServiceWorker(chrome) {
       stopBackgroundMonitoring,
       saveCommentsHistory,
       getCommentsHistory,
-      getDiagnosticsInfo,
       extractVideoIdFromUrl,
       latestTimestampOf,
       safeStorageSet,
-      normalizeCommentFilters,
-      isCommentEnabled,
-      apiCommentKind,
       commentPreview,
-      DEFAULT_COMMENT_FILTERS,
+      // 型と正規化は shared/comment.js が正。Service Worker のスコープからではなく
+      // そちら経由で露出する（決定7で移した先を、テストからも1か所で見るため）
+      normalizeCommentFilters: self.YTF.normalizeCommentFilters,
+      isCommentEnabled: self.YTF.isCommentEnabled,
+      apiCommentKind: self.YTF.apiCommentKind,
+      DEFAULT_COMMENT_FILTERS: self.YTF.DEFAULT_COMMENT_FILTERS,
+      YTF: self.YTF,
       MAX_COMMENTS_PER_VIDEO,
       MAX_HISTORY_VIDEOS,
       MAX_AVATARS_PER_VIDEO
@@ -135,7 +137,18 @@ function loadServiceWorker(chrome) {
     fetch: async () => { throw new Error('network access is not available in tests'); }
   });
 
-  vm.runInContext(source + expose, context);
+  // Service Worker のグローバルは self で参照できる。shared/comment.js が
+  // self.YTF に代入するので、コンテキスト自身を self として見せる
+  context.self = context;
+  // importScripts は同期。本番と同じく「同じスコープに評価する」形で再現する
+  context.importScripts = (...paths) => {
+    for (const relativePath of paths) {
+      const file = path.resolve(path.dirname(SW_PATH), relativePath);
+      vm.runInContext(fs.readFileSync(file, 'utf8'), context, { filename: file });
+    }
+  };
+
+  vm.runInContext(source + expose, context, { filename: SW_PATH });
   return context.__sw;
 }
 

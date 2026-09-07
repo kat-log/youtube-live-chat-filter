@@ -215,6 +215,81 @@ describe('チャットの監視の張り方', () => {
   });
 });
 
+// IDの発番（#9 #29）。旧形式との互換と、上限に達したときの間引き方を固定する。
+// ここが崩れると「コメントが1件だけ黙って消える」という、いちばん見つけにくい
+// 種類の不具合になる
+describe('コメントIDの発番', () => {
+  test('新旧2つのIDを載せて送る', () => {
+    // 旧形式は、更新前に保存された履歴と突き合わせるために background が使う
+    const h = loadDomChat();
+
+    h.domChat.handleMutations(added(textRow({ message: 'こんばんは', timestamp: '23:02' })));
+
+    const [msg] = h.messages();
+    assert.match(msg.id, /^dom2_[0-9a-f]{16}_0$/);
+    assert.match(msg.legacyId, /^dom_-?\d+_0$/);
+  });
+
+  test('同じ人が同じ分に同じ本文を投げたら、連番だけが増える', () => {
+    const h = loadDomChat();
+    const line = () => textRow({ displayName: '@mod', message: '8888', timestamp: '23:02' });
+
+    h.domChat.handleMutations(added(line()));
+    h.domChat.handleMutations(added(line()));
+
+    const ids = h.messages().map(m => m.id);
+    assert.equal(ids.length, 2, '連投の2件目を送っていない');
+    assert.equal(ids[0].replace(/_0$/, ''), ids[1].replace(/_1$/, ''), 'キーの部分が違う');
+    assert.notEqual(ids[0], ids[1]);
+  });
+
+  test('上限を超えても、少し前のコメントの連番は 0 に戻らない', () => {
+    // 全消しにすると連番が 0 に戻り、クリア前と同じIDが振られる。
+    // background 側では「既出」として落とされるのでコメントが消える（#29）。
+    // 古い方から間引く形なら、まだ新しいキーの連番は残る
+    const h = loadDomChat();
+    const flood = (from, count) => {
+      for (let i = from; i < from + count; i++) {
+        h.domChat.handleMutations(added(textRow({ displayName: `@u${i}`, message: `m${i}`, timestamp: '23:02' })));
+      }
+    };
+    const hot = () => textRow({ displayName: '@mod', message: '8888', timestamp: '23:02' });
+
+    // 上限（occurrenceByKey は 5000 件）の少し手前で1回投げ、そのあと超えさせる
+    flood(0, 4990);
+    h.domChat.handleMutations(added(hot()));
+    flood(4990, 100);
+    h.domChat.handleMutations(added(hot()));
+
+    const hotIds = h.messages().filter(m => m.displayName === '@mod').map(m => m.id);
+    assert.equal(hotIds.length, 2);
+    assert.ok(hotIds[1].endsWith('_1'), `連番が戻っている: ${hotIds[1]}`);
+    assert.notEqual(hotIds[0], hotIds[1]);
+  });
+
+  test('送信済みIDの上限を超えても、少し前に送った行は既出のまま', () => {
+    // seenIds も全消しではなく古い方から間引く。全消しだと直後の再スキャンで
+    // 全件を送り直すことになる（background で弾かれるとはいえ無駄な往復）
+    const h = loadDomChat();
+    const flood = (from, count) => {
+      for (let i = from; i < from + count; i++) {
+        h.domChat.handleMutations(added(textRow({ displayName: `@u${i}`, message: `m${i}`, timestamp: '23:02' })));
+      }
+    };
+
+    // 上限（seenIds は 2000 件）の少し手前で1行送り、そのあと超えさせる
+    flood(0, 1990);
+    const row = textRow({ displayName: '@mod', message: 'こんばんは', timestamp: '23:02' });
+    h.domChat.handleMutations(added(row));
+    flood(1990, 100);
+
+    const before = h.messages().length;
+    h.domChat.handleMutations(added(row)); // 同じ要素＝同じID
+
+    assert.equal(h.messages().length, before, '既出のはずの行をもう一度送っている');
+  });
+});
+
 // セレクタのモックが厳格であること（#T1 #T2）。
 // 「知らないセレクタなら例外」にしておかないと、dom-chat.js 側の綴りが変わっても
 // モックが null を返すだけで、テストは通ったまま本番でだけ壊れる

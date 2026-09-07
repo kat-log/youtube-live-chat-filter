@@ -1,3 +1,16 @@
+// コメントの型と正規化は shared/comment.js に集約している（再設計の決定7）。
+// importScripts は同期的に走るので、この直後から self.YTF を参照してよい
+importScripts('../shared/comment.js');
+
+const {
+  DEFAULT_COMMENT_FILTERS,
+  normalizeCommentFilters,
+  isCommentEnabled,
+  apiCommentKind,
+  apiCommentRole,
+  stripHtmlTags
+} = self.YTF;
+
 // デバッグモードによる統一ログ関数
 let debugMode = false;
 
@@ -116,13 +129,7 @@ const ERROR_SOLUTIONS = {
   }
 };
 
-// HTMLタグ除去とエラーメッセージ改善ユーティリティ
-function stripHtmlTags(html) {
-  if (!html) return '';
-  // Service Workerではdocumentが使えないため、正規表現で処理
-  return html.replace(/<[^>]*>/g, '').trim();
-}
-
+// エラーメッセージ改善ユーティリティ（HTMLタグ除去は shared/comment.js の stripHtmlTags）
 function improveErrorMessage(originalMessage) {
   const cleanMessage = stripHtmlTags(originalMessage);
   
@@ -188,64 +195,8 @@ function analyzeError(error) {
 }
 
 // === コメント種別とフィルター =============================================
-// 役割（配信者/モデレーター/メンバー/一般）とは別に、スーパーチャットと
-// メンバーシップのイベントを独立した軸として扱う。スパチャは一般視聴者も
-// 投げられるので、役割だけで絞ると取りこぼす。
-const DEFAULT_COMMENT_FILTERS = {
-  owner: true,
-  moderator: true,
-  sponsor: true,
-  normal: true,
-  superchat: true,
-  membership: true
-};
-
-// 旧バージョンが保存したフィルターには superchat / membership が無い。
-// 欠けているキーは既定値で補い、想定外のキーは捨てる
-function normalizeCommentFilters(filters) {
-  const normalized = { ...DEFAULT_COMMENT_FILTERS };
-  if (filters && typeof filters === 'object') {
-    for (const key of Object.keys(DEFAULT_COMMENT_FILTERS)) {
-      if (typeof filters[key] === 'boolean') normalized[key] = filters[key];
-    }
-  }
-  return normalized;
-}
-
-// 種別が付いているものは種別で、通常のコメントは役割で絞る
-function isCommentEnabled(kind, role, filters) {
-  if (kind === 'superchat' || kind === 'supersticker') return filters.superchat;
-  if (kind === 'membership' || kind === 'gift') return filters.membership;
-  if (role === 'owner')     return filters.owner;
-  if (role === 'moderator') return filters.moderator;
-  if (role === 'member')    return filters.sponsor;
-  return filters.normal;
-}
-
-// APIのメッセージ種別 → 拡張機能側の kind。
-// ここに無いイベント（チャット終了・削除済み・ギフト受領など）は表示対象外
-const KIND_BY_API_TYPE = {
-  textMessageEvent: 'text',
-  superChatEvent: 'superchat',
-  superStickerEvent: 'supersticker',
-  newSponsorEvent: 'membership',
-  memberMilestoneChatEvent: 'membership',
-  membershipGiftingEvent: 'gift'
-};
-
-// 表示できない種別は null。type を持たない古い履歴はテキスト扱いにする
-function apiCommentKind(item) {
-  const type = item?.snippet?.type;
-  if (!type) return 'text';
-  return KIND_BY_API_TYPE[type] || null;
-}
-
-function apiCommentRole(authorDetails) {
-  if (authorDetails?.isChatOwner) return 'owner';
-  if (authorDetails?.isChatModerator) return 'moderator';
-  if (authorDetails?.isChatSponsor) return 'member';
-  return 'normal';
-}
+// 判定そのものは shared/comment.js にある（DOMモードとAPIモードで同じ答えを
+// 返す必要があるため）。ここではファイル先頭で取り込んだものを使う。
 
 // ログ用の本文プレビュー。displayMessage を持たない種別でも落ちないようにする
 function commentPreview(comment) {
@@ -817,14 +768,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
   
-  // 診断情報を取得
-  if (request.action === 'getDiagnostics') {
-    getDiagnosticsInfo()
-      .then(response => sendResponse(response))
-      .catch(error => sendResponse({ success: false, error: error.message }));
-    return true;
-  }
-  
   // 手動Content Script再注入
   if (request.action === 'reinjectContentScripts') {
     reinjectContentScripts('manual', request.tabId ?? null)
@@ -891,13 +834,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  if (request.action === 'fetchLiveChatMessages') {
-    fetchLiveChatMessages(request.liveChatId, request.pageToken)
-      .then(response => sendResponse(response))
-      .catch(error => sendResponse({ error: error.message }));
-    return true;
-  }
-  
   // 新しいアクションを追加
   if (request.action === 'startBackgroundMonitoring') {
     startBackgroundMonitoring(request.liveChatId, sender.tab.id, request.videoId)
@@ -975,23 +911,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       }
       sendResponse({ success: true });
     })().catch(error => sendResponse({ success: false, error: error.message }));
-    return true;
-  }
-
-  if (request.action === 'getMonitoringVideoId') {
-    ensureStateRestored().then(() => {
-      sendResponse({
-        success: true,
-        videoId: monitoringState.currentVideoId
-      });
-    });
-    return true;
-  }
-  
-  if (request.action === 'requestAutoStop') {
-    autoStopMonitoring(request.reason || 'Content scriptからの要求')
-      .then(response => sendResponse(response))
-      .catch(error => sendResponse({ success: false, error: error.message }));
     return true;
   }
 
@@ -1378,7 +1297,8 @@ async function startDomMonitoring(tabId, videoId) {
   try {
     await chrome.scripting.executeScript({
       target: { tabId: tabId, allFrames: true },
-      files: ['content/dom-chat.js']
+      // shared/comment.js が先。dom-chat.js は self.YTF を読み込み時に参照する
+      files: ['shared/comment.js', 'content/dom-chat.js']
     });
     debugLog('[Background] dom-chat.js injected into tab:', tabId);
   } catch (e) {
@@ -1425,7 +1345,12 @@ async function handleDomChatMessages(messages, sender = null) {
 
   const filters = normalizeCommentFilters(monitoringState.commentFilters);
   const newMessages = messages.filter(msg => {
+    // 更新前に保存された履歴のIDは旧形式。dom-chat.js が両方を載せてくるので、
+    // どちらかで既出なら取り込まない（更新直後の全件スキャンで二重に積まないため）
+    const legacyId = msg.legacyId;
+    delete msg.legacyId; // 保存はしない。突き合わせにしか使わない
     if (monitoringState.processedMessageIds.has(msg.id)) return false;
+    if (legacyId && monitoringState.processedMessageIds.has(legacyId)) return false;
     monitoringState.processedMessageIds.add(msg.id);
     // kind が無いのは旧バージョンの dom-chat.js が送ったテキストコメント
     return isCommentEnabled(msg.kind || 'text', msg.role, filters);
@@ -1476,18 +1401,6 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     // 履歴を保存
     flushCommentsHistory();
   }
-});
-
-// Service Worker停止前の処理
-chrome.runtime.onSuspend.addListener(() => {
-  debugLog('[Background] Service Worker suspending, saving state');
-  // 履歴を確実に保存（デバウンス待ちの分も含めて即時書き込む）
-  flushCommentsHistory();
-});
-
-// 拡張機能停止時の処理
-chrome.runtime.onSuspendCanceled.addListener(() => {
-  debugLog('[Background] Service Worker suspend canceled');
 });
 
 // Video IDからLive Chat IDを取得
@@ -1760,71 +1673,5 @@ async function autoStopMonitoring(reason) {
   } catch (error) {
     debugError('[Background] Error during auto-stop:', error);
     return { success: false, error: error.message };
-  }
-}
-
-// 診断情報取得機能
-async function getDiagnosticsInfo() {
-  debugLog('[Background] Generating diagnostics information');
-
-  await ensureStateRestored();
-
-  try {
-    const diagnostics = {
-      timestamp: new Date().toISOString(),
-      serviceWorker: {
-        isActive: true,
-        startTime: Date.now(),
-        version: chrome.runtime.getManifest().version
-      },
-      monitoring: {
-        isMonitoring: monitoringState.isMonitoring,
-        liveChatId: monitoringState.liveChatId ? 'present' : 'missing',
-        currentVideoId: monitoringState.currentVideoId || 'none',
-        commentsCount: monitoringState.commentsHistory.length,
-        tabId: monitoringState.tabId || 'none'
-      },
-      storage: {
-        hasApiKey: false,
-        commentFiltersCount: Object.keys(monitoringState.commentFilters).length
-      },
-      performance: {
-        processedMessagesCount: monitoringState.processedMessageIds.size
-      }
-    };
-    
-    // APIキーの存在確認
-    try {
-      const storageResult = await chrome.storage.local.get(['youtubeApiKey']);
-      diagnostics.storage.hasApiKey = !!(storageResult.youtubeApiKey);
-    } catch (error) {
-      debugError('[Background] Error checking API key:', error);
-      diagnostics.storage.hasApiKey = 'error';
-    }
-    
-    // ストレージ使用量確認（全件読み込みは重いのでバイト数とキー数だけ見る）
-    try {
-      const historyKeys = await listHistoryKeys();
-      diagnostics.storage.historyEntriesCount = historyKeys.length;
-      diagnostics.storage.bytesInUse = await chrome.storage.local.getBytesInUse(null);
-    } catch (error) {
-      debugError('[Background] Error checking storage:', error);
-      diagnostics.storage.historyEntriesCount = 'error';
-    }
-    
-    debugLog('[Background] Diagnostics generated:', diagnostics);
-    return { success: true, diagnostics };
-    
-  } catch (error) {
-    debugError('[Background] Error generating diagnostics:', error);
-    return { 
-      success: false, 
-      error: error.message,
-      basicInfo: {
-        timestamp: new Date().toISOString(),
-        serviceWorkerActive: true,
-        monitoringState: monitoringState.isMonitoring
-      }
-    };
   }
 }
