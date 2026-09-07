@@ -524,7 +524,7 @@ async function getStaleSessionReason(saved) {
   let tab;
   try {
     tab = await chrome.tabs.get(saved.tabId);
-  } catch (error) {
+  } catch {
     return 'タブが存在しない';
   }
 
@@ -674,7 +674,7 @@ async function isContentScriptAlive(tabId) {
   try {
     const response = await chrome.tabs.sendMessage(tabId, { action: 'ping' });
     return !!response;
-  } catch (e) {
+  } catch {
     return false;
   }
 }
@@ -1559,7 +1559,7 @@ async function notifyPopupOfError(errorAnalysis) {
       errorInfo: errorAnalysis
     });
     debugLog('[Background] Error details sent to popup');
-  } catch (error) {
+  } catch {
     debugLog('[Background] Could not notify popup of error (popup not open)');
   }
 }
@@ -1752,7 +1752,7 @@ async function autoStopMonitoring(reason) {
         action: 'monitoringAutoStopped',
         reason: reason
       });
-    } catch (error) {
+    } catch {
       // ポップアップが開いていない場合はエラーを無視
     }
     

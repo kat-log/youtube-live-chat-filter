@@ -350,7 +350,7 @@ function sendMessages(messages, retries = 3) {
         setTimeout(() => sendMessages(messages, retries - 1), 1000);
       }
     });
-  } catch (e) {
+  } catch {
     // Extension context invalidated（拡張機能再読み込み直後）は無視
   }
 }

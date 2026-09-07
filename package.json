@@ -1,11 +1,15 @@
 {
   "name": "youtube-live-chat-filter",
   "private": true,
-  "description": "YouTubeライブチャット特別コメントフィルターの開発用設定（テスト実行のみ。ビルドは不要）",
+  "description": "YouTubeライブチャット特別コメントフィルターの開発用設定（テストと lint の実行のみ。ビルドは不要）",
   "scripts": {
+    "lint": "eslint .",
     "test": "node --test \"test/**/*.test.js\""
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.5"
   }
 }
