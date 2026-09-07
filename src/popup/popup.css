@@ -999,6 +999,10 @@ body {
 
 .comment-item:hover { background: rgba(255,255,255,0.03); }
 .comment-item:last-child { border-bottom: none; }
+/* フィルターで隠した行は display:none になるだけで :last-child のままなので、
+   末尾が隠れていると区切り線が1本余る。「最後に見えている行」は JS が印を付ける
+   （CSS には「最後の見えている兄弟」を指す書き方が無い） */
+.comment-item.comment-item--last { border-bottom: none; }
 
 /* 行の役割色を1つの変数に集約する。継承で降ろすので、左ラインにも発言者名にも
    同じ値が効き、`.comment-author.selected` などとの詳細度争いも起きない */

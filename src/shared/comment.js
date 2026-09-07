@@ -352,15 +352,6 @@
     return String(html).replace(/<[^>]*>/g, '').trim();
   }
 
-  // 属性値に差し込む文字列のエスケープ。textContent → innerHTML で作る
-  // escapeHtml はクォートを escape しないため、属性値に使うと外れる（#25）。
-  // 描画そのものの作り直しはフェーズ5なので、それまでの暫定
-  const ATTR_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
-
-  function escapeAttr(text) {
-    return String(text ?? '').replace(/[&<>"']/g, ch => ATTR_ESCAPES[ch]);
-  }
-
   global.YTF = {
     SCHEMA_VERSION,
     DEFAULT_COMMENT_FILTERS,
@@ -381,8 +372,7 @@
     commentKeyOf,
     commentIdFor,
     legacyCommentIdFor,
-    stripHtmlTags,
-    escapeAttr
+    stripHtmlTags
   };
 
 })(self);

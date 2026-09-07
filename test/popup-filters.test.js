@@ -10,7 +10,7 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { loadPopup } = require('./helpers/popup-harness');
+const { loadPopup, visibleUsernames } = require('./helpers/popup-harness');
 
 const ALL_ON = {
   owner: true, moderator: true, sponsor: true,
@@ -37,11 +37,11 @@ const comment = (fields = {}) => ({
 });
 
 /**
- * いま画面に出ている発言者名。innerHTML を読むのは、
- * 「絞り込みの結果が本当に描画まで届いているか」まで見たいため
+ * いま画面に出ている発言者名。出来上がった DOM を読むのは、
+ * 「絞り込みの結果が本当に描画まで届いているか」まで見たいため。
+ * フェーズ5 より前は innerHTML の文字列を正規表現で拾っていた
  */
-const visibleNames = c => Array.from(
-  c.elements.commentsList.innerHTML.matchAll(/data-username="([^"]*)"/g), m => m[1]);
+const visibleNames = c => visibleUsernames(c.elements.commentsList);
 
 /** バッジに出ている件数（数字だけ）を全部拾う */
 const badgeCounts = c => Object.fromEntries(

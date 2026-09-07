@@ -187,12 +187,4 @@ describe('HTML の扱い', () => {
     assert.equal(YTF.stripHtmlTags(''), '');
     assert.equal(YTF.stripHtmlTags(null), '');
   });
-
-  test('escapeAttr はクォートも escape する（#25 の暫定対処）', () => {
-    assert.equal(
-      YTF.escapeAttr('" onerror="alert(1)'),
-      '&quot; onerror=&quot;alert(1)'
-    );
-    assert.equal(YTF.escapeAttr("it's <b>"), 'it&#39;s &lt;b&gt;');
-  });
 });
