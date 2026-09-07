@@ -4,7 +4,7 @@
   "description": "YouTubeライブチャット特別コメントフィルターの開発用設定（テストと lint の実行のみ。ビルドは不要）",
   "scripts": {
     "lint": "eslint .",
-    "test": "node --test \"test/**/*.test.js\""
+    "test": "node --test test/*.test.js"
   },
   "engines": {
     "node": ">=20"
