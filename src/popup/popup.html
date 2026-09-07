@@ -233,6 +233,8 @@
 
     <!-- コメントの型と正規化（再設計の決定7）。popup.js より先に読み込む -->
     <script src="../shared/comment.js"></script>
+    <!-- store.js は comment.js より後。bucket の判定を YTF に頼っている -->
+    <script src="../shared/store.js"></script>
     <script src="popup.js"></script>
 </body>
 </html>

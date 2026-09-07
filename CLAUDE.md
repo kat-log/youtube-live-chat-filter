@@ -25,6 +25,7 @@
 - `src/` - Chrome拡張機能のソースコード
   - `manifest.json` - Chrome拡張機能のマニフェストファイル
   - `shared/comment.js` - **コメントの型・正規化・IDの唯一の置き場**（3環境から読む）
+  - `shared/store.js` - **コメント履歴の唯一の保存先**（IndexedDB。Service Worker と popup から読む）
   - `background/` - Background Scripts
   - `content/` - Content Scripts
   - `popup/` - ポップアップ画面のHTML/CSS/JS
@@ -33,9 +34,12 @@
   - `helpers/service-worker-harness.js` - chrome APIモックとService Workerローダー
   - `helpers/dom-chat-harness.js` - 偽DOM（セレクタは厳格）とService Workerへの送信の記録
   - `helpers/popup-harness.js` - 偽 document（id の正は `popup.html`）と chrome APIモック
+  - `helpers/indexeddb-mock.js` - IndexedDB の最小の偽実装（依存パッケージは足していない）
+  - `helpers/store-harness.js` - `shared/store.js` を単体で評価する
 
 3つのハーネスはいずれも、対象スクリプトより先に `src/shared/comment.js` を
 同じコンテキストで評価する（本番の読み込み順を再現するため）。
+popup ハーネスはそのあと `src/shared/store.js` も評価する（`popup.html` と同じ順番）。
 
 ## 技術スタック
 
@@ -99,6 +103,13 @@ ESLint と CI はフェーズ1で導入済み。devDependency は `eslint` 1つ�
   （実時間で回すと初期化の再試行だけで1本十数秒かかる）。
   `PopupController` と唯一のインスタンスは `context.__popup` から触れる。
   描画そのもののテストはまだ無い（フェーズ5 の担当）
+- `test/helpers/indexeddb-mock.js` — `shared/store.js` が使う9つのAPIだけを実装した
+  偽 IndexedDB。**コールバックは必ず非同期に発火させる**（同期で撃つと、
+  カーソルの `continue()` の後に張り直されるハンドラが宙に浮いて1歩も進まない）。
+  トランザクションの完了はマクロタスクで判定する（本物の
+  「制御がイベントループに戻ったら commit」に揃える）
+- `test/helpers/store-harness.js` — `shared/comment.js` → `shared/store.js` の順に
+  評価して、偽 IndexedDB と偽 `storage.local` を差す。移行のテストはここから
 
 対象は「数時間使い込まないと発現せず手動再現が困難」なバグに絞っている。
 これまでに4度、その種のバグが本番で発覚しているため（Service Worker終了時の
@@ -109,7 +120,7 @@ ESLint と CI はフェーズ1で導入済み。devDependency は `eslint` 1つ�
 モックの限界として、以下は検証できない:
 
 - 実ブラウザの挙動（本物のquotaの出方、Service Workerが終了するタイミング、
-  メッセージパッシングの実挙動）
+  メッセージパッシングの実挙動、**IndexedDB の実際の書き込み量**）
 - YouTube側のDOM変更。dom-chat のモックはセレクタ文字列の完全一致でしか引けず、
   検証できるのは「どのタイミングで何を読むか」という段取りだけ。
   **セレクタが今のYouTubeで正しいかどうかは、実ブラウザでしか確認できない**
@@ -118,7 +129,7 @@ ESLint と CI はフェーズ1で導入済み。devDependency は `eslint` 1つ�
 `monitoringState` は `startDomMonitoring` などで丸ごと再代入されるため、
 ハーネスは getter 経由で露出している。テストから直接参照を保持しないこと。
 
-**`src/shared/comment.js` を二重注入ガードで包まないこと。** `dom-chat.js` より先に
+**`src/shared/` のファイルを二重注入ガードで包まないこと。** `dom-chat.js` より先に
 読まれる別ファイルなので、ガードの中に入れると Service Worker と popup から見えなくなる。
 代入先は `self`（`window` ではない。Service Worker に `window` は無い）。
 中身は即時実行関数で包む — content script では `dom-chat.js` と、`importScripts` では
@@ -163,10 +174,40 @@ ESLint の `sourceType` を `module` にするのも同じ理由で不可。
 保存済みの設定に新しいキーが無い場合（旧バージョンからの更新直後）は
 `normalizeCommentFilters()` が既定値で補うため、更新した瞬間にスパチャが消えることはない。
 
+### コメント履歴の保存（IndexedDB）
+
+保存は `src/shared/store.js` に集約している（再設計の決定2）。
+以前は `storage.local` に「動画1本ぶんの配列」を置き、500ms ごとに全件を
+書き直していた（賑わった配信で毎秒約0.8MiB）。いまは追記が1レコードの `put` で済む。
+
+```
+DB: ytChatFilter
+  comments  keyPath 'pk' = `${videoId}:${seq}`  index: [videoId, bucket, seq] / [videoId, seq]
+  avatars   keyPath ['videoId', 'displayName']
+  meta      keyPath 'videoId'  { lastSeq, counts: {primary, bulk}, updatedAt }
+```
+
+**保持枠は2つある**（決定3）。枠が別なので、一般コメントがいくら流れても
+特別コメントは押し出されない。
+
+| 枠 | 対象 | 上限（動画あたり） |
+| --- | --- | --- |
+| `primary` | 配信者・モデレーター・スパチャ・メンバーシップ・ギフト | 20,000 |
+| `bulk` | メンバー・一般 | 50,000 |
+
+枠の判定は `shared/comment.js` の `bucketOf()` が正で、store 側には書かない。
+保持する動画は5本（`MAX_HISTORY_VIDEOS`）。
+
+更新前に `storage.local` へ保存された履歴は、Service Worker の起動時に
+**片道で** IndexedDB へ移る。旧データを消すのは書き込みを読み直して確かめた後で、
+移行を走らせるのは Service Worker だけ（popup と同時に走らせると二重に積まれる）。
+
 ### キーワード検索
 
 ポップアップの検索は、画面に見えている範囲ではなく `this.comments`（取得済みの
-全件）を対象にする。
+全件）を対象にする。popup がメモリに載せる上限（`MAX_COMMENTS_TO_POPUP`）は
+`shared/store.js` にあり、Service Worker が1回に渡す件数と同じ値を見る
+（以前は popup 10,000 / SW 2,000 と食い違っていた）。
 
 > **【変更予定】** 全件をメモリの配列に載せる前提は、決定1（全件取り込み）で
 > 成立しなくなる。決定4で「低頻度枠はメモリ・高頻度枠は IndexedDB から引く」に変える。
@@ -205,7 +246,7 @@ ESLint の `sourceType` を `module` にするのも同じ理由で不可。
 | 0 | 出血を止める（独立した5つの小修正） | **完了**（2026-09-07） |
 | 1 | 足場（CI・ESLint・テストハーネス拡張） | **完了**（2026-09-07） |
 | 2 | 型の一本化（`src/shared/comment.js`） | **完了**（2026-09-07） |
-| 3 | IndexedDB 移行 | 未着手 |
+| 3 | IndexedDB 移行 | **完了**（2026-09-07） |
 | 4 | 全件取り込み | 未着手 |
 | 5 | popup の読み方と描画 | 未着手 |
 | 6 | ライフサイクル（単一状態・alarms・ポート） | 未着手 |

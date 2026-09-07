@@ -15,12 +15,16 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
+const { createIndexedDBMock } = require('./indexeddb-mock');
+
 const POPUP_DIR = path.join(__dirname, '..', '..', 'src', 'popup');
 const POPUP_PATH = path.join(POPUP_DIR, 'popup.js');
 const POPUP_HTML_PATH = path.join(POPUP_DIR, 'popup.html');
-// popup.html が popup.js より先に読み込む共有モジュール（再設計の決定7）。
-// self.YTF に代入されるので、popup.js からは同じグローバル経由で見える
+// popup.html が popup.js より先に読み込む共有モジュール（再設計の決定7・決定2）。
+// self.YTF / self.YTFStore に代入されるので、popup.js からは同じグローバル経由で見える。
+// 順番も popup.html と同じにする（store.js は bucket の判定で YTF を使う）
 const SHARED_PATH = path.join(__dirname, '..', '..', 'src', 'shared', 'comment.js');
+const STORE_PATH = path.join(__dirname, '..', '..', 'src', 'shared', 'store.js');
 
 /** popup.html に書かれている id を全部拾う。偽 document が引ける id の正はこれ */
 function idsInPopupHtml() {
@@ -268,6 +272,10 @@ function createChromeMock({ storage = {}, onMessage = () => undefined, queryTabs
  * @param {object} [options.storage]  chrome.storage.local が返す中身
  */
 function loadPopup({ document = createFakeDocument(), storage = {}, chrome = createChromeMock({ storage }) } = {}) {
+  // popup は履歴の読み書きにはまだ IndexedDB を使わない（フェーズ5の担当）。
+  // それでも store.js は popup.html が読むので、開ける先だけ用意しておく。
+  // タイマーは下の「積むだけ」を使わず Node の実時間で回す
+  const idb = createIndexedDBMock();
   // id -> 関数。clearTimeout で消せるように Map で持つ
   const timers = new Map();
   let nextTimerId = 1;
@@ -280,7 +288,9 @@ function loadPopup({ document = createFakeDocument(), storage = {}, chrome = cre
     clearInterval(id) { timers.delete(id); },
     URL,
     chrome,
-    document
+    document,
+    indexedDB: idb.indexedDB,
+    IDBKeyRange: idb.IDBKeyRange
   });
 
   // popup.js の内部（クラスと唯一のインスタンス）をテストから触れるようにする。
@@ -294,9 +304,11 @@ function loadPopup({ document = createFakeDocument(), storage = {}, chrome = cre
   // popup.html の <script> の並びを、ハーネス側で再現する
   context.self = context;
   vm.runInContext(fs.readFileSync(SHARED_PATH, 'utf8'), context, { filename: SHARED_PATH });
+  vm.runInContext(fs.readFileSync(STORE_PATH, 'utf8'), context, { filename: STORE_PATH });
   vm.runInContext(fs.readFileSync(POPUP_PATH, 'utf8') + expose, context, { filename: POPUP_PATH });
 
   Object.assign(context.__popup, {
+    idb,
     /** 積まれているタイマーの数 */
     pendingTimers: () => timers.size,
     /** 積まれているタイマーを1つ進める（進めた先で積まれた分は次の tick へ回る） */
