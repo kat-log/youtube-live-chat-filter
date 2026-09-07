@@ -11,12 +11,33 @@
 if (window.__domChatInitialized || !location.pathname.startsWith('/live_chat')) { /* noop */ } else {
 window.__domChatInitialized = true;
 
+// IDの作り方は shared/comment.js に集約している（再設計の決定7）。
+// manifest の js 配列で、このファイルより先に読み込まれる
+const { commentKeyOf, commentIdFor, legacyCommentIdFor } = self.YTF;
+
+// 送信済みのID。上限に達したら古い方から捨てる（全消しにすると、直後の
+// 再スキャンで全件を送り直すことになる）
 const seenIds = new Set();
+const MAX_SEEN_IDS = 2000;
 
 // 要素→ID。同じ要素には常に同じIDを振り、再スキャンで重複を作らないようにする
 const idByElement = new WeakMap();
 // 同一内容・同一時刻のコメントを区別するための連番（キーごとの出現回数）
 const occurrenceByKey = new Map();
+const MAX_OCCURRENCE_KEYS = 5000;
+
+// 上限を超えたぶんを古い方から捨てる。Map / Set の反復は挿入順なので、
+// 先頭から必要数だけ delete すれば FIFO になる。
+// 全消しにしてはいけない（#29）: occurrenceByKey を空にすると連番が 0 に戻り、
+// 同じ人が同じ分に同じ本文を投げていた場合、クリア後の1件目が既出のIDと
+// 同じ値になって「重複」として消える
+function trimOldest(collection, max) {
+  if (collection.size <= max) return;
+  for (const key of collection.keys()) {
+    if (collection.size <= max) break;
+    collection.delete(key);
+  }
+}
 
 // 監視対象のチャット行。スーパーチャットやメンバーシップのイベントは
 // テキストコメントとは別のタグで流れてくるため、タグ名から種別を引く
@@ -107,8 +128,8 @@ function takeMessage(node, kind, { receivedAt = null, useDomTimestamp = false, f
   const msg = extractMessage(node, kind, useDomTimestamp, receivedAt);
   if (!msg) return null;
   if (!force && seenIds.has(msg.id)) return null;
-  if (seenIds.size > 2000) seenIds.clear();
   seenIds.add(msg.id);
+  trimOldest(seenIds, MAX_SEEN_IDS);
   return msg;
 }
 
@@ -139,7 +160,7 @@ function extractMessage(el, kind, useDomTimestamp = false, receivedAt = null) {
   const role = roleOf(el, kind);
 
   const timestampText = textOf(el.querySelector('#timestamp'));
-  const id = messageIdFor(el, kind, displayName, detail, timestampText);
+  const { id, legacyId } = messageIdFor(el, kind, displayName, detail, timestampText);
 
   // 新着は受信時刻がそのまま投稿時刻。過去分だけDOMの時刻表示（分単位）で補う
   const domDate = useDomTimestamp ? parseTimestampText(timestampText) : null;
@@ -147,6 +168,9 @@ function extractMessage(el, kind, useDomTimestamp = false, receivedAt = null) {
 
   const result = {
     id,
+    // 更新前に保存された履歴と突き合わせるための旧形式のID。
+    // background 側が重複判定に使ったあと捨てる（保存はされない）
+    legacyId,
     role,
     displayName,
     message: detail.message,
@@ -267,27 +291,28 @@ function roleOf(el, kind) {
 
 // IDは「同じコメントなら再スキャンでもリロード後でも同じ値」であることが条件。
 // 位置ではなく内容＋出現回数から作るので、DOMの間引きで値がずれない。
+// 新旧2つのIDを返す。旧形式は、更新前に保存された履歴との突き合わせにだけ使う
 function messageIdFor(el, kind, displayName, detail, timestampText) {
   const cached = idByElement.get(el);
   if (cached) return cached;
 
-  // テキストコメントのキーは旧版と同じ形のまま保つ。拡張機能を更新しても
-  // 同じコメントには同じIDが振られ、保存済み履歴と重複しない
-  let key = `${displayName}\u0000${detail.message}\u0000${timestampText}`;
-  if (kind !== 'text') {
-    // 本文なしのスパチャは金額しか違いが無いので、キーに混ぜて衝突を避ける
-    key += `\u0000${kind}\u0000${detail.amountText || ''}\u0000${detail.eventText || ''}`;
-  }
+  // キーの作り方は旧版と同じ（shared/comment.js に移した）。形が同じなので
+  // 旧形式のIDをそのまま計算し直せる
+  const key = commentKeyOf(kind, displayName, detail, timestampText);
 
-  // 整数ハッシュでID生成（btoa のマルチバイト問題を回避）
-  const hash = key.split('').reduce((a, c) => (Math.imul(31, a) + c.charCodeAt(0)) | 0, 0);
   const occurrence = occurrenceByKey.get(key) || 0;
+  // 同じキーを引くたびに末尾へ入れ直す。挿入順のままだと、連投され続けている
+  // キーが「いちばん古い」ままになり、まだ現役なのに間引かれてしまう
+  occurrenceByKey.delete(key);
   occurrenceByKey.set(key, occurrence + 1);
-  if (occurrenceByKey.size > 5000) occurrenceByKey.clear();
+  trimOldest(occurrenceByKey, MAX_OCCURRENCE_KEYS);
 
-  const id = `dom_${hash}_${occurrence}`;
-  idByElement.set(el, id);
-  return id;
+  const ids = {
+    id: commentIdFor(key, occurrence),
+    legacyId: legacyCommentIdFor(key, occurrence)
+  };
+  idByElement.set(el, ids);
+  return ids;
 }
 
 // ライブチャットの時刻表示（「22:53」「10:53 PM」「午後10:53」）を Date にする。

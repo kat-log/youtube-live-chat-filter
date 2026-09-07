@@ -26,6 +26,8 @@ const BROWSER_GLOBALS = {
   ...ES_TIMERS,
   chrome: 'readonly',
   window: 'readonly',
+  // shared/comment.js が代入する self.YTF を、この3環境すべてから読む（決定7）
+  self: 'readonly',
   document: 'readonly',
   location: 'readonly',
   navigator: 'readonly',
@@ -54,6 +56,15 @@ const BROWSER_GLOBALS = {
   getComputedStyle: 'readonly',
   btoa: 'readonly',
   atob: 'readonly'
+};
+
+// shared/ は3環境すべてから読まれる。どこでも在るものしか使えないので、
+// globals も self とログだけに絞ってある（ここで document を使うと
+// Service Worker で落ちる）
+const SHARED_GLOBALS = {
+  ...ES_TIMERS,
+  self: 'readonly',
+  console: 'readonly'
 };
 
 // Service Worker（MV3）が触るグローバル。window も document も無い
@@ -109,6 +120,15 @@ const RULES = {
 module.exports = [
   {
     ignores: ['node_modules/**', 'promotion/**']
+  },
+  {
+    files: ['src/shared/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'script',
+      globals: SHARED_GLOBALS
+    },
+    rules: RULES
   },
   {
     files: ['src/background/**/*.js'],

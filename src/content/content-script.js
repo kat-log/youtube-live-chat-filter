@@ -405,28 +405,6 @@ class YouTubeLiveChatMonitor {
     }).catch(() => {
     });
   }
-  
-  formatComment(comment) {
-    const authorDetails = comment.authorDetails;
-    const snippet = comment.snippet;
-    
-    let role = '';
-    if (authorDetails.isChatOwner) {
-      role = '[配信者]';
-    } else if (authorDetails.isChatModerator) {
-      role = '[モデレーター]';
-    } else if (authorDetails.isChatSponsor) {
-      role = '[メンバー]';
-    }
-    
-    return {
-      role: role,
-      displayName: authorDetails.displayName,
-      message: snippet.displayMessage,
-      timestamp: snippet.publishedAt,
-      profileImageUrl: authorDetails.profileImageUrl
-    };
-  }
 }
 
 // 新しいメソッドを追加

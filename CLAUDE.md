@@ -24,6 +24,7 @@
 - `eslint.config.js` - ESLint のフラット設定（ルールは最低限の2つ）
 - `src/` - Chrome拡張機能のソースコード
   - `manifest.json` - Chrome拡張機能のマニフェストファイル
+  - `shared/comment.js` - **コメントの型・正規化・IDの唯一の置き場**（3環境から読む）
   - `background/` - Background Scripts
   - `content/` - Content Scripts
   - `popup/` - ポップアップ画面のHTML/CSS/JS
@@ -32,6 +33,9 @@
   - `helpers/service-worker-harness.js` - chrome APIモックとService Workerローダー
   - `helpers/dom-chat-harness.js` - 偽DOM（セレクタは厳格）とService Workerへの送信の記録
   - `helpers/popup-harness.js` - 偽 document（id の正は `popup.html`）と chrome APIモック
+
+3つのハーネスはいずれも、対象スクリプトより先に `src/shared/comment.js` を
+同じコンテキストで評価する（本番の読み込み順を再現するため）。
 
 ## 技術スタック
 
@@ -91,9 +95,10 @@ ESLint と CI はフェーズ1で導入済み。devDependency は `eslint` 1つ�
 - `test/helpers/popup-harness.js` — chrome API と偽 document をモックして
   `popup.js` を読み込む。偽 document が引ける id の正は `popup.html` の実物で、
   そこに無い id を引かれたら例外にする。
-  描画のテストはまだ無い（`PopupController` は DOMContentLoaded で生成でき、
-  実際に組み立てられるところまでは届いているが、初期化が実時間の再試行を回すため、
-  `setTimeout` を差し替え可能にするのがフェーズ5 の最初の仕事）
+  `setTimeout` は dom-chat ハーネスと同じく**積むだけ**で、テストから進める
+  （実時間で回すと初期化の再試行だけで1本十数秒かかる）。
+  `PopupController` と唯一のインスタンスは `context.__popup` から触れる。
+  描画そのもののテストはまだ無い（フェーズ5 の担当）
 
 対象は「数時間使い込まないと発現せず手動再現が困難」なバグに絞っている。
 これまでに4度、その種のバグが本番で発覚しているため（Service Worker終了時の
@@ -112,6 +117,12 @@ ESLint と CI はフェーズ1で導入済み。devDependency は `eslint` 1つ�
 
 `monitoringState` は `startDomMonitoring` などで丸ごと再代入されるため、
 ハーネスは getter 経由で露出している。テストから直接参照を保持しないこと。
+
+**`src/shared/comment.js` を二重注入ガードで包まないこと。** `dom-chat.js` より先に
+読まれる別ファイルなので、ガードの中に入れると Service Worker と popup から見えなくなる。
+代入先は `self`（`window` ではない。Service Worker に `window` は無い）。
+中身は即時実行関数で包む — content script では `dom-chat.js` と、`importScripts` では
+`service-worker.js` と同じスコープを共有するので、トップレベルに `const` を置くと名前がぶつかる。
 
 **両 content script に `'use strict'` を足したり ES モジュールに変換したりしないこと。**
 どちらも二重注入ガードの `if (...) { } else { ... }` ブロックで包まれており、
@@ -140,7 +151,8 @@ ESLint の `sourceType` を `module` にするのも同じ理由で不可。
 | 種別 | `membership` | メンバー新規加入・継続（マイルストーン）・メンバーギフト |
 
 種別が付いているメッセージは種別のフィルターで絞り、役割のフィルターは見ない。
-判定は `isCommentEnabled()` に集約している。
+判定は `src/shared/comment.js` の `isCommentEnabled()` に集約している
+（Service Worker と popup が同じ答えを返す必要があるため）。
 
 > **【変更予定】** 現状この判定は Service Worker の**取り込み時**に走り、
 > 外れたコメントは保存されない（しかも既読扱いになる）。そのため後からトグルを
@@ -161,8 +173,10 @@ ESLint の `sourceType` を `module` にするのも同じ理由で不可。
 > 検索が全件に効くという**約束は維持する**。詳細は `docs/redesign-plan.md` の決定4。
 比較の前に `normalizeForSearch()` で NFKC 正規化・小文字化・
 **ゼロ幅文字などの不可視文字の除去**・空白の連なりの圧縮・前後の空白除去を通す。
-正規化済みの文字列はコメントごとに1度だけ作って持たせる（1文字打つたびに全件を
-正規化し直すと数千件で遅くなる）。
+正規化済みの文字列（`searchText`）は**取り込み時に1件ずつ**作って持たせる。
+検索を始めてから遅延生成すると、最初の1文字で全件ぶんの正規化が同期的に走り、
+数千件で目に見えて固まる。更新前に保存された履歴には `searchText` が無いので、
+`searchTextOf()` がそのぶんだけ遅延生成で補う。
 
 不可視文字を落とすのは必須で、飾りではない。YouTubeのライブチャットからコメントを
 コピーするとゼロ幅スペース（`U+200B`）や方向制御文字が一緒に付いてきて、貼り付けた
@@ -190,7 +204,7 @@ ESLint の `sourceType` を `module` にするのも同じ理由で不可。
 | --- | --- | --- |
 | 0 | 出血を止める（独立した5つの小修正） | **完了**（2026-09-07） |
 | 1 | 足場（CI・ESLint・テストハーネス拡張） | **完了**（2026-09-07） |
-| 2 | 型の一本化（`src/shared/comment.js`） | 未着手 |
+| 2 | 型の一本化（`src/shared/comment.js`） | **完了**（2026-09-07） |
 | 3 | IndexedDB 移行 | 未着手 |
 | 4 | 全件取り込み | 未着手 |
 | 5 | popup の読み方と描画 | 未着手 |

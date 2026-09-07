@@ -20,7 +20,7 @@
     },
     {
       "matches": ["https://www.youtube.com/live_chat*"],
-      "js": ["content/dom-chat.js"],
+      "js": ["shared/comment.js", "content/dom-chat.js"],
       "run_at": "document_idle",
       "all_frames": true
     }

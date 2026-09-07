@@ -3,7 +3,9 @@ const assert = require('node:assert');
 const { loadPopup } = require('./helpers/popup-harness');
 
 const popup = loadPopup();
-const { normalizeForSearch, searchTextOf } = popup;
+// 正規化と検索文字列の生成は shared/comment.js に移った（再設計の決定7）。
+// popup.js は self.YTF から取り込んで使う
+const { normalizeForSearch, searchTextOf } = popup.YTF;
 
 // 検索対象を1件ぶん組み立てる（ポップアップが持つ整形済みコメントと同じ形）
 function comment(fields) {

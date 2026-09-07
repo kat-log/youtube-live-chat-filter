@@ -587,6 +587,96 @@ MV3 の Service Worker は約30秒アイドルで終了する。
   `isCommentEnabled` / `apiCommentKind` を検証している7件は、
   ハーネスの読み込み対象を変えるだけで通るはず。**通らなくなったら移行の設計を疑う**
 
+**実施記録（2026-09-07 完了）**
+
+8つとも実装できた。地雷は踏んでいない（`'use strict'` を足していない、
+`sourceType` は `script` のまま、`shared/comment.js` はガードで包まず `self` へ代入）。
+フェーズ1からの申し送り5点はどれも正確で、そのとおりに手当てすれば通った。
+詰まった箇所と、節の指示だけでは決まらなかった判断を残す。
+
+1. **ソースに生の U+0000 を書いてはいけない。** IDのキーの区切りは U+0000 のままだが、
+   `shared/comment.js` に**生のNUL文字**で書いたら `git` も `grep` も
+   そのファイルをバイナリ扱いにした（差分がレビューできない）。
+   `dom-chat.js` が `'\u0000'` とエスケープで書いていたのは、
+   たまたまテンプレートリテラルだったからではなく**必然**だった。移すときも同じ形にすること。
+
+2. **`normalizeComment` の出力に `avatarUrl` を足した。** 節の「コメントの正準形」には
+   無いが、無いと popup が `comment.avatarUrl`（DOM）と
+   `authorDetails.profileImageUrl`（API）を自分で見分けることになり、
+   潰したいはずの2分岐が popup に residue として残る。
+   `bucket` と同じく「保存するかどうかは後のフェーズが決める」ものとして正準形に入れた。
+
+3. **役割の名前が2つある問題は、`role` を正準形のキー、`roleLabel` を表示用に分けて解いた。**
+   移行前の popup は `comment.role` に**日本語ラベル**（「モデレーター」）を入れ、
+   絞り込みは `comment.roleClass`（`'role-sponsor'`）を見ていた。
+   正準形の `role` は `'owner' | 'moderator' | 'member' | 'normal'` なので、
+   同じ名前のまま入れ替えると絞り込みが全部 `normal` に落ちる。
+   `filterKeyOf` を `role` ベースに変え、表示側だけ `roleLabel` / `roleClass` を足す形にした
+   （`roleClass` は CSS のクラス名なので描画の都合。フェーズ5 まで残す）。
+
+4. **#3 のテストは「別々のバッチで送る」でないと赤くならない。** 節は
+   「同一分・同一本文の連投が2件とも残る」としか書いていないが、旧実装の突き合わせ先は
+   **取り込み済みの `this.comments` だけ**なので、2件を1バッチで渡すと旧実装でも素通りする。
+   `addNewComments` を2回呼ぶ形にして初めて落ちた（確認済み: 旧 popup.js で赤 → 新で緑）。
+
+5. **#29 のテストも「全消しと FIFO を区別できる並び」を作る必要がある。**
+   FIFO は定義上いちばん古いものを捨てるので、「上限を超えさせてから最初のコメントを
+   投げ直す」形だと FIFO でも連番が戻り、新旧どちらも落ちる。
+   **上限の少し手前（4990件目）で1回投げ、そこから100件流して超えさせる**という並びにすると、
+   全消しだけが連番を失う。`seenIds` 側も同じ形（1990件 → 対象 → 100件）。
+   **「上限を超えたら」ではなく「上限を超えたときに何が残っているべきか」で書くこと。**
+
+6. **旧IDは `legacyId` として1件ごとに載せ、Service Worker が突き合わせてから捨てる。**
+   節は「旧形式を読めることは残す」としか書いていないが、これは2つ意味がある。
+   (a) 保存済み履歴の旧IDが壊れないこと（IDは不透明な文字列なので自動的に満たされる）と、
+   (b) **更新直後の全件スキャンで、同じコメントが新IDで二重に積まれないこと**。
+   効くのは (b) のほうで、そのために `dom-chat.js` が新旧2つのIDを載せ、
+   `handleDomChatMessages` が `processedMessageIds` を両方で引いてから `legacyId` を
+   `delete` する（保存はしない＝ストレージは1バイトも増えない）。
+   キーの作り方が1文字でも変わると (b) が崩れるので、
+   **旧実装をそのまま書き写して突き合わせるテスト**を置いた。
+
+7. **`getDiagnosticsInfo()` を消したので、テストが1件減った。** #38 の表にある
+   「到達しないメッセージ分岐4つ」の1つが `getDiagnostics` で、その受け側が
+   `getDiagnosticsInfo()`。分岐だけ消すと関数が完全に浮くので両方消したが、
+   これには `service-worker.test.js` の「診断はストレージを全件読まずに使用量を返す」が
+   ぶら下がっていた（死にコードを守るテストだったので一緒に消した）。
+   **完了条件の「既存57件が通る」は、この1件だけ意図的に満たしていない。**
+   `ERROR_SOLUTIONS` は #38 の表に載っているが**消していない** —
+   「APIモードからしか到達しない」は死にコードではない。
+
+8. **`shared/comment.js` は ESLint のどの `files` にも当たっていなかった。**
+   `eslint.config.js` は `src/background` / `src/content` / `src/popup` / `src/options` を
+   列挙する作りなので、新しいディレクトリを足すと**ルールが1つも適用されない状態**になる
+   （エラーが出ないので気付きにくい）。`src/shared/**` のブロックを足し、
+   globals は3環境の共通部分（`self` とログだけ）に絞った。
+   `self` は `BROWSER_GLOBALS` にも足す必要がある。
+
+9. **`content_scripts` への追加は dom-chat 側だけにした。** 節は
+   「`content_scripts[].js` の先頭」とあるが、`content-script.js`（watch ページ側）は
+   死にコードの `formatComment` を消したあと共有モジュールを1つも使わない。
+   watch ページ全部で読ませる意味が無いので入れていない。
+   Service Worker からの手動注入（`executeScript`）のほうは
+   `files: ['shared/comment.js', 'content/dom-chat.js']` に直す必要がある（見落とすと
+   注入経路だけ `self.YTF` が undefined で落ちる）。
+
+10. **popup ハーネスの `setTimeout` 差し替えは、フェーズ5 を待たずに必要だった。**
+    #3 のテストで `PopupController` を作る必要があり、実時間のままだと初期化の
+    ping 8回でテストが十数秒かかる。dom-chat ハーネスと同じ「積むだけ」に変え、
+    `context.__popup` から `PopupController` と唯一のインスタンスを触れるようにした
+    （どちらもトップレベルの `class` / `let` なので、グローバルの属性にはならない。
+    Service Worker ハーネスと同じ「末尾に expose を連結する」やり方で解いた）。
+    偽要素に `closest()` も足した（`renderComments` が呼ぶ）。
+    **フェーズ5 はこの土台から始められる。**
+
+11. **vm コンテキストをまたぐ値は `deepEqual` で比べられない。** popup の中で作られた
+    配列やオブジェクトは prototype が違うので、
+    `assert.deepEqual` が「same structure but not reference-equal」で落ちる。
+    テスト側で `JSON.parse(JSON.stringify(...))` に通してから比べている。
+
+テストは 57 件 → **77 件**（正準形10件・popup の取り込み5件・IDの発番4件・
+旧IDの突き合わせ2件を追加、死にコードのテスト1件を削除）。
+
 ---
 
 ### フェーズ3 — IndexedDB 移行

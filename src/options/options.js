@@ -1,3 +1,8 @@
+// HTMLタグ除去は shared/comment.js の正規表現版に統一している（#27）。
+// 外部由来の文字列を innerHTML に通すと、切り離した要素でも <img> の
+// 読み込みだけは走る。options.html で options.js より先に読み込んでいる
+const { stripHtmlTags } = self.YTF;
+
 class OptionsController {
     constructor() {
         this.initializeElements();
@@ -5,17 +10,9 @@ class OptionsController {
         this.loadSettings();
     }
     
-    // HTMLタグ除去ユーティリティ関数
-    stripHtmlTags(html) {
-        if (!html) return '';
-        const div = document.createElement('div');
-        div.innerHTML = html;
-        return div.textContent || div.innerText || '';
-    }
-    
     // エラーメッセージ改善関数
     improveErrorMessage(originalMessage) {
-        const cleanMessage = this.stripHtmlTags(originalMessage);
+        const cleanMessage = stripHtmlTags(originalMessage);
         
         // よくあるYouTube API エラーの日本語化
         const errorMappings = {
