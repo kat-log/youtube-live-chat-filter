@@ -102,9 +102,10 @@ ESLint と CI はフェーズ1で導入済み。devDependency は `eslint` 1つ�
   `setTimeout` は dom-chat ハーネスと同じく**積むだけ**で、テストから進める
   （実時間で回すと初期化の再試行だけで1本十数秒かかる）。
   `PopupController` と唯一のインスタンスは `context.__popup` から触れる。
-  `test/popup-filters.test.js` は `renderComments()` を実際に走らせ、
-  出来上がった HTML から表示中の発言者を拾ってフィルターの2軸を確かめる。
-  描画の**方式**（`innerHTML` の全置換をやめる）を作り直すのはフェーズ5
+  出来上がった DOM は `readCommentRows()` / `visibleUsernames()` でほどく
+  （`test/popup-filters.test.js` がフィルターの2軸を、
+  `test/popup-render.test.js` が描き方そのものを確かめる）。
+  `loadPopup({ maxCommentsToPopup })` でメモリ上限を小さくできる
 - `test/helpers/indexeddb-mock.js` — `shared/store.js` が使う9つのAPIだけを実装した
   偽 IndexedDB。**コールバックは必ず非同期に発火させる**（同期で撃つと、
   カーソルの `continue()` の後に張り直されるハンドラが宙に浮いて1歩も進まない）。
@@ -177,11 +178,40 @@ Service Worker が取り込み口で見るのは `isDisplayableKind()`
 > 既読扱いになっていた（`docs/audit-2026-09.md` #4）。全件スキャンで送り直しても
 > 二度と拾えず、件数バッジの「一般: 0」も「取り込んでいない」の意味で嘘をついていた。
 
+件数バッジは、絞り込みと同じ母集団を同じ軸（`filterKeyOf()`）で数える。
+表示中の枠の内訳を足すと、必ず合計値に一致する（切った枠も本当の件数を出し続ける）。
+ただし**「メンバー」「一般」は `bulk` 枠**で、既定ではメモリに載っていない（決定4）。
+まだ読んでいないあいだ、この2つだけは数字ではなく `?` を出す
+（`0` と書くと「そもそも無い」という嘘になる。バッジ自身がトグルなので、
+押せば読み込まれて数字になる）。残り4つの枠は必ず `primary` に入るので、
+`primary` だけを載せた状態でも常に正確に数えられる。
+
 落とすのは表示する形を持たないものだけ。APIモードのチャット終了・削除済みイベントと、
 ギフトの受領告知（量が多いので意図的に対象外。後述）がこれに当たる。
 
 保存済みの設定に新しいキーが無い場合（旧バージョンからの更新直後）は
 `normalizeCommentFilters()` が既定値で補うため、更新した瞬間にスパチャが消えることはない。
+
+### 一覧の描画
+
+行は**1コメントにつき1回だけ**作る（決定4、フェーズ5で実現）。新着は新しい行だけを
+`DocumentFragment` にまとめて1回 `appendChild` し、フィルターや検索の切り替えでは
+**既存行の `hidden` を切り替えるだけ**にする。以前は新着1件ごとに `innerHTML` を
+全置換していた（`docs/audit-2026-09.md` #22 = 根本原因D）。
+
+- 行の組み立ては `document.createElement` + `textContent` + `setAttribute`。
+  文字列HTMLを組まないので、属性のエスケープ漏れ（#25）が種類ごと成立しない
+- リスナーは `commentsList` に `click` 1つと（捕捉フェーズの）`error` 1つだけ。
+  行ごとには張らない
+- レイアウトの読み取りは1描画につき1回。下端の判定は、代入した値から計算で出す
+- 画像URLは https に加えて**配信ホストも確認する**（`AVATAR_IMAGE_HOSTS` /
+  `STICKER_IMAGE_HOSTS`）。`https://` の前方一致だけだと任意のHTTPS先へ
+  `img` のリクエストが飛ぶ（#26）
+
+**CSS のクラス名と DOM 構造は描画方式を変えても維持すること**
+（`popup.css:1009-1012` が `:has()` で構造に依存している）。
+`hidden` で隠した行は `:last-child` のままなので、区切り線を消す
+「最後に見えている行」には JS が `comment-item--last` を付ける。
 
 ### コメント履歴の保存（IndexedDB）
 
@@ -218,12 +248,17 @@ DB: ytChatFilter
 `shared/store.js` にあり、Service Worker が1回に渡す件数と同じ値を見る
 （以前は popup 10,000 / SW 2,000 と食い違っていた）。
 
-> **【変更予定】** 全件をメモリの配列に載せる前提は、決定1（全件取り込み、
-> フェーズ4で実現済み）で既に成り立っていない。いまは
-> `readCommentsForPopup()` が `MAX_COMMENTS_TO_POPUP` 件まで
-> （primary を先に確保してから残り枠を bulk の直近で埋める）渡して頭打ちにしている。
-> 決定4で「低頻度枠はメモリ・高頻度枠は IndexedDB から引く」に変える（フェーズ5）。
-> 検索が全件に効くという**約束は維持する**。詳細は `docs/redesign-plan.md` の決定4。
+**メモリに載せるのは起動時は `primary` 枠だけ**（決定4、フェーズ5で実現）。
+`bulk` 枠（メンバー・一般）は、そのトグルをONにしたか、**検索を始めたか**、
+ユーザー絞り込みを掛けたときに、popup が `shared/store.js` 経由で
+IndexedDB から直接読む（Service Worker のメッセージで数万件を往復させないため）。
+**検索は取得済み全件に効く**——その約束を守るために、検索は読み込みの引き金の1つにしてある。
+Service Worker が渡すのは `readCommentsForPopup(videoId, 'primary')` の結果で、
+`MAX_COMMENTS_TO_POPUP` はメモリの上限として popup 側でも効き続ける。
+
+> popup は `store.migrateFromLocal()` を**呼ばない**。移行は片道で、
+> Service Worker と同時に走らせると履歴が二重に積まれる。
+
 比較の前に `normalizeForSearch()` で NFKC 正規化・小文字化・
 **ゼロ幅文字などの不可視文字の除去**・空白の連なりの圧縮・前後の空白除去を通す。
 正規化済みの文字列（`searchText`）は**取り込み時に1件ずつ**作って持たせる。
@@ -260,7 +295,7 @@ DB: ytChatFilter
 | 2 | 型の一本化（`src/shared/comment.js`） | **完了**（2026-09-07） |
 | 3 | IndexedDB 移行 | **完了**（2026-09-07） |
 | 4 | 全件取り込み | **完了**（2026-09-07） |
-| 5 | popup の読み方と描画 | 未着手 |
+| 5 | popup の読み方と描画 | **完了**（2026-09-07） |
 | 6 | ライフサイクル（単一状態・alarms・ポート） | 未着手 |
 | 7 | dom-chat 耐性 | 未着手 |
 | 8 | UI の穴（キーボード・テーマ） | 未着手 |

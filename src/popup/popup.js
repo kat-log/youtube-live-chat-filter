@@ -261,6 +261,10 @@ class PopupController {
         // 並列に混ぜると一瞬だけ旧形式で描かれてそのまま残る）
         await this.loadTimeSettings();
 
+        // フィルターの状態も先に確定させる。bulk 枠を読むかどうかがこれで決まるので
+        // （決定4）、履歴復元と並列にすると、順番次第で要らない bulk を読み込む
+        await this.loadCommentFilters();
+
         // 初期状態設定
         this.updateMonitoringButtons(false);
         this.updateMonitoringButtonStates();
@@ -268,7 +272,6 @@ class PopupController {
         // 非同期初期化タスクを並行実行
         await Promise.all([
             this.loadSavedApiKey(),
-            this.loadCommentFilters(),
             this.loadChatMode(),
             loadTheme(),
             this.checkCurrentTab()
@@ -1536,6 +1539,9 @@ class PopupController {
         if (hour12 !== undefined) this.timeHour12 = (hour12 === true);
         if (showSeconds !== undefined) this.timeShowSeconds = (showSeconds !== false);
         this.syncTimeToggleUI();
+        // 時刻は行を作るときに焼き付けている。表記が変わったときだけは、
+        // 行そのものを作り直さないと古い表記が残る
+        this.rebuildCommentRows();
         this.renderComments();
     }
 

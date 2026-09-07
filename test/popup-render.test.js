@@ -463,3 +463,25 @@ describe('bulk 枠の遅延読み込み（決定4）', () => {
     assert.equal(left.commentsHistory_vid1.length, 1);
   });
 });
+
+describe('行に焼き付けた値の作り直し', () => {
+  test('時刻表記を変えたら、既に出ている行も新しい表記になる', () => {
+    // 時刻は行を作るときに文字列にして焼き付けている。表記の切り替えだけは
+    // hidden の付け外しでは追いつかないので、行そのものを作り直す
+    const c = controller();
+    c.timeHour12 = false;
+    c.timeShowSeconds = true;
+    c.setComments([{ ...comment({ publishedAt: '2026-09-07T13:02:03.000Z' }), id: 'a' }]);
+    c.renderComments();
+
+    const before = findByClass(
+      readCommentRows(c.elements.commentsList)[0].element, 'comment-time').textContent;
+    assert.match(before, /^\d{2}:\d{2}:\d{2}$/);
+
+    c.applyTimeSettings({ showSeconds: false });
+
+    const after = findByClass(
+      readCommentRows(c.elements.commentsList)[0].element, 'comment-time').textContent;
+    assert.match(after, /^\d{2}:\d{2}$/);
+  });
+});
