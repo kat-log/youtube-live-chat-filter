@@ -13,8 +13,22 @@ const {
   createChromeMock, loadServiceWorker, settle, domComment, senderFor
 } = require('./helpers/service-worker-harness');
 
-const historyKeys = store => Object.keys(store).filter(k => k.startsWith('commentsHistory_')).sort();
+// 保存された履歴は IndexedDB にある（決定2）。保存はデバウンスされているので、
+// 読む前に必ず flush する。ここを通さずに store を直接読むと、
+// 「まだ書いていないだけ」を「保存されていない」と読み違える
+const savedComments = async (sw, videoId) => {
+  await sw.flushCommentsHistory();
+  return sw.store.read(videoId);
+};
+// vm コンテキスト側で作られた配列は prototype が別realmになるので、
+// deepEqual に渡す前に展開してこちら側の配列に直す
+const savedIds = async (sw, videoId) => [...(await savedComments(sw, videoId)).map(c => c.id)];
+const savedVideoIds = async sw => [...(await sw.store.listVideos()).map(v => v.videoId)].sort();
+
 const watchTab = (id, videoId) => ({ [id]: { id, url: `https://www.youtube.com/watch?v=${videoId}` } });
+/** popup から届くメッセージを、本物と同じ onMessage の口に流す */
+const sendMessage = (chrome, request) =>
+  new Promise(resolve => chrome.__onMessage(request, {}, resolve));
 const activeSession = (tabId, videoId) => ({
   isMonitoring: true, liveChatId: null, tabId, videoId, chatMode: 'dom'
 });
@@ -22,7 +36,8 @@ const activeSession = (tabId, videoId) => ({
 describe('履歴のクリーンアップ', () => {
   test('DOMモードの履歴でも新しい順に残り、監視中の動画は消されない', async () => {
     // DOMモードのコメントは publishedAt がトップレベルにあり、snippet.publishedAt を
-    // 決め打ちで読むと全件0になって並べ替えが壊れる（#41で修正したバグ）
+    // 決め打ちで読むと全件0になって並べ替えが壊れる（#41で修正したバグ）。
+    // 旧 storage.local の履歴は読み込み時に IndexedDB へ移る
     const { chrome, store } = createChromeMock({ tabs: watchTab(7, 'ACTIVE') });
     const base = Date.parse('2026-08-01T00:00:00Z');
 
@@ -36,41 +51,46 @@ describe('履歴のクリーンアップ', () => {
     await settle();
     await sw.cleanupOldCommentHistories();
 
-    const remaining = historyKeys(store);
+    const remaining = await savedVideoIds(sw);
     assert.equal(remaining.length, sw.MAX_HISTORY_VIDEOS);
-    assert.ok(remaining.includes('commentsHistory_ACTIVE'), '監視中の動画が保護されていない');
+    assert.ok(remaining.includes('ACTIVE'), '監視中の動画が保護されていない');
     for (const videoId of ['v7', 'v6', 'v5']) {
-      assert.ok(remaining.includes(`commentsHistory_${videoId}`), `新しい ${videoId} が消えている`);
+      assert.ok(remaining.includes(videoId), `新しい ${videoId} が消えている`);
     }
     for (const videoId of ['v1', 'v2', 'v3']) {
-      assert.ok(!remaining.includes(`commentsHistory_${videoId}`), `古い ${videoId} が残っている`);
+      assert.ok(!remaining.includes(videoId), `古い ${videoId} が残っている`);
     }
   });
 
-  test('上限を超えた履歴は新しい方を残して切り詰められる', async () => {
-    const { chrome, store } = createChromeMock();
-    const base = Date.parse('2026-08-01T00:00:00Z');
-    store['commentsHistory_BIG'] = Array.from({ length: 5000 }, (_, i) => domComment(i, base + i * 1000));
-
+  test('保持枠の上限を超えた履歴は、古い方から切り詰められる', async () => {
+    const { chrome } = createChromeMock();
     const sw = loadServiceWorker(chrome);
     await settle();
+
+    // 上限そのものは shared/store.js が持つ。テストでは小さくして流量を減らす
+    sw.store.LIMITS.bulk = 10;
+
+    await sw.store.append('BIG', Array.from({ length: 25 }, (_, i) => domComment(i)));
     await sw.cleanupOldCommentHistories();
 
-    const trimmed = store['commentsHistory_BIG'];
-    assert.equal(trimmed.length, sw.MAX_COMMENTS_PER_VIDEO);
-    assert.equal(trimmed.at(-1).id, 'dom_4999', '新しい方を残していない');
+    const remaining = await sw.store.read('BIG');
+    assert.equal(remaining.length, 10);
+    assert.equal(remaining.at(-1).id, 'dom_24', '新しい方を残していない');
+    assert.equal(remaining[0].id, 'dom_15', '古い方から消していない');
   });
 
-  test('メタ情報が記録され、実体の無いエントリは残らない', async () => {
-    const { chrome, store } = createChromeMock();
-    store['commentsHistory_a'] = [domComment(1)];
-    store.commentsHistoryMeta = { a: Date.now(), 消えた動画: Date.now() };
-
+  test('履歴を消すと、その動画のメタ情報も残らない', async () => {
+    // 実体とメタが別々に消えると、どちらか片方だけが永久に居座る（#6 と同じ形）
+    const { chrome } = createChromeMock();
     const sw = loadServiceWorker(chrome);
     await settle();
-    await sw.cleanupOldCommentHistories();
 
-    assert.deepEqual(Object.keys(store.commentsHistoryMeta), ['a']);
+    await sw.store.append('a', [domComment(1)]);
+    await sw.store.append('消える動画', [domComment(2)]);
+    await sw.store.dropVideo('消える動画');
+
+    assert.deepEqual(await savedVideoIds(sw), ['a']);
+    assert.deepEqual((await sw.store.count('消える動画')).total, 0);
   });
 });
 
@@ -82,8 +102,9 @@ describe('ストレージ容量超過時のフォールバック', () => {
       quotaBytes: 2000,
       tabs: watchTab(42, 'NEW')
     });
-    store['commentsHistory_OLD1'] = Array.from({ length: 20 }, (_, i) => domComment(i));
-    store['commentsHistory_OLD2'] = Array.from({ length: 20 }, (_, i) => domComment(i));
+    // 履歴は IndexedDB へ移ったので、storage.local を埋めるのは設定側のキー。
+    // 移行で消えないものを置かないと、この状況自体が作れない
+    store.someLargeSetting = 'x'.repeat(3000);
 
     const sw = loadServiceWorker(chrome);
     await settle();
@@ -100,9 +121,9 @@ describe('ストレージ容量超過時のフォールバック', () => {
     );
     assert.equal(sw.monitoringState.isMonitoring, true);
 
-    // 保存は失敗しうるが、コメントの取り込み自体は続く
+    // storage.local への保存は失敗しうるが、コメントの取り込み自体は続く
     await sw.handleDomChatMessages([domComment(999)], senderFor(42, 'NEW'));
-    assert.equal(sw.monitoringState.commentsHistory.length, 1);
+    assert.deepEqual(await savedIds(sw, 'NEW'), ['dom_999']);
   });
 });
 
@@ -119,7 +140,10 @@ describe('Service Worker 復帰時の状態復元', () => {
 
     assert.equal(sw.monitoringState.isMonitoring, true);
     assert.equal(sw.monitoringState.currentVideoId, 'SAME');
-    assert.equal(sw.monitoringState.commentsHistory.length, 1);
+    assert.deepEqual(await savedIds(sw, 'SAME'), ['dom_1']);
+    // 履歴そのものはメモリに載せない。復帰後に必要なのは「どこまで取り込んだか」だけ
+    assert.ok(sw.monitoringState.processedMessageIds.has('dom_1'),
+      '復元した履歴のIDが既読になっていない');
   });
 
   test('タブの動画が変わっていた古いセッションは破棄される', async () => {
@@ -147,25 +171,23 @@ describe('Service Worker 復帰時の状態復元', () => {
 
 describe('DOMモードのコメント取り込み', () => {
   test('同一タブで動画が変わったら新しい動画の履歴に入る', async () => {
-    const { chrome, store } = createChromeMock({ tabs: watchTab(3, 'VIDEO_B') });
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'VIDEO_B') });
     const sw = loadServiceWorker(chrome);
     await settle();
 
     // 「復元は通ったが実は動画が変わっていた」状況を作る
     sw.setState({
       isMonitoring: true, chatMode: 'dom', tabId: 3, currentVideoId: 'VIDEO_A',
-      commentsHistory: [], processedMessageIds: new Set()
+      processedMessageIds: new Set()
     });
 
     await sw.handleDomChatMessages([domComment(1)], senderFor(3, 'VIDEO_B'));
     await settle();
 
     assert.equal(sw.monitoringState.currentVideoId, 'VIDEO_B');
-    assert.equal(sw.monitoringState.commentsHistory.length, 1);
 
-    await sw.getCommentsHistory('VIDEO_B');
-    assert.equal(store['commentsHistory_VIDEO_B'].length, 1);
-    assert.equal(store['commentsHistory_VIDEO_A'], undefined, '古い動画にコメントが混ざっている');
+    assert.deepEqual(await savedIds(sw, 'VIDEO_B'), ['dom_1']);
+    assert.deepEqual(await savedIds(sw, 'VIDEO_A'), [], '古い動画にコメントが混ざっている');
   });
 
   test('監視停止中は自動再開せず、コメントも取り込まない', async () => {
@@ -174,13 +196,11 @@ describe('DOMモードのコメント取り込み', () => {
     const sw = loadServiceWorker(chrome);
     await settle();
 
-    sw.setState({
-      isMonitoring: false, chatMode: 'dom', tabId: 3, currentVideoId: 'V', commentsHistory: []
-    });
+    sw.setState({ isMonitoring: false, chatMode: 'dom', tabId: 3, currentVideoId: 'V' });
     await sw.handleDomChatMessages([domComment(1)], senderFor(3, 'V'));
 
     assert.equal(sw.monitoringState.isMonitoring, false);
-    assert.equal(sw.monitoringState.commentsHistory.length, 0);
+    assert.deepEqual(await savedIds(sw, 'V'), []);
   });
 
   test('フィルターで除外された種別は履歴に残らない', async () => {
@@ -190,7 +210,7 @@ describe('DOMモードのコメント取り込み', () => {
 
     sw.setState({
       isMonitoring: true, chatMode: 'dom', tabId: 3, currentVideoId: 'V',
-      commentsHistory: [], processedMessageIds: new Set(),
+      processedMessageIds: new Set(),
       commentFilters: { owner: true, moderator: true, sponsor: true, normal: false }
     });
 
@@ -199,8 +219,9 @@ describe('DOMモードのコメント取り込み', () => {
       { ...domComment(2), role: 'owner' }
     ], senderFor(3, 'V'));
 
-    assert.equal(sw.monitoringState.commentsHistory.length, 1);
-    assert.equal(sw.monitoringState.commentsHistory[0].role, 'owner');
+    const saved = await savedComments(sw, 'V');
+    assert.equal(saved.length, 1);
+    assert.equal(saved[0].role, 'owner');
   });
 
   test('同じコメントが再送されても重複しない', async () => {
@@ -210,13 +231,13 @@ describe('DOMモードのコメント取り込み', () => {
 
     sw.setState({
       isMonitoring: true, chatMode: 'dom', tabId: 3, currentVideoId: 'V',
-      commentsHistory: [], processedMessageIds: new Set()
+      processedMessageIds: new Set()
     });
 
     await sw.handleDomChatMessages([domComment(1)], senderFor(3, 'V'));
     await sw.handleDomChatMessages([domComment(1)], senderFor(3, 'V'));
 
-    assert.equal(sw.monitoringState.commentsHistory.length, 1);
+    assert.deepEqual(await savedIds(sw, 'V'), ['dom_1']);
   });
 
   test('更新前に保存された旧形式のIDでも重複と分かる', async () => {
@@ -229,7 +250,7 @@ describe('DOMモードのコメント取り込み', () => {
 
     sw.setState({
       isMonitoring: true, chatMode: 'dom', tabId: 3, currentVideoId: 'V',
-      commentsHistory: [], processedMessageIds: new Set(['dom_-1234567_0'])
+      processedMessageIds: new Set(['dom_-1234567_0'])
     });
 
     const message = domComment(1, Date.now(), {
@@ -238,7 +259,7 @@ describe('DOMモードのコメント取り込み', () => {
     });
     await sw.handleDomChatMessages([message], senderFor(3, 'V'));
 
-    assert.equal(sw.monitoringState.commentsHistory.length, 0, '旧IDで弾けていない');
+    assert.deepEqual(await savedIds(sw, 'V'), [], '旧IDで弾けていない');
   });
 
   test('旧IDに心当たりが無ければ取り込む。ただし保存はしない', async () => {
@@ -248,14 +269,14 @@ describe('DOMモードのコメント取り込み', () => {
 
     sw.setState({
       isMonitoring: true, chatMode: 'dom', tabId: 3, currentVideoId: 'V',
-      commentsHistory: [], processedMessageIds: new Set()
+      processedMessageIds: new Set()
     });
 
     await sw.handleDomChatMessages([
       domComment(1, Date.now(), { id: 'dom2_0000000100000002_0', legacyId: 'dom_-1234567_0' })
     ], senderFor(3, 'V'));
 
-    const [saved] = sw.monitoringState.commentsHistory;
+    const [saved] = await savedComments(sw, 'V');
     assert.equal(saved.id, 'dom2_0000000100000002_0');
     assert.equal('legacyId' in saved, false, '突き合わせ用のIDを履歴に残している');
   });
@@ -310,9 +331,103 @@ describe('監視開始時の全件スキャン', () => {
     await sw.handleDomChatMessages(
       [domComment(1), domComment(2), domComment(3)], senderFor(3, 'V'));
 
-    const history = sw.monitoringState.commentsHistory;
+    const history = await savedIds(sw, 'V');
     assert.equal(history.length, 3, '既存の履歴とスキャン分が二重に積まれている');
-    assert.deepEqual(history.map(c => c.id), ['dom_1', 'dom_2', 'dom_3']);
+    assert.deepEqual(history, ['dom_1', 'dom_2', 'dom_3']);
+  });
+});
+
+describe('履歴のクリア', () => {
+  test('クリア後に再スキャンすると、コメントが戻ってくる', async () => {
+    // 既読マークを消し忘れると、クリア後の全件スキャンで全部が「重複」として
+    // 弾かれ、画面は空のまま戻らない（#6）。利用者から見ると
+    // 「クリアしたら二度と戻らなくなった」
+    const AVATAR = 'https://yt3.ggpht.com/AAA=s64-c';
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    await sw.startDomMonitoring(3, 'V');
+
+    const batch = () => [
+      { ...domComment(1), displayName: '常連さん', avatarUrl: AVATAR },
+      domComment(2)
+    ];
+    await sw.handleDomChatMessages(batch(), senderFor(3, 'V'));
+    assert.deepEqual(await savedIds(sw, 'V'), ['dom_1', 'dom_2']);
+
+    const response = await sendMessage(chrome, { action: 'clearCommentsHistory', videoId: 'V' });
+    assert.equal(response.success, true);
+
+    assert.deepEqual(await savedIds(sw, 'V'), []);
+    assert.deepEqual({ ...await sw.store.readAvatars('V') }, {}, 'アバターが残っている');
+    assert.deepEqual({ ...sw.monitoringState.avatarsByAuthor }, {});
+    assert.equal(sw.monitoringState.processedMessageIds.size, 0, '既読マークが残っている');
+
+    // dom-chat.js が全件を送り直す（requestInitialSweep と同じ流れ）
+    await sw.handleDomChatMessages(batch(), senderFor(3, 'V'));
+    assert.deepEqual(await savedIds(sw, 'V'), ['dom_1', 'dom_2'],
+      'クリア後に再スキャンしてもコメントが戻らない');
+    assert.equal((await sw.store.readAvatars('V'))['常連さん'], AVATAR);
+  });
+
+  test('クリアしても、保存待ちのコメントが書き戻らない', async () => {
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    await sw.startDomMonitoring(3, 'V');
+
+    // flush する前（デバウンス中）にクリアされたケース
+    await sw.handleDomChatMessages([domComment(1)], senderFor(3, 'V'));
+    await sendMessage(chrome, { action: 'clearCommentsHistory', videoId: 'V' });
+
+    assert.deepEqual(await savedIds(sw, 'V'), [], '消したはずのコメントが書き戻っている');
+  });
+});
+
+describe('保存が容量超過で失敗したとき', () => {
+  test('他の動画の履歴を捨てて書き直す', async () => {
+    // 旧 emergencyCleanup は「切り詰めた配列」ではなく元の巨大な配列を
+    // 送り直していたので、復旧という存在理由を果たしていなかった（#7）。
+    // いま切り詰める対象（他の動画）と書き直す対象（新着のバッチ）は別物
+    const { chrome, idb } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    await sw.store.append('OLD1', [domComment(1)]);
+    await sw.store.append('OLD2', [domComment(2)]);
+    await sw.startDomMonitoring(3, 'V');
+
+    // ここから先、1バイトでも増える put は失敗する
+    idb.setQuotaBytes(idb.usedBytes());
+
+    await sw.handleDomChatMessages([domComment(9)], senderFor(3, 'V'));
+
+    assert.deepEqual(await savedIds(sw, 'V'), ['dom_9'], '空きを作っても保存できていない');
+    assert.deepEqual(await savedVideoIds(sw), ['V'], '他の動画の履歴が残っている');
+  });
+});
+
+describe('popup へ渡すコメント', () => {
+  test('上限に当たっても、特別コメントは一般コメントに押し出されない', async () => {
+    // popup 10,000 / SW 2,000 と食い違っていた上限を1つにした（#33）。
+    // 枠が別なので、上限に当たって削られるのは bulk（一般）だけ
+    const { chrome } = createChromeMock();
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    sw.store.MAX_COMMENTS_TO_POPUP = 5;
+
+    await sw.store.append('V', [
+      { ...domComment(0), role: 'owner' },
+      ...Array.from({ length: 20 }, (_, i) => domComment(i + 1))
+    ]);
+
+    const comments = await sw.readCommentsForPopup('V');
+    const ids = [...comments.map(c => c.id)];
+
+    assert.equal(ids.length, 5);
+    assert.ok(ids.includes('dom_0'), '配信者のコメントが押し出されている');
+    // 残りの枠は新しい方の一般コメントで埋まり、並びは古い順のまま
+    assert.deepEqual(ids, ['dom_0', 'dom_17', 'dom_18', 'dom_19', 'dom_20']);
   });
 });
 
@@ -323,12 +438,12 @@ describe('アバターの取り込み', () => {
 
   const startedSession = (sw, filters) => sw.setState({
     isMonitoring: true, chatMode: 'dom', tabId: 3, currentVideoId: 'V',
-    commentsHistory: [], processedMessageIds: new Set(), avatarsByAuthor: {},
+    processedMessageIds: new Set(), avatarsByAuthor: {},
     ...(filters ? { commentFilters: filters } : {})
   });
 
   test('アバターは発言者ごとのマップに入り、コメント本体には残らない', async () => {
-    const { chrome, store } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
     const sw = loadServiceWorker(chrome);
     await settle();
     startedSession(sw);
@@ -339,12 +454,11 @@ describe('アバターの取り込み', () => {
       { ...domComment(2), displayName: '常連さん', avatarUrl: AVATAR },
       { ...domComment(3), displayName: '常連さん', avatarUrl: AVATAR }
     ], senderFor(3, 'V'));
-    await sw.getCommentsHistory('V');
 
     assert.deepEqual({ ...sw.monitoringState.avatarsByAuthor }, { '常連さん': AVATAR });
-    assert.equal(store['commentAvatars_V']['常連さん'], AVATAR);
+    assert.equal((await sw.store.readAvatars('V'))['常連さん'], AVATAR);
 
-    const saved = store['commentsHistory_V'];
+    const saved = await savedComments(sw, 'V');
     assert.equal(saved.length, 3);
     for (const comment of saved) {
       assert.ok(!('avatarUrl' in comment), 'コメント本体にURLが残っている');
@@ -406,8 +520,9 @@ describe('アバターの取り込み', () => {
   test('履歴のクリーンアップでアバターも一緒に消える', async () => {
     // 片方だけ残ると、参照されないアバターが永久にストレージを食う
     const { chrome, store } = createChromeMock({ tabs: watchTab(7, 'ACTIVE') });
+    const videoIds = ['ACTIVE', 'v1', 'v2', 'v3', 'v4', 'v5', 'v6'];
     const base = Date.parse('2026-08-01T00:00:00Z');
-    ['ACTIVE', 'v1', 'v2', 'v3', 'v4', 'v5', 'v6'].forEach((videoId, i) => {
+    videoIds.forEach((videoId, i) => {
       store[`commentsHistory_${videoId}`] = [domComment(1, base + i * 86400000)];
       store[`commentAvatars_${videoId}`] = { 誰か: AVATAR };
     });
@@ -417,10 +532,12 @@ describe('アバターの取り込み', () => {
     await settle();
     await sw.cleanupOldCommentHistories();
 
-    const avatarKeys = Object.keys(store).filter(k => k.startsWith('commentAvatars_')).sort();
-    const remaining = historyKeys(store).map(k => k.replace('commentsHistory_', ''));
-    assert.deepEqual(avatarKeys.map(k => k.replace('commentAvatars_', '')), remaining,
-      '履歴とアバターの残り方がずれている');
+    const remaining = await savedVideoIds(sw);
+    const withAvatars = [];
+    for (const videoId of videoIds) {
+      if (Object.keys(await sw.store.readAvatars(videoId)).length > 0) withAvatars.push(videoId);
+    }
+    assert.deepEqual(withAvatars.sort(), remaining, '履歴とアバターの残り方がずれている');
   });
 
   test('同じ動画の監視を再開するとアバターが復元される', async () => {
@@ -525,11 +642,13 @@ describe('スーパーチャットとメンバーシップ', () => {
   // 種別（kind）を役割とは別の軸として扱えているかをここで固定する
   const startedSession = (sw, filters) => sw.setState({
     isMonitoring: true, chatMode: 'dom', tabId: 3, currentVideoId: 'V',
-    commentsHistory: [], processedMessageIds: new Set(), avatarsByAuthor: {},
+    processedMessageIds: new Set(), avatarsByAuthor: {},
     ...(filters ? { commentFilters: filters } : {})
   });
 
-  const kindsOf = sw => sw.monitoringState.commentsHistory.map(c => c.kind);
+  // 保存されたものの種別。kind を持たないテキストコメントは 'text' に揃えて見る
+  const kindsOf = async sw =>
+    [...(await savedComments(sw, 'V')).map(c => c.kind || 'text')];
 
   test('一般視聴者のスパチャは「一般」を切っていても残る', async () => {
     const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
@@ -545,7 +664,7 @@ describe('スーパーチャットとメンバーシップ', () => {
       { ...domComment(2), role: 'normal', kind: 'text' }
     ], senderFor(3, 'V'));
 
-    assert.deepEqual(kindsOf(sw), ['superchat']);
+    assert.deepEqual(await kindsOf(sw), ['superchat']);
   });
 
   test('種別を切ると、その発言者の役割が有効でも残らない', async () => {
@@ -564,7 +683,7 @@ describe('スーパーチャットとメンバーシップ', () => {
       { ...domComment(4), role: 'member', kind: 'gift', eventText: 'ギフト5個' }
     ], senderFor(3, 'V'));
 
-    assert.deepEqual(kindsOf(sw), ['membership', 'gift']);
+    assert.deepEqual(await kindsOf(sw), ['membership', 'gift']);
   });
 
   test('旧バージョンが保存した4項目のフィルターでも新しい種別は表示される', async () => {
@@ -580,7 +699,7 @@ describe('スーパーチャットとメンバーシップ', () => {
       { ...domComment(2), role: 'member', kind: 'membership', eventText: '新規メンバー' }
     ], senderFor(3, 'V'));
 
-    assert.deepEqual(kindsOf(sw), ['superchat', 'membership']);
+    assert.deepEqual(await kindsOf(sw), ['superchat', 'membership']);
   });
 
   test('kind を持たない旧 dom-chat.js のコメントは従来どおり役割で絞られる', async () => {
@@ -597,8 +716,9 @@ describe('スーパーチャットとメンバーシップ', () => {
       { ...domComment(2), role: 'owner' }
     ], senderFor(3, 'V'));
 
-    assert.equal(sw.monitoringState.commentsHistory.length, 1);
-    assert.equal(sw.monitoringState.commentsHistory[0].role, 'owner');
+    const saved = await savedComments(sw, 'V');
+    assert.equal(saved.length, 1);
+    assert.equal(saved[0].role, 'owner');
   });
 
   test('フィルターの欠けたキーは既定値で補い、想定外のキーは捨てる', async () => {

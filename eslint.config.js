@@ -59,12 +59,17 @@ const BROWSER_GLOBALS = {
 };
 
 // shared/ は3環境すべてから読まれる。どこでも在るものしか使えないので、
-// globals も self とログだけに絞ってある（ここで document を使うと
-// Service Worker で落ちる）
+// globals もその共通部分に絞ってある（ここで document を使うと
+// Service Worker で落ちる）。
+// indexedDB / IDBKeyRange は store.js（決定2）が、chrome は storage.local からの
+// 移行が使う。どれも Service Worker・content script・popup のどこにでも在る
 const SHARED_GLOBALS = {
   ...ES_TIMERS,
   self: 'readonly',
-  console: 'readonly'
+  console: 'readonly',
+  chrome: 'readonly',
+  indexedDB: 'readonly',
+  IDBKeyRange: 'readonly'
 };
 
 // Service Worker（MV3）が触るグローバル。window も document も無い

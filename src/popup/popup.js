@@ -91,9 +91,11 @@ const FILTER_PRESETS = {
     none:    { owner: false, moderator: false, sponsor: false, normal: false, superchat: false, membership: false }
 };
 
-// popup がメモリに載せるコメントの上限。決定4（IndexedDB からの範囲読み）に
-// 変えるのはフェーズ5で、それまでは全件をここに載せる
-const MAX_COMMENTS_IN_MEMORY = 10000;
+// popup がメモリに載せるコメントの上限。Service Worker が1回に渡してくる件数と
+// 同じ値を shared/store.js から引く（#33）。以前は popup が 10,000、SW が 2,000 と
+// 5倍食い違っていて、popup を開き直すと差分が黙って消えていた。
+// 決定4（IndexedDB からの範囲読み）に変えるのはフェーズ5
+const MAX_COMMENTS_IN_MEMORY = self.YTFStore.MAX_COMMENTS_TO_POPUP;
 
 const ROLE_LABELS = {
     owner:     ['配信者',       'role-owner'],
@@ -1265,10 +1267,14 @@ class PopupController {
     }
     
     // this.comments と this.commentIds は必ずここを通して入れ替える。
-    // 片方だけ書き換えると、重複判定が黙って効かなくなる
+    // 片方だけ書き換えると、重複判定が黙って効かなくなる。
+    // 上限もここで見る。追記経路にしか上限が無かったので、履歴の復元だけは
+    // 無制限に載っていた（#33）
     setComments(comments) {
-        this.comments = comments;
-        this.commentIds = new Set(comments.map(comment => comment.id));
+        this.comments = comments.length > MAX_COMMENTS_IN_MEMORY
+            ? comments.slice(-MAX_COMMENTS_IN_MEMORY)
+            : comments;
+        this.commentIds = new Set(this.comments.map(comment => comment.id));
     }
 
     addNewComments(newComments) {
@@ -1295,7 +1301,7 @@ class PopupController {
         if (this.comments.length > MAX_COMMENTS_IN_MEMORY) {
             // 切り詰めで落ちたぶんのIDも一緒に落とす（残っていると、
             // 一度消えたコメントが二度と入らなくなる）
-            this.setComments(this.comments.slice(-MAX_COMMENTS_IN_MEMORY));
+            this.setComments(this.comments);
             console.log('[Popup] Trimmed comments to', MAX_COMMENTS_IN_MEMORY, 'current count:', this.comments.length);
         }
         

@@ -85,6 +85,25 @@ describe('popup の重複判定', () => {
   });
 });
 
+describe('popup が持つ件数の上限', () => {
+  test('履歴の復元でも上限が効き、IDの集合とずれない', () => {
+    // 上限は追記経路（addNewComments）にしか無く、復元経路は代入するだけだった。
+    // しかも popup 10,000 / SW 2,000 と食い違っていたので、popup を開き直すと
+    // その差が黙って消えていた（#33）。いまはどちらも shared/store.js の値を見る
+    const popup = loadPopup();
+    const limit = popup.YTFStore.MAX_COMMENTS_TO_POPUP;
+    const c = new popup.__popup.PopupController();
+
+    c.setComments(Array.from({ length: limit + 10 },
+      (_, i) => domMessage(`dom2_aaaaaaaabbbbbbbb_${i}`)));
+
+    assert.equal(c.comments.length, limit);
+    assert.equal(c.commentIds.size, limit, 'IDの集合が本体とずれている');
+    // 残るのは新しい方
+    assert.equal(c.comments[0].id, `dom2_aaaaaaaabbbbbbbb_10`);
+  });
+});
+
 describe('popup の取り込み口', () => {
   test('APIモードとDOMモードのコメントが同じ形になる', () => {
     const c = controller();

@@ -12,6 +12,8 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
+const { createIndexedDBMock } = require('./indexeddb-mock');
+
 const SW_PATH = path.join(__dirname, '..', '..', 'src', 'background', 'service-worker.js');
 
 /**
@@ -23,13 +25,15 @@ const SW_PATH = path.join(__dirname, '..', '..', 'src', 'background', 'service-w
  * @param {object[]}[options.queryTabs]      chrome.tabs.query() が返すタブ一覧
  * @param {Function}[options.onTabMessage]   tabs.sendMessage の応答を作る。
  *                                           throw すると「応答なし」を再現できる
+ * @param {number}  [options.idbQuotaBytes]  IndexedDB の容量上限（超えると put が失敗）
  */
 function createChromeMock({
   quotaBytes = Infinity,
   tabs = {},
   contentScripts = [],
   queryTabs = [],
-  onTabMessage = () => undefined
+  onTabMessage = () => undefined,
+  idbQuotaBytes = Infinity
 } = {}) {
   const store = {};
   const calls = { badge: [], executeScript: [], tabMessages: [], runtimeMessages: [] };
@@ -95,7 +99,14 @@ function createChromeMock({
     }
   };
 
-  return { chrome, store, calls };
+  // コメント履歴の保存先（shared/store.js が開く IndexedDB）。
+  // store という名前は storage.local のモックが先に使っているので idb と呼ぶ。
+  // chrome に提げておくのは、loadServiceWorker(chrome) だけを呼ぶ既存のテストでも
+  // 同じ IndexedDB が使われるようにするため
+  const idb = createIndexedDBMock({ quotaBytes: idbQuotaBytes });
+  chrome.__idb = idb;
+
+  return { chrome, store, calls, idb };
 }
 
 /**
@@ -103,7 +114,7 @@ function createChromeMock({
  * monitoringState は startDomMonitoring などで丸ごと再代入されるため、
  * 常に最新を見られるよう getter 経由で露出する。
  */
-function loadServiceWorker(chrome) {
+function loadServiceWorker(chrome, idb = chrome.__idb || createIndexedDBMock()) {
   const source = fs.readFileSync(SW_PATH, 'utf8');
   const expose = `
     ;globalThis.__sw = {
@@ -114,12 +125,15 @@ function loadServiceWorker(chrome) {
       handleDomChatMessages,
       startDomMonitoring,
       stopBackgroundMonitoring,
-      saveCommentsHistory,
       getCommentsHistory,
       extractVideoIdFromUrl,
-      latestTimestampOf,
       safeStorageSet,
       commentPreview,
+      flushCommentsHistory,
+      readCommentsForPopup,
+      // 履歴の保存は shared/store.js が正。テストからも同じ口を通す（決定2）
+      store: self.YTFStore,
+      latestTimestampOf: self.YTFStore.latestTimestampOf,
       // 型と正規化は shared/comment.js が正。Service Worker のスコープからではなく
       // そちら経由で露出する（決定7で移した先を、テストからも1か所で見るため）
       normalizeCommentFilters: self.YTF.normalizeCommentFilters,
@@ -127,13 +141,14 @@ function loadServiceWorker(chrome) {
       apiCommentKind: self.YTF.apiCommentKind,
       DEFAULT_COMMENT_FILTERS: self.YTF.DEFAULT_COMMENT_FILTERS,
       YTF: self.YTF,
-      MAX_COMMENTS_PER_VIDEO,
       MAX_HISTORY_VIDEOS,
       MAX_AVATARS_PER_VIDEO
     };`;
 
   const context = vm.createContext({
     chrome, console, setTimeout, clearTimeout, Date, structuredClone, URL,
+    indexedDB: idb.indexedDB,
+    IDBKeyRange: idb.IDBKeyRange,
     fetch: async () => { throw new Error('network access is not available in tests'); }
   });
 
@@ -149,6 +164,7 @@ function loadServiceWorker(chrome) {
   };
 
   vm.runInContext(source + expose, context, { filename: SW_PATH });
+  context.__sw.idb = idb;
   return context.__sw;
 }
 
