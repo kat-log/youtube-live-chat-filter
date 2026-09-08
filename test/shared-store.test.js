@@ -172,8 +172,10 @@ describe('storage.local からの移行', () => {
     await store.migrateFromLocal();
 
     assert.deepEqual([...(await store.read('OLD')).map(c => c.id)], ['1', '2']);
-    assert.deepEqual({ ...await store.readAvatars('OLD') },
-      { ユーザー1: 'https://example.test/a.png' });
+    // 旧形式は「発言者名 -> URL」で枠を持たないので bulk として入る
+    // （その人が次に発言した時点で、primary なら枠ごと上書きされる）
+    assert.deepEqual({ ...(await store.readAvatars('OLD')).ユーザー1 },
+      { url: 'https://example.test/a.png', bucket: 'bulk' });
     assert.deepEqual(Object.keys(local), ['youtubeApiKey'], '旧キーが残っている');
 
     // 更新時刻は旧メタから引き継ぐ。ここを「いま」にすると保持の並べ替えが壊れる
