@@ -1201,6 +1201,58 @@ describe('APIモードのエラー処理', () => {
   });
 });
 
+describe('liveChatId の取得（APIキーの要否）', () => {
+  // 取得元のモードの既定は DOM。APIキーを要求してよいのは APIモードだけで、
+  // ここを取り違えると「インストールしただけでエラー」になる
+  const askLiveChatId = async chrome => {
+    const popup = chrome.__connectPopup();
+    return popup.request({ action: 'getLiveChatIdFromVideo', videoId: 'V' });
+  };
+
+  test('インストール直後（chatMode 未保存・APIキー無し）は投げない', async () => {
+    const { chrome } = createChromeMock();
+    loadServiceWorker(chrome);
+    await settle();
+
+    const errors = [];
+    const realError = console.error;
+    console.error = (...args) => errors.push(args);
+    try {
+      const response = await askLiveChatId(chrome);
+      assert.equal(response.liveChatId, null);
+      assert.equal(response.success, undefined, '失敗として返っている');
+    } finally {
+      console.error = realError;
+    }
+
+    // debugError は debugMode に関わらず出るので、投げると
+    // chrome://extensions のエラー欄にそのまま残る
+    assert.deepEqual(errors, [], 'エラーを出している');
+  });
+
+  test('DOMモードを明示していても投げない', async () => {
+    const { chrome, store } = createChromeMock();
+    store.chatMode = 'dom';
+    loadServiceWorker(chrome);
+    await settle();
+
+    const response = await askLiveChatId(chrome);
+    assert.equal(response.liveChatId, null);
+    assert.equal(response.success, undefined, '失敗として返っている');
+  });
+
+  test('APIモードで APIキーが無いときだけ投げる', async () => {
+    const { chrome, store } = createChromeMock();
+    store.chatMode = 'api';
+    loadServiceWorker(chrome);
+    await settle();
+
+    const response = await askLiveChatId(chrome);
+    assert.equal(response.success, false);
+    assert.match(response.error, /API key/);
+  });
+});
+
 describe('APIモードの pageToken', () => {
   test('保存され、Service Worker の復帰後も続きから読む', async () => {
     // 永続化していないと、復帰のたびにAPIの既定ウィンドウを取り直す（#36）
@@ -1409,7 +1461,8 @@ describe('popup とのポート（フェーズ6b）', () => {
     const { chrome } = createChromeMock();
     loadServiceWorker(chrome);
     await settle();
-    // APIキーが無いので getLiveChatIdFromVideo は必ず投げる
+    // APIモードで APIキーが無いので getLiveChatIdFromVideo は必ず投げる
+    await chrome.storage.local.set({ chatMode: 'api' });
     const popup = chrome.__connectPopup();
     const response = await popup.request({ action: 'getLiveChatIdFromVideo', videoId: 'V' });
     assert.equal(response.success, false);

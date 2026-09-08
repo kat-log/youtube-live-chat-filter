@@ -206,8 +206,7 @@ class YouTubeLiveChatMonitor {
 
     if (this.isYouTubeLivePage()) {
       debugLog('[YouTube Special Comments] YouTube watch page detected');
-      this.extractLiveChatId();
-      this.tryDomModeAutoStart();
+      this.startForCurrentPage();
       return;
     }
 
@@ -238,10 +237,30 @@ class YouTubeLiveChatMonitor {
     if (!this.isYouTubeLivePage()) return;
 
     // URL は既に新しい方に変わっている（onUpdated は遷移の後に来る）ので、
-    // 以前のように1秒待つ必要は無い。liveChatId の取得は videoId を鍵に
-    // Service Worker 経由で引くだけで、ページのDOMは見ない
-    this.extractLiveChatId();
-    this.tryDomModeAutoStart();
+    // 以前のように1秒待つ必要は無い。この先で見るのは videoId だけで、
+    // ページのDOMは見ない（APIモードの liveChatId も Service Worker 経由で引く）
+    this.startForCurrentPage();
+  }
+
+  // この画面でやることは取得元のモードで違う。**先にモードを聞いてから動く。**
+  //
+  // - APIモード: liveChatId を引いてから自動開始する（APIキーが要る）
+  // - DOMモード（既定）: liveChatId は使わない。dom-chat.js が DOM を読むので、
+  //   自動開始の要求だけを出す
+  //
+  // 以前はモードを見ずに両方を撃っていた。DOMモードでは liveChatId の取得が
+  // 必ず「APIキーが無い」で終わるだけの往復になり、しかも失敗として
+  // 2秒おきに10回まで繰り返していた（インストール直後は APIキーが未設定なので、
+  // 既定の構成で毎回そうなる）
+  async startForCurrentPage() {
+    const chatMode = await this.resolveChatMode();
+
+    if (chatMode === 'api') {
+      await this.extractLiveChatId();
+      return;
+    }
+
+    await this.tryDomModeAutoStart(chatMode);
   }
   
   isYouTubeLivePage() {
@@ -483,14 +502,28 @@ YouTubeLiveChatMonitor.prototype.extractVideoId = function() {
 };
 
 
-YouTubeLiveChatMonitor.prototype.tryDomModeAutoStart = async function() {
+// 取得元のモードの正は storage（SW の getChatMode が既定つきで返す）。
+// **既定は DOMモードで、ここで 'api' に倒さないこと** —— APIキーを要求するのは
+// APIモードだけであり、未設定の利用者を APIモード扱いにすると
+// 「APIキーが無い」というエラーだけが出る
+YouTubeLiveChatMonitor.prototype.resolveChatMode = async function() {
+  try {
+    const modeResponse = await this.sendMessageWithRetry({ action: 'getChatMode' }, 2);
+    return modeResponse?.chatMode === 'api' ? 'api' : 'dom';
+  } catch (error) {
+    debugLog('[YouTube Special Comments] Chat mode lookup failed; assuming DOM mode:',
+      error.message);
+    return 'dom';
+  }
+};
+
+
+YouTubeLiveChatMonitor.prototype.tryDomModeAutoStart = async function(knownChatMode = null) {
   if (this.isMonitoring) return;
 
   try {
-    const modeResponse = await this.sendMessageWithRetry(
-      { action: 'getChatMode' }, 2
-    );
-    if (modeResponse?.chatMode !== 'dom') return;
+    const chatMode = knownChatMode || await this.resolveChatMode();
+    if (chatMode !== 'dom') return;
 
     const autoStartResponse = await this.sendMessageWithRetry(
       { action: 'getAutoStart' }, 2

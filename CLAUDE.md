@@ -216,6 +216,14 @@ popup は SW から直接もらう）。やることは3つ。
 - SW からの要求への応答（`ping` / `startMonitoring` / `stopMonitoring` /
   `getLiveChatId` / `pageNavigated`）
 
+**watch ページで何をするかは、先にモードを聞いてから決める**（`startForCurrentPage`）。
+APIモードなら `extractLiveChatId`（liveChatId を引いて `tryAutoStart`）、
+DOMモードなら `tryDomModeAutoStart` だけ。**DOMモードで liveChatId を引きに行かないこと** ——
+APIキーの要らない既定の構成で「API key not found」だけが返る往復になり、
+しかも失敗として2秒おきに10回まで繰り返す。**モードの既定は `dom`**
+（`resolveChatMode` と SW の `getChatMode`、`getLiveChatIdFromVideo` は同じ既定を使う。
+未保存を `api` 扱いにすると、インストール直後にエラーが出る）。
+
 **SPA遷移の検知は Service Worker が持つ**（`chrome.tabs.onUpdated`。#24）。
 以前はここが `document.body` 全体を `MutationObserver` で購読して
 `location.href` の変化を見ており、拡張機能がやっていることの中で最も高価な処理だった。

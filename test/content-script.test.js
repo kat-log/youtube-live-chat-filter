@@ -21,8 +21,27 @@ test('起動時の段取り', async t => {
     const h = await boot(loadContentScript());
     const actions = h.actions();
 
-    assert.ok(actions.indexOf('ping') < actions.indexOf('getLiveChatIdFromVideo'),
-      'ping より先に liveChatId を引きに行っている');
+    assert.ok(actions.indexOf('ping') < actions.indexOf('getChatMode'),
+      'ping より先に初期化の要求を出している');
+  });
+
+  await t.test('DOMモードでは liveChatId を引きに行かない', async () => {
+    // 既定の構成（DOMモード・APIキー未設定）でこれを引くと、SW が
+    // 「API key not found」を投げてエラー欄に残る。DOMモードでは
+    // liveChatId そのものを使わないので、そもそも聞かない
+    const h = await boot(loadContentScript());
+
+    assert.equal(h.actions().includes('getLiveChatIdFromVideo'), false);
+    assert.equal(h.actions().includes('getApiKey'), false);
+  });
+
+  await t.test('APIモードでは liveChatId を引きに行く', async () => {
+    const h = await boot(loadContentScript({
+      onRuntimeMessage: m => (m.action === 'getChatMode' ? { chatMode: 'api' } : undefined)
+    }));
+
+    assert.ok(h.sent().some(m => m.action === 'getLiveChatIdFromVideo' && m.videoId === 'VIDEO123'),
+      'APIモードなのに liveChatId を引きに行っていない');
   });
 
   await t.test('メッセージリスナーは ping を待たずに登録する', () => {
@@ -110,8 +129,11 @@ test('video ID の取り出し', async t => {
 test('メッセージの受け口', async t => {
   await t.test('ping には現在の状態を添えて答える', async () => {
     const h = await boot(loadContentScript({
-      onRuntimeMessage: m =>
-        (m.action === 'getLiveChatIdFromVideo' ? { liveChatId: 'CHAT1' } : undefined)
+      onRuntimeMessage: m => {
+        if (m.action === 'getChatMode') return { chatMode: 'api' };
+        if (m.action === 'getLiveChatIdFromVideo') return { liveChatId: 'CHAT1' };
+        return undefined;
+      }
     }));
 
     const { response } = h.deliver({ action: 'ping' });
@@ -185,10 +207,23 @@ test('SPA遷移', async t => {
     await h.advance(5000);
 
     const after = h.sent().slice(before);
-    assert.ok(after.some(m => m.action === 'getLiveChatIdFromVideo' && m.videoId === 'NEXT456'),
-      '新しい動画の liveChatId を引きに行っていない');
     assert.ok(after.some(m => m.action === 'startDomMonitoring' && m.videoId === 'NEXT456'),
       '新しい動画で自動開始していない');
+  });
+
+  await t.test('APIモードの遷移では、新しい動画の liveChatId を引き直す', async () => {
+    const h = await boot(loadContentScript({
+      onRuntimeMessage: m => (m.action === 'getChatMode' ? { chatMode: 'api' } : undefined)
+    }));
+    const before = h.sent().length;
+
+    h.navigateTo('https://www.youtube.com/watch?v=NEXT456');
+    h.deliver({ action: 'pageNavigated', videoId: 'NEXT456' });
+    await h.advance(5000);
+
+    assert.ok(h.sent().slice(before)
+      .some(m => m.action === 'getLiveChatIdFromVideo' && m.videoId === 'NEXT456'),
+    '新しい動画の liveChatId を引きに行っていない');
   });
 
   await t.test('遷移の通知にも応答する（送信側を待たせない）', async () => {
