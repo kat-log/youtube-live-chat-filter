@@ -39,6 +39,16 @@ function trimOldest(collection, max) {
   }
 }
 
+// === YouTube の DOM に依存する文字列は、ぜんぶこのブロック ==================
+//
+// 以前は19個が本文のあちこちに直書きされていた。YouTube 側が DOM を変えると
+// このファイルは無言で0件になるので（#2）、直す場所を探すところから始まらないよう
+// 1か所に集めてある。**ここ以外に生の文字列を書かないこと。**
+//
+// テストのハーネス（test/helpers/dom-chat-harness.js）は「知らないセレクタを
+// 引かれたら例外」にしてある。セレクタを足したらハーネスの許可リストにも足すこと
+// （黙って null を返すモックだと、綴りの取り違えがテストを素通りする）。
+
 // 監視対象のチャット行。スーパーチャットやメンバーシップのイベントは
 // テキストコメントとは別のタグで流れてくるため、タグ名から種別を引く
 const KIND_BY_TAG = {
@@ -49,19 +59,108 @@ const KIND_BY_TAG = {
   'yt-live-chat-sponsorships-gift-purchase-announcement-renderer': 'gift'
 };
 
+const SELECTORS = {
+  // チャット行の入れ物と、それを抱えている祖先。
+  // 祖先は #items が差し替わったことに気付くために監視する（#2）
+  itemList: 'yt-live-chat-item-list-renderer #items',
+  itemListHost: 'yt-live-chat-item-list-renderer',
+
+  // 1行の中身
+  authorName: '#author-name',
+  timestamp: '#timestamp',
+  message: '#message',
+  // メンバーシップ: 新規加入は #header-subtext だけ、継続は #header-primary-text に入る
+  membershipPrimaryText: '#header-primary-text',
+  membershipSubtext: '#header-subtext',
+  // ギフト購入の告知文
+  giftPrimaryText: '#primary-text',
+  stickerImage: '#sticker img',
+  purchaseAmount: '#purchase-amount',
+  purchaseAmountChip: '#purchase-amount-chip',
+  authorPhoto: '#author-photo img',
+  // 有料メッセージの行はアバターの器が違う
+  authorPhotoFallback: 'img#img',
+  moderatorBadge: 'yt-live-chat-author-badge-renderer[type="moderator"]',
+  memberBadge: 'yt-live-chat-author-badge-renderer[type="member"]'
+};
+
+// 行に付く属性も YouTube 由来。roleOf が読む
+const AUTHOR_TYPE_ATTR = 'author-type';
+
 function kindOf(node) {
   return KIND_BY_TAG[node.tagName?.toLowerCase()] || null;
+}
+
+// === ヘルス状態（このファイルが読めているかどうか）==========================
+//
+// 無言で止まる形は2つある。どちらも症状は「コメントが来ない」だけで、
+// 静かな配信と見分けが付かない（根本原因F: 壊れても見えない）。
+//
+//  - #items を見失って observer が外れる（#2）
+//  - セレクタが変わって、行は流れているのに1件も取り込めない ← いちばん危ない
+//
+// 状態が変わるたびに Service Worker へ片道で送り、popup まで出す。
+const HEALTH = {
+  SEARCHING: 'searching',    // #items を探している最中
+  NO_CHAT: 'no-chat',        // 見つからないまま諦めた
+  WATCHING: 'watching',      // 監視中。まだ1件も流れていない
+  READING: 'reading',        // 監視中。取り込めている
+  UNREADABLE: 'unreadable'   // 監視中だが、行はあるのに読み取れない
+};
+
+// 「行はあるのに読めない」が何件続いたら壊れたとみなすか。
+// 本文の器を持たない行は普通にあるので、1〜2件では騒がない
+const UNREADABLE_STREAK = 5;
+// 全件スキャンで「既知のタグの行が1つも無い」と言い切るのに要る行数。
+// お知らせ行だけが入っている状態と区別するため、少数では騒がない
+const UNKNOWN_ROW_LIMIT = 5;
+
+const health = {
+  state: HEALTH.SEARCHING,
+  rows: 0,          // 取り込みを試した行の数（既知のタグを持つもの）
+  extracted: 0,     // うち取り込めた数
+  unreadable: 0,    // うち読み取れなかった数
+  streak: 0,        // 連続で読み取れていない数
+  reattached: 0,    // observer を張り直した回数（#2 が起きた回数）
+  changedAt: Date.now()
+};
+
+// 状態が変わったときだけ送る。行ごとに送ると、その通信自体が流量になる
+function setHealthState(state) {
+  if (health.state === state) return;
+  health.state = state;
+  health.changedAt = Date.now();
+  sendToBackground({ action: 'domChatHealth', health: { ...health } });
+}
+
+function noteExtracted() {
+  health.extracted++;
+  health.streak = 0;
+  setHealthState(HEALTH.READING);
+}
+
+function noteUnreadable() {
+  health.unreadable++;
+  health.streak++;
+  if (health.streak >= UNREADABLE_STREAK) setHealthState(HEALTH.UNREADABLE);
 }
 
 // 監視開始前のコメントも拾えるよう、既にDOMにある分を全件送り直す。
 // 送信済みかどうかは background 側がIDで弾くため、force でも重複はしない。
 function doInitialSweep(force = false) {
-  const itemList = document.querySelector('yt-live-chat-item-list-renderer #items');
+  const itemList = document.querySelector(SELECTORS.itemList);
   if (!itemList) return;
   const existingMessages = [];
+  // 「行はあるのに、既知のタグが1つも無い」= 行のタグ名ごと変わった疑い。
+  // 新着（handleMutations）からは判定できない —— そこへ来る未知のタグは
+  // お知らせ行など普通に混ざるため、全件を数えられるここでだけ見る
+  let totalRows = 0;
+  let knownRows = 0;
   for (const node of itemList.children) {
+    totalRows++;
     const kind = kindOf(node);
     if (!kind) continue;
+    knownRows++;
 
     // 過去分は投稿時刻が「今」ではないので、DOMのタイムスタンプがあればそれを使う。
     // ステッカーはチャットを開いた直後だと画像がまだ読み込まれていないことがあるので、
@@ -74,6 +173,7 @@ function doInitialSweep(force = false) {
     const msg = takeMessage(node, kind, { useDomTimestamp: true, force });
     if (msg) existingMessages.push(msg);
   }
+  if (knownRows === 0 && totalRows >= UNKNOWN_ROW_LIMIT) setHealthState(HEALTH.UNREADABLE);
   if (existingMessages.length > 0) sendMessages(existingMessages);
 }
 
@@ -83,10 +183,10 @@ function doInitialSweep(force = false) {
 const ATTACH_MAX_RETRIES = 60; // 500ms x 60 = 30秒
 
 function attachObserver(retriesLeft = ATTACH_MAX_RETRIES) {
-  const itemList = document.querySelector('yt-live-chat-item-list-renderer #items');
-  if (!itemList) {
+  if (!ensureObserving()) {
     if (retriesLeft <= 0) {
       console.warn('[DomChat] チャットの #items が見つからないため監視を諦めた:', location.href);
+      setHealthState(HEALTH.NO_CHAT);
       return;
     }
     setTimeout(() => attachObserver(retriesLeft - 1), 500);
@@ -94,11 +194,107 @@ function attachObserver(retriesLeft = ATTACH_MAX_RETRIES) {
   }
 
   doInitialSweep();
-  new MutationObserver(handleMutations).observe(itemList, { childList: true });
 }
 
-chrome.runtime.onMessage.addListener((request) => {
-  if (request.action === 'requestInitialSweep') doInitialSweep(request.force === true);
+// === 監視の張り直し（#2）==================================================
+//
+// 一度張った observer は、YouTube が #items を作り直すと外れたままになる。
+// 「上位のチャット ↔ チャット」の切り替えやチャットのリロードで実際に起き、
+// 症状は「コメントが来なくなる」だけで静かな配信と見分けが付かない。
+//
+// 直し方は2つあり得た。
+//
+//   (a) 番人（Service Worker の chrome.alarms、3分の沈黙）から注入し直す
+//   (b) このファイル自身が気付いて張り直す
+//
+// **(a) だけでは直らない。** 再注入は window.__domChatInitialized のガードで
+// 何もせずに終わるので、外れた observer は外れたまま残る。効くのは一緒に来る
+// requestInitialSweep の全件スキャンだけで、3分ごとの取りこぼし回収にしかならない。
+//
+// なので本体は (b)。#items を抱えている祖先を監視し、差し替えられたら張り直す。
+// 番人から来る requestInitialSweep でも張り直しを確かめて、祖先ごと差し替えられた
+// 場合の受け皿にしてある（3分後に効く保険で、両方入れても毎分の張り直しにはならない
+// —— ensureObserving は「差し替わっていなければ何もしない」ため）。
+let itemsObserver = null;
+let observedItemList = null;
+let hostObserver = null;
+let observedHost = null;
+
+/** いま監視している #items がまだDOMに繋がっているか */
+function isObservedListAttached() {
+  return !!observedItemList && document.contains(observedItemList);
+}
+
+/**
+ * #items を観測し直す。差し替わっていなければ何もしない。
+ * @returns {boolean} 観測できているか（#items が見つからなければ false）
+ */
+function ensureObserving() {
+  const itemList = document.querySelector(SELECTORS.itemList);
+
+  if (!itemList) {
+    // 見失った。次に見つかったときに「差し替わった」と分かるよう控えを捨てる
+    if (itemsObserver) {
+      itemsObserver.disconnect();
+      itemsObserver = null;
+      observedItemList = null;
+      setHealthState(HEALTH.SEARCHING);
+    }
+    return false;
+  }
+
+  if (itemList !== observedItemList) {
+    // 古い方を必ず切る。切らずに張り足すと、差し替えのたびに購読が増える
+    if (itemsObserver) {
+      itemsObserver.disconnect();
+      health.reattached++;
+    }
+    itemsObserver = new MutationObserver(handleMutations);
+    itemsObserver.observe(itemList, { childList: true });
+    observedItemList = itemList;
+    // 張り直したら読み取りの連続失敗は数え直す（別のDOMになったため）
+    health.streak = 0;
+    setHealthState(health.extracted > 0 ? HEALTH.READING : HEALTH.WATCHING);
+  }
+
+  observeHost();
+  return true;
+}
+
+/**
+ * #items の差し替えに気付くための、祖先側の監視。
+ *
+ * #items は祖先の直下とは限らない（間にスクローラが挟まる）ので subtree が要る。
+ * そのぶん行が増えるたびに呼ばれるが、コールバックは
+ * 「いま見ている #items がまだ繋がっているか」を確かめるだけにしてある
+ */
+function observeHost() {
+  const host = document.querySelector(SELECTORS.itemListHost);
+  if (!host || host === observedHost) return;
+  hostObserver?.disconnect();
+  hostObserver = new MutationObserver(handleHostMutations);
+  hostObserver.observe(host, { childList: true, subtree: true });
+  observedHost = host;
+}
+
+function handleHostMutations() {
+  if (isObservedListAttached()) return;
+  // 張り直した直後は、外れていた間に流れた行が入っている。
+  // 既出は seenIds で落ちるので、増えるのは取りこぼしぶんだけ
+  if (ensureObserving()) doInitialSweep();
+}
+
+chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
+  if (request.action === 'requestInitialSweep') {
+    // 番人からの再スキャン。祖先ごと差し替えられていた場合はここで張り直る
+    ensureObserving();
+    doInitialSweep(request.force === true);
+    return;
+  }
+  // Service Worker が終了して控えを失ったときの問い合わせ。正はこちらが持っている
+  if (request.action === 'getDomChatHealth') {
+    sendResponse({ health: { ...health } });
+  }
 });
 
 function handleMutations(mutations) {
@@ -125,8 +321,16 @@ function handleMutations(mutations) {
 
 // 1件取り込む。既に送った行なら null を返す（force のときは送り直す）
 function takeMessage(node, kind, { receivedAt = null, useDomTimestamp = false, force = false } = {}) {
+  // 取り込めたか読み取れなかったかは、この1か所で数える（重複判定より前）。
+  // 既出で落ちたぶんまで「読み取れなかった」に混ぜると、再スキャンのたびに
+  // セレクタが壊れたことになってしまう
+  health.rows++;
   const msg = extractMessage(node, kind, useDomTimestamp, receivedAt);
-  if (!msg) return null;
+  if (!msg) {
+    noteUnreadable();
+    return null;
+  }
+  noteExtracted();
   if (!force && seenIds.has(msg.id)) return null;
   seenIds.add(msg.id);
   trimOldest(seenIds, MAX_SEEN_IDS);
@@ -149,7 +353,7 @@ function waitForStickerImage(node, options, remaining = STICKER_IMAGE_MAX_POLLS)
 }
 
 function extractMessage(el, kind, useDomTimestamp = false, receivedAt = null) {
-  const displayName = textOf(el.querySelector('#author-name'));
+  const displayName = textOf(el.querySelector(SELECTORS.authorName));
   if (!displayName) return null;
 
   // 本文の在り処は種別ごとに違う。読めない形なら取り込まない
@@ -159,7 +363,7 @@ function extractMessage(el, kind, useDomTimestamp = false, receivedAt = null) {
   const avatarUrl = extractAvatarUrl(el);
   const role = roleOf(el, kind);
 
-  const timestampText = textOf(el.querySelector('#timestamp'));
+  const timestampText = textOf(el.querySelector(SELECTORS.timestamp));
   const { id, legacyId } = messageIdFor(el, kind, displayName, detail, timestampText);
 
   // 新着は受信時刻がそのまま投稿時刻。過去分だけDOMの時刻表示（分単位）で補う
@@ -195,7 +399,7 @@ function extractMessage(el, kind, useDomTimestamp = false, receivedAt = null) {
 
 // 本文・金額・イベント文言の取り出し
 function extractDetail(el, kind) {
-  const messageEl = el.querySelector('#message');
+  const messageEl = el.querySelector(SELECTORS.message);
   const message = extractText(messageEl);
 
   if (kind === 'text') {
@@ -223,15 +427,15 @@ function extractDetail(el, kind) {
   if (kind === 'membership') {
     // 新規加入は #header-subtext だけ、継続（マイルストーン）は #header-primary-text に
     // 「◯か月連続」が入り、本人のコメントが #message に付くことがある
-    const primary = textOf(el.querySelector('#header-primary-text'));
-    const subtext = textOf(el.querySelector('#header-subtext'));
+    const primary = textOf(el.querySelector(SELECTORS.membershipPrimaryText));
+    const subtext = textOf(el.querySelector(SELECTORS.membershipSubtext));
     const eventText = [primary, subtext].filter(Boolean).join(' · ');
     if (!eventText && !message) return null;
     return { message, amountText: null, eventText };
   }
 
   // gift:「◯◯さんがメンバーシップギフトを贈りました」の一文が本体
-  const eventText = textOf(el.querySelector('#primary-text'));
+  const eventText = textOf(el.querySelector(SELECTORS.giftPrimaryText));
   if (!eventText) return null;
   return { message: '', amountText: null, eventText };
 }
@@ -239,7 +443,7 @@ function extractDetail(el, kind) {
 // ステッカー画像は yt-img-shadow の中の img。行がDOMに入った直後は
 // この img ごと存在しないので、読む前に生えているかを確かめる
 function stickerImgOf(el) {
-  return el.querySelector('#sticker img');
+  return el.querySelector(SELECTORS.stickerImage);
 }
 
 function isStickerImageReady(el) {
@@ -269,21 +473,21 @@ function extractStickerUrl(img) {
 
 // 「¥500」「$5.00」などの金額表記。DOM変更で別物を拾ったときのために長さで足切りする
 function extractAmount(el) {
-  const amount = textOf(el.querySelector('#purchase-amount') ||
-                        el.querySelector('#purchase-amount-chip'));
+  const amount = textOf(el.querySelector(SELECTORS.purchaseAmount) ||
+                        el.querySelector(SELECTORS.purchaseAmountChip));
   return amount && amount.length <= 24 ? amount : null;
 }
 
 // 発言者の役割。有料メッセージやメンバーイベントの行には author-type が
 // 付かないことがあるので、バッジと種別からも補う
 function roleOf(el, kind) {
-  const authorType = el.getAttribute('author-type') || '';
+  const authorType = el.getAttribute(AUTHOR_TYPE_ATTR) || '';
   if (authorType === 'owner') return 'owner';
   if (authorType === 'moderator') return 'moderator';
   if (authorType === 'member') return 'member';
 
-  if (el.querySelector('yt-live-chat-author-badge-renderer[type="moderator"]')) return 'moderator';
-  if (el.querySelector('yt-live-chat-author-badge-renderer[type="member"]')) return 'member';
+  if (el.querySelector(SELECTORS.moderatorBadge)) return 'moderator';
+  if (el.querySelector(SELECTORS.memberBadge)) return 'member';
   // 加入・ギフトのイベントは発言者が必ずメンバー
   if (kind === 'membership' || kind === 'gift') return 'member';
   return 'normal';
@@ -343,14 +547,27 @@ function parseTimestampText(text) {
   return date;
 }
 
-// アバター画像のURL。取れなくても null を返すだけでコメント取得は止めない
+// アバター画像のURL。取れなくても null を返すだけでコメント取得は止めない。
+//
+// src はプロトコル相対（//lh3...）で入っていることがあるので、絶対URLに解決済みの
+// .src から取る（getAttribute だと属性値そのままなので https チェックで弾かれ、
+// アバターだけが黙って落ちる）。ステッカー側は同じ罠を先に回避していたのに、
+// こちらに反映されていなかった（#28）
 function extractAvatarUrl(el) {
-  const img = el.querySelector('#author-photo img') || el.querySelector('img#img');
-  const src = img?.getAttribute('src') || '';
+  const img = el.querySelector(SELECTORS.authorPhoto) ||
+              el.querySelector(SELECTORS.authorPhotoFallback);
+  if (!img?.src) return null;
   // YouTubeのDOM由来＝外部入力。javascript: や data: を弾く
-  if (!src.startsWith('https://')) return null;
+  // （配信ホストの確認は popup 側の AVATAR_IMAGE_HOSTS が担当する。#26）
+  let url;
+  try {
+    url = new URL(img.src);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:') return null;
   // 末尾の "=s32-..." はサイズ指定。高DPI向けに2倍で要求する
-  return src.replace(/=s\d+-/, '=s64-');
+  return url.href.replace(/=s\d+-/, '=s64-');
 }
 
 function textOf(el) {
@@ -368,16 +585,21 @@ function extractText(el) {
   return text.trim();
 }
 
-function sendMessages(messages, retries = 3) {
+// Service Worker への片道の送信。コメントもヘルスもここを通る
+function sendToBackground(payload, retries = 3) {
   try {
-    chrome.runtime.sendMessage({ action: 'domChatMessages', messages }, () => {
+    chrome.runtime.sendMessage(payload, () => {
       if (chrome.runtime.lastError && retries > 0) {
-        setTimeout(() => sendMessages(messages, retries - 1), 1000);
+        setTimeout(() => sendToBackground(payload, retries - 1), 1000);
       }
     });
   } catch {
     // Extension context invalidated（拡張機能再読み込み直後）は無視
   }
+}
+
+function sendMessages(messages) {
+  sendToBackground({ action: 'domChatMessages', messages });
 }
 
 attachObserver();

@@ -95,7 +95,13 @@ ESLint と CI はフェーズ1で導入済み。devDependency は `eslint` 1つ�
   をモックして `dom-chat.js` を読み込む。`querySelector` は
   **`dom-chat.js` が実際に使うセレクタしか受け付けず、知らないものは例外**にする
   （黙って null を返すと、セレクタ名の取り違えがテストを素通りするため）。
-  `MutationObserver` は `observe` / `disconnect` を記録する
+  `MutationObserver` は `observe` / `disconnect` を記録し、
+  `emit()` で `#items` の監視へ、`emitHost()` で祖先の監視へミューテーションを流す。
+  `#items` の差し替え（フェーズ7）は `replaceItemList(rows)` で作り、
+  `document.contains()` の答えもそれに追随する。
+  Service Worker からの要求は `deliver(request)`、
+  ヘルスの報告は `healthState()` / `healthReports()` で見る
+  （`sendCount()` と `messages()` は**コメントの送信だけ**を数える）
 - `test/helpers/popup-harness.js` — chrome API と偽 document をモックして
   `popup.js` を読み込む。偽 document が引ける id の正は `popup.html` の実物で、
   そこに無い id を引かれたら例外にする。
@@ -161,6 +167,50 @@ ESLint の `sourceType` を `module` にするのも同じ理由で不可。
 
 - **DOMモード（既定・APIキー不要）**: `dom-chat.js` がライブチャットのDOMを直接監視する
 - **APIモード**: YouTube Data API v3 の `liveChatMessages` をポーリングする
+
+### DOMモードの読み取り（`content/dom-chat.js`）
+
+**YouTube の DOM に依存する文字列は `SELECTORS` レジストリに集約している**
+（フェーズ7）。セレクタ14個・行のタグ名5個（`KIND_BY_TAG`）・属性名で計19個が
+1か所にあるので、YouTube 側の変更で直す場所は1つ。
+**ここ以外に生の文字列を書かないこと。** ハーネスは「知らないセレクタを
+引かれたら例外」なので、足したら `test/helpers/dom-chat-harness.js` の
+許可リストにも足す。
+
+**`MutationObserver` は張り直せる。** `#items` を抱えている祖先を
+`subtree` 付きで監視し、`#items` が差し替わったら（`document.contains()` で
+判定）古い監視を切って張り直し、外れていた間に流れた行を全件スキャンで拾う。
+YouTube の「上位のチャット ↔ チャット」切り替えで実際に起きる（#2）。
+
+**番人（`chrome.alarms`）からの再注入では、この不具合は直らない。**
+`executeScript` は二重注入ガード（`window.__domChatInitialized`）に弾かれて
+1行も走らないので、外れた observer はそのまま残る。番人が効かせているのは
+一緒に送る `requestInitialSweep` の側だけで、そこでも張り直しを確かめている
+（祖先ごと差し替えられた場合の3分後に効く保険）。
+
+**ヘルス状態を持ち、popup まで出す。** DOMモードの壊れ方は症状がつねに
+「コメントが来ない」だけで、静かな配信と見分けが付かない（根本原因F）。
+
+| 状態 | 意味 | popup の表示 |
+| --- | --- | --- |
+| `searching` | `#items` を探している最中 | 橙・「チャットを探しています」 |
+| `no-chat` | 30秒探して見つからなかった | 赤・「チャットが見つかりません」 |
+| `watching` | 監視中。まだ1件も流れていない | 緑の点だけ |
+| `reading` | 監視中。取り込めている | 緑の点だけ |
+| `unreadable` | 行はあるのに読み取れない（セレクタ破損の疑い） | 赤・「チャットを読み取れません」 |
+
+- **正は dom-chat.js が持つ。** Service Worker のメモリに置くと約30秒で消え、
+  popup を開いた時点ではたいてい失われている。SW は受けた報告を控えるだけで、
+  popup に聞かれたら（`getDomChatHealth`）**タブに聞き直す**
+- 送るのは**状態が変わったときだけ**（片道の通知）。1件ごとに送ると通信が流量になる
+- `unreadable` の判定は**5件連続で読み取れなかったとき**。単発の失敗は普通に起きる。
+  行のタグ名ごと変わった場合は「失敗」としてすら数えられないので、
+  **全件スキャンでだけ**「既知のタグが1つも無く、行が5つ以上ある」を見る
+- popup の表示は DOMモードで監視中のときだけ。読めているうちは点だけを出す
+  （トップバーの幅を平常時に取らないため。文言は `title` から読める）
+- **SW からタブへの `tabs.sendMessage` は必ず打ち切る。** `content-script.js` の
+  `onMessage` は扱わない `action` でも `return true` を返す（#30）ので、
+  応答が永久に返らないことがある
 
 ### フィルターの2軸
 
@@ -261,11 +311,17 @@ ping 8回の起床待ち（`waitForServiceWorker`）とタイムアウト付き�
   （永続化できないうえ、popup が開いているかはセッションの持ち物ではない。
   `PERSISTED_SESSION_KEYS` を増やさないこと）
 - popup へ片道で流すのは `notifyPopup()` だけ。新着・`showDetailedError`・
-  `monitoringAutoStopped` の3つが通る。開いていなければ何も起きない
+  `monitoringAutoStopped`・`domChatHealth` の4つが通る。開いていなければ何も起きない
 - **content script との通信は `tabs.sendMessage` / `onMessage` のまま。**
   content script は `connect` の相手ではない。要求の処理は
   `handleRequest(request, sender)` 1つに畳んであり、ポートと `onMessage` は
   その応答を配るだけ（同じ `action` の処理を2か所に書かないため）
+- **新着を content script 経由で popup へ送り返さない**（フェーズ7で削除）。
+  popup は同じバッチを SW から直接もらっているので、リレーすると
+  ポートで保証した「送った順に1回ずつ」を崩す echo になるだけだった
+- **content script への `tabs.sendMessage` を `await` するときは打ち切りを付ける。**
+  `content-script.js` の `onMessage` は扱わない `action` でも `return true` を
+  返す（#30）ので、応答が永久に返らないことがある
 - ポートに「応答」という仕組みは無いので、**要求ごとに `requestId` を振って**
   `{ requestId, payload }` で送り、応答に同じ ID を載せて返す。
   片道の通知は `requestId` を持たない。**知らない `action` にも必ず応答を返すこと**
@@ -291,6 +347,12 @@ APIモードの quota リトライ（60秒待ち）はこの上限を超える�
 | --- | --- |
 | API | 「動いているべきなのにタイマーが無い」なら再開する |
 | DOM | 3分コメントが来ていないなら dom-chat.js を注入し直して再スキャンさせる |
+
+**番人の「再注入」で直せるのは、注入時に走るものだけ。** content script は
+二重注入ガードで包まれているので、`executeScript` をもう一度撃っても中身は
+1行も走らない。効くのは一緒に送る `requestInitialSweep`（メッセージを受けて
+動く処理）の側だけで、すでに走っているスクリプトの壊れた状態
+（外れた `MutationObserver` など）は content script 自身が直す。
 
 **番人が見る値は、Service Worker の終了に耐える場所に置くこと。**
 DOMモードの「最後にコメントが来た時刻」を IndexedDB の `meta.updatedAt` から
@@ -397,7 +459,7 @@ Service Worker が渡すのは `readCommentsForPopup(videoId, 'primary')` の結
 | 5 | popup の読み方と描画 | **完了**（2026-09-07） |
 | 6a | ライフサイクル: 状態の一本化（単一状態・epoch・alarms・アバターの保持枠） | **完了**（2026-09-08） |
 | 6b | ライフサイクル: ポート化（`chrome.runtime.connect`・retry の撤去） | **完了**（2026-09-08） |
-| 7 | dom-chat 耐性 | 未着手 |
+| 7 | dom-chat 耐性 | **完了**（2026-09-08） |
 | 8 | UI の穴（キーボード・テーマ） | 未着手 |
 | 9 | 掃除（権限・docs） | 未着手 |
 

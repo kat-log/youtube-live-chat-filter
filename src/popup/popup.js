@@ -131,6 +131,36 @@ const KIND_ICONS = {
 const AVATAR_IMAGE_HOSTS = ['.ggpht.com', '.googleusercontent.com'];
 const STICKER_IMAGE_HOSTS = ['lh3.googleusercontent.com', 'yt3.ggpht.com'];
 
+// DOMモードで「チャットを読み取れているか」（フェーズ7）。
+// dom-chat.js が持っている状態の語と1対1で対応させる。
+//
+// 読めているときは点だけを出し、読めていないときだけ文言も出す。
+// いちばん危ないのは「セレクタが変わって無言で0件になる」形で、
+// これまでは静かな配信と見分ける手段が利用者側に無かった（根本原因F）
+const CHAT_HEALTH_VIEW = {
+    watching: {
+        level: 'ok', text: '',
+        title: 'ライブチャットを監視しています（まだコメントが流れていません）'
+    },
+    reading: {
+        level: 'ok', text: '',
+        title: 'ライブチャットを読み取れています'
+    },
+    searching: {
+        level: 'warn', text: 'チャットを探しています',
+        title: 'ライブチャットの一覧をまだ見つけられていません'
+    },
+    'no-chat': {
+        level: 'error', text: 'チャットが見つかりません',
+        title: 'ライブチャットの一覧が見つかりませんでした。ページを再読み込みしてください'
+    },
+    unreadable: {
+        level: 'error', text: 'チャットを読み取れません',
+        title: 'チャットの行はありますが、内容を読み取れていません。' +
+               'YouTube側のDOM変更で拡張機能が対応できていない可能性があります'
+    }
+};
+
 class PopupController {
     constructor() {
         this.isMonitoring = false;
@@ -185,6 +215,9 @@ class PopupController {
         debugLog('[YouTube Special Comments] Popup controller starting...');
         this.initializeElements();
         this.attachEventListeners();
+        // チャットの読み取り状態は、DOMモードで監視しているときだけ出す。
+        // 初期状態を markup 任せにせず、ここで明示的に消しておく
+        this.updateChatHealth(null);
 
         // Service Worker へのポートは、他の何よりも先に張る（フェーズ6b）。
         // 繋がった時点から新着が届くので、以前あった「ping を8回投げて
@@ -247,7 +280,11 @@ class PopupController {
         } finally {
             this.hideInitializationStatus();
             this.initializationComplete = true;
-            
+
+            // チャットを読み取れているか（フェーズ7）。以後の変化は通知で届く。
+            // 待たないのは、ここで止まると初期化の完了そのものが遅れるため
+            this.refreshChatHealth();
+
             // 最終診断情報をログ出力
             this.logInitializationSummary();
         }
@@ -385,6 +422,8 @@ class PopupController {
             // formatComment がアバターを引けるよう、コメントより先に取り込む
             Object.assign(this.avatarsByAuthor, request.avatars || {});
             this.addNewComments(request.comments);
+        } else if (request.action === 'domChatHealth') {
+            this.updateChatHealth(request.health);
         } else if (request.action === 'monitoringAutoStopped') {
             this.handleAutoStop(request.reason);
         } else if (request.action === 'showDetailedError') {
@@ -446,6 +485,9 @@ class PopupController {
             Object.assign(this.avatarsByAuthor, response.avatars || {});
             this.addNewComments(response.comments);
         }
+
+        // 切れている間にチャットの読み取り状態が変わっていることもある
+        this.refreshChatHealth();
 
         // bulk を載せていたなら、そちらも取り直す（載せていないなら要らない。決定4）
         if (!this.bulkLoaded) return;
@@ -776,6 +818,10 @@ class PopupController {
             successMessage: document.getElementById('success-overlay'),
             errorOverlay: document.getElementById('error-overlay'),
             currentVideoId: document.getElementById('current-video-id'),
+
+            // チャットの読み取り状態（フェーズ7）
+            chatHealth: document.getElementById('chat-health'),
+            chatHealthText: document.getElementById('chat-health-text'),
             
             // 詳細エラー表示要素
             errorDetails: document.getElementById('error-details'),
@@ -1298,6 +1344,7 @@ class PopupController {
                     this.showError('');
                     this.hideDetailedError();
                     this.elements.fixExtensionContainer.style.display = 'none';
+                    this.refreshChatHealth();
                 } else if (!suppressErrors) {
                     this.showError('DOMモードでの取得開始に失敗しました。');
                 }
@@ -1375,6 +1422,7 @@ class PopupController {
                 this.isMonitoring = false;
                 this.updateMonitoringButtonStates();
                 this.updateStatus('停止済み');
+                this.updateChatHealth(null);
                 this.showError('');
             } else {
                 this.showError('取得を停止できませんでした');
@@ -1387,6 +1435,7 @@ class PopupController {
                 this.isMonitoring = false;
                 this.updateMonitoringButtonStates();
                 this.updateStatus('停止済み');
+                this.updateChatHealth(null);
             } else {
                 this.showError('取得の停止に失敗しました: ' + error.message);
             }
@@ -1993,6 +2042,42 @@ class PopupController {
         }
     }
 
+    /**
+     * チャットの読み取り状態を出す（フェーズ7）。
+     * health が null なら何も出さない（APIモード・停止中・状態が分からないとき）
+     */
+    updateChatHealth(health) {
+        const chip = this.elements.chatHealth;
+        const view = this.chatMode === 'dom' && health ? CHAT_HEALTH_VIEW[health.state] : null;
+
+        if (!view) {
+            chip.style.display = 'none';
+            return;
+        }
+
+        chip.style.display = '';
+        chip.className = `chat-health chat-health--${view.level}`;
+        chip.title = view.title;
+        this.elements.chatHealthText.textContent = view.text;
+    }
+
+    /**
+     * いまの読み取り状態を Service Worker に聞く。
+     * 以後の変化は片道の通知（domChatHealth）で届くので、聞くのは節目だけでよい
+     */
+    async refreshChatHealth() {
+        if (this.chatMode !== 'dom' || !this.isMonitoring) {
+            this.updateChatHealth(null);
+            return;
+        }
+        try {
+            const response = await this.requestBackground({ action: 'getDomChatHealth' });
+            this.updateChatHealth(response?.health || null);
+        } catch (error) {
+            debugLog('[Popup] Could not read chat health:', error.message);
+        }
+    }
+
     updateStatus(status) {
         this.elements.statusIndicator.textContent = status;
         
@@ -2236,6 +2321,7 @@ class PopupController {
         this.isMonitoring = false;
         this.updateMonitoringButtonStates();
         this.updateStatus('自動停止');
+        this.updateChatHealth(null);
         
         // 自動停止の通知を表示
         this.showAutoStopNotification(reason);

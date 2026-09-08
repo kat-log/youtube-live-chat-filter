@@ -185,6 +185,39 @@ body {
     50%       { box-shadow: 0 0 10px rgba(120,40,40,0.55); }
 }
 
+/* チャットの読み取り状態（フェーズ7）。
+   読めているときは点だけを出し、読めていないときだけ文言を添える。
+   トップバーは 420px の中で開始／停止ボタンと場所を分け合っているので、
+   平常時に幅を取らない形にしてある（文言はいつでも title で読める） */
+.chat-health {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+    color: var(--text-secondary);
+}
+
+.chat-health-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-muted);
+}
+
+.chat-health-text:empty {
+    display: none;
+}
+
+.chat-health--ok .chat-health-dot { background: #4caf50; }
+.chat-health--warn .chat-health-dot { background: #e0a02a; }
+.chat-health--warn { color: #e0a02a; }
+.chat-health--error .chat-health-dot { background: #e05a5a; }
+.chat-health--error { color: #e05a5a; }
+
 /* Video ID chip */
 .video-id-chip {
     font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;

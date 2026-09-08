@@ -9,7 +9,7 @@ const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  loadDomChat, stickerImage, stickerRow, textRow, added
+  loadDomChat, element, stickerImage, avatarImage, stickerRow, textRow, added
 } = require('./helpers/dom-chat-harness');
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -184,16 +184,26 @@ describe('チャットが無いフレームでの自衛', () => {
 // 「どこに・何を・いくつ張ったか」が見えないと、YouTube が #items を作り直したときに
 // 無言で止まる不具合（#2）を、フェーズ7 で直したかどうか確かめられない。
 describe('チャットの監視の張り方', () => {
-  test('#items に childList で1つだけ張る', () => {
+  test('#items に childList で張り、祖先には差し替え検知のために subtree で張る', () => {
     const h = loadDomChat();
 
     const observations = h.observations();
-    assert.equal(observations.length, 1, '監視の数が想定と違う');
-    assert.equal(observations[0].target, h.itemList, '#items 以外を監視している');
+    assert.equal(observations.length, 2, '監視の数が想定と違う');
+
+    const [items, host] = observations;
+    assert.equal(items.target, h.itemList, '#items 以外を監視している');
     // options は vm コンテキスト側で作られた物なので、deepEqual では比べられない
     // （プロトタイプが別realm）。中身だけ見る
-    assert.equal(observations[0].options.childList, true, 'childList を購読していない');
-    assert.equal(observations[0].options.subtree, undefined);
+    assert.equal(items.options.childList, true, 'childList を購読していない');
+    assert.equal(items.options.subtree, undefined,
+      '#items の購読に subtree は要らない（行の中の変化まで拾うと無駄に呼ばれる）');
+
+    // 祖先側は「#items そのものが差し替わったこと」に気付くための購読（#2）。
+    // #items は祖先の直下とは限らないので subtree が要る
+    assert.equal(host.target, h.host, '祖先を監視していない');
+    assert.equal(host.options.childList, true);
+    assert.equal(host.options.subtree, true);
+
     assert.equal(h.disconnections().length, 0);
   });
 
@@ -212,6 +222,240 @@ describe('チャットの監視の張り方', () => {
     const h = loadDomChat({ hasItemList: false });
 
     assert.deepEqual(h.observations(), []);
+  });
+});
+
+// 監視の張り直し（#2 = フェーズ7の本体）。
+//
+// YouTube が #items を作り直すと、張ったままの observer は二度と発火しない。
+// 「上位のチャット ↔ チャット」の切り替えで実際に起き、症状は
+// 「コメントが来なくなる」だけなので、静かな配信と見分けが付かない。
+//
+// なお、ここで確かめられるのは「差し替えに気付いて張り直す段取り」であって、
+// セレクタがいまの YouTube で正しいかどうかではない（#T1 #T2）。それは実ブラウザでしか分からない。
+describe('#items が差し替わったときの張り直し', () => {
+  test('古い監視を切って、新しい #items に張り直す', () => {
+    const h = loadDomChat();
+    const first = h.itemList;
+
+    const next = h.replaceItemList();
+    h.emitHost(); // 差し替えそのものが祖先側の記録になる
+
+    assert.equal(h.disconnections().length, 1, '古い監視を切っていない（購読が増えていく）');
+
+    const lists = h.observations().filter(o => o.target === first || o.target === next);
+    assert.equal(lists.length, 2, '張り直していない');
+    assert.equal(lists[1].target, next, '差し替え後の #items を見ていない');
+  });
+
+  test('張り直したあと、新しい #items に流れた行が届く', () => {
+    const h = loadDomChat();
+
+    h.replaceItemList();
+    h.emitHost();
+    const delivered = h.emit(added(textRow({ message: 'チャットを切り替えた' })));
+
+    assert.equal(delivered, 1, '生きている監視が1つではない');
+    assert.equal(h.messages().length, 1, '張り直したあとのコメントが届いていない');
+    assert.equal(h.messages()[0].message, 'チャットを切り替えた');
+  });
+
+  test('外れていた間に積まれた行も、張り直しの全件スキャンで拾う', () => {
+    const h = loadDomChat();
+
+    // 差し替え後の #items には、気付くまでの間に流れた行が入っている
+    h.replaceItemList([textRow({ message: '切替中に流れた' })]);
+    h.emitHost();
+
+    assert.equal(h.messages().length, 1, '外れていた間のコメントを取りこぼしている');
+    assert.equal(h.messages()[0].message, '切替中に流れた');
+  });
+
+  test('差し替わっていなければ、祖先が動いても張り直さない', () => {
+    // 祖先の購読は subtree なので、行が増えるたびに呼ばれる。
+    // そのたびに張り直すと、購読と全件スキャンが際限なく走る
+    const h = loadDomChat();
+
+    h.emitHost();
+    h.emitHost();
+
+    assert.equal(h.disconnections().length, 0, '生きている監視を切っている');
+    assert.equal(h.observations().length, 2, '監視を張り足している');
+  });
+
+  test('番人からの再スキャンでも張り直す（祖先ごと差し替えられた場合の保険）', () => {
+    // 祖先の監視まで外れると emitHost は誰にも届かない。
+    // Service Worker の番人が3分の沈黙で送ってくる再スキャンが最後の受け皿になる
+    const h = loadDomChat();
+    const next = h.replaceItemList([textRow({ message: '番人が拾った' })]);
+
+    h.deliver({ action: 'requestInitialSweep', force: true });
+
+    const lists = h.observations().filter(o => o.target === next);
+    assert.equal(lists.length, 1, '再スキャンの要求で張り直していない');
+    assert.equal(h.messages().length, 1);
+    assert.equal(h.messages()[0].message, '番人が拾った');
+  });
+});
+
+// ヘルス状態（フェーズ7）。
+//
+// 「セレクタが変わって、行は流れているのに1件も取り込めない」が、いまいちばん危ない
+// 壊れ方。症状は「コメントが来ない」だけで、静かな配信と区別が付かない（根本原因F）。
+describe('ヘルス状態の報告', () => {
+  test('監視を張ったら watching、1件でも取り込めたら reading', () => {
+    const h = loadDomChat();
+    assert.equal(h.healthState(), 'watching', '監視を張ったことを報告していない');
+
+    h.emit(added(textRow({ message: 'こんばんは' })));
+
+    assert.equal(h.healthState(), 'reading');
+  });
+
+  test('#items が見つからないまま諦めたら no-chat', () => {
+    const h = loadDomChat({ hasItemList: false });
+    h.flush();
+
+    assert.equal(h.healthState(), 'no-chat', '諦めたことを報告していない');
+  });
+
+  test('行は流れているのに読み取れないと unreadable になる', () => {
+    // 本文の器（#message）ごと無い行 = セレクタが変わった状況。
+    // 1〜2件では騒がず、連続したときだけ壊れたとみなす
+    const h = loadDomChat();
+    const broken = () => {
+      const row = element('', { '#author-name': element('@viewer') });
+      row.tagName = 'yt-live-chat-text-message-renderer';
+      return row;
+    };
+
+    h.emit(added(broken(), broken()));
+    assert.equal(h.healthState(), 'watching', '数件で壊れたことにしている');
+
+    h.emit(added(broken(), broken(), broken()));
+    assert.equal(h.healthState(), 'unreadable', 'セレクタが壊れたことに気付いていない');
+  });
+
+  test('全件スキャンで既知のタグが1つも無ければ unreadable', () => {
+    // 行のタグ名ごと変わった状況。1行ずつ見ても「知らないタグ」は普通に混ざるので、
+    // 全件を数えられる全件スキャンでだけ判定する
+    const unknownRow = () => {
+      const row = element('', { '#author-name': element('@viewer') });
+      row.tagName = 'yt-live-chat-renamed-message-renderer';
+      return row;
+    };
+    const h = loadDomChat({ rows: [unknownRow(), unknownRow(), unknownRow(), unknownRow(), unknownRow()] });
+
+    assert.equal(h.healthState(), 'unreadable');
+  });
+
+  test('お知らせ行が数本あるだけでは騒がない', () => {
+    const unknownRow = () => {
+      const row = element('', {});
+      row.tagName = 'yt-live-chat-viewer-engagement-message-renderer';
+      return row;
+    };
+    const h = loadDomChat({ rows: [unknownRow(), unknownRow()] });
+
+    assert.equal(h.healthState(), 'watching');
+  });
+
+  test('Service Worker から聞かれたら、いまの状態を答える', () => {
+    // Service Worker は終了すると控えを失う。正は content script 側が持っている
+    const h = loadDomChat();
+    h.emit(added(textRow({ message: 'ただいま' })));
+
+    const response = h.deliver({ action: 'getDomChatHealth' });
+
+    assert.equal(response.health.state, 'reading');
+    assert.equal(response.health.extracted, 1);
+  });
+
+  test('張り直した回数を報告に載せる', () => {
+    const h = loadDomChat();
+
+    h.replaceItemList();
+    h.emitHost();
+    h.emit(added(textRow({ message: '再開' })));
+
+    const last = h.healthReports().at(-1);
+    assert.equal(last.reattached, 1, '張り直しの回数が残っていない');
+  });
+});
+
+// 発言者の役割（#T9）。この拡張機能の存在意義そのものなのに、一度も検証されていなかった
+describe('発言者の役割の判定', () => {
+  const rowWith = (attributes, children = {}) => {
+    const row = element('', children, attributes);
+    row.tagName = 'yt-live-chat-text-message-renderer';
+    return row;
+  };
+
+  test('author-type 属性から引く', () => {
+    const h = loadDomChat();
+
+    assert.equal(h.domChat.roleOf(rowWith({ 'author-type': 'owner' }), 'text'), 'owner');
+    assert.equal(h.domChat.roleOf(rowWith({ 'author-type': 'moderator' }), 'text'), 'moderator');
+    assert.equal(h.domChat.roleOf(rowWith({ 'author-type': 'member' }), 'text'), 'member');
+    assert.equal(h.domChat.roleOf(rowWith({}), 'text'), 'normal');
+  });
+
+  test('属性が無ければバッジから補う（有料メッセージの行には付かないことがある）', () => {
+    const h = loadDomChat();
+    const badge = selector => rowWith({}, { [selector]: element('') });
+
+    assert.equal(
+      h.domChat.roleOf(badge('yt-live-chat-author-badge-renderer[type="moderator"]'), 'superchat'),
+      'moderator');
+    assert.equal(
+      h.domChat.roleOf(badge('yt-live-chat-author-badge-renderer[type="member"]'), 'superchat'),
+      'member');
+  });
+
+  test('加入・ギフトのイベントは、手掛かりが無くてもメンバー', () => {
+    const h = loadDomChat();
+
+    assert.equal(h.domChat.roleOf(rowWith({}), 'membership'), 'member');
+    assert.equal(h.domChat.roleOf(rowWith({}), 'gift'), 'member');
+    // スパチャは一般視聴者からも飛んでくるので、種別からは補わない
+    assert.equal(h.domChat.roleOf(rowWith({}), 'superchat'), 'normal');
+  });
+});
+
+// アバターURLの取り方（#28）。ステッカー側と同じ罠を、こちらだけ踏んでいた
+describe('アバターURLの取り出し', () => {
+  const rowWithAvatar = (selector, img) => element('', { [selector]: img });
+
+  test('プロトコル相対（//lh3...）でも https に解決して返す', () => {
+    const h = loadDomChat();
+    const row = rowWithAvatar('#author-photo img',
+      avatarImage({ src: '//yt3.ggpht.com/AVATAR=s32-c-k' }));
+
+    assert.equal(h.domChat.extractAvatarUrl(row), 'https://yt3.ggpht.com/AVATAR=s64-c-k');
+  });
+
+  test('有料メッセージの行（img#img）からも取れる', () => {
+    const h = loadDomChat();
+    const row = rowWithAvatar('img#img',
+      avatarImage({ src: '//lh3.googleusercontent.com/AVATAR=s32-c-k' }));
+
+    assert.equal(h.domChat.extractAvatarUrl(row), 'https://lh3.googleusercontent.com/AVATAR=s64-c-k');
+  });
+
+  test('https 以外は返さない', () => {
+    const h = loadDomChat();
+    for (const src of ['javascript:alert(1)', 'data:image/png;base64,AAA', 'http://example.com/a=s32-c']) {
+      const img = avatarImage({ src });
+      img.src = src; // プロトコル相対の解決を挟まず、そのままの値を見せる
+      assert.equal(h.domChat.extractAvatarUrl(rowWithAvatar('#author-photo img', img)), null,
+        `${src} を通してしまっている`);
+    }
+  });
+
+  test('アバターが無くても null を返すだけ（コメントの取り込みは止めない）', () => {
+    const h = loadDomChat();
+
+    assert.equal(h.domChat.extractAvatarUrl(element('', {})), null);
   });
 });
 

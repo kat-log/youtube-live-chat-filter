@@ -393,17 +393,10 @@ class YouTubeLiveChatMonitor {
     if (this.specialComments.length > 2000) {
       this.specialComments = this.specialComments.slice(-2000);
     }
-    
-    // popupに通知（開いている場合）
-    this.notifyPopupOfNewComments(newComments);
-  }
-  
-  notifyPopupOfNewComments(newComments) {
-    chrome.runtime.sendMessage({
-      action: 'newSpecialComments',
-      comments: newComments
-    }).catch(() => {
-    });
+
+    // popup へは通知しない。popup は同じバッチを Service Worker から
+    // 直接もらっている（フェーズ6b でポートになり、送った順に1回ずつ届く）。
+    // ここから送り返すと、その1回ずつを崩す echo になるだけだった
   }
 }
 

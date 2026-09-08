@@ -1436,3 +1436,129 @@ describe('popup とのポート（フェーズ6b）', () => {
     assert.equal(await ask(9, 'V'), 'other');
   });
 });
+
+// dom-chat.js のヘルス（フェーズ7）。
+//
+// DOMモードの壊れ方は「無言で0件になる」で、利用者からは静かな配信と区別が付かない
+// （根本原因F）。dom-chat.js が持っている状態を popup まで通す道を固定する。
+describe('dom-chat のヘルス', () => {
+  const domSession = sw => sw.setState({
+    isMonitoring: true, chatMode: 'dom', tabId: 3, videoId: 'V',
+    processedMessageIds: new Set(), avatarsByAuthor: {}
+  });
+  const fromTab = (chrome, request, sender) =>
+    new Promise(resolve => chrome.__onMessage(request, sender, resolve));
+
+  test('dom-chat.js の報告が、開いている popup へそのまま流れる', async () => {
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    domSession(sw);
+    const popup = chrome.__connectPopup();
+
+    await fromTab(chrome, { action: 'domChatHealth', health: { state: 'unreadable', rows: 12 } },
+      senderFor(3, 'V'));
+
+    const notices = popup.notifications().filter(m => m.action === 'domChatHealth');
+    assert.equal(notices.length, 1, 'popup へ流れていない');
+    assert.equal(notices[0].health.state, 'unreadable');
+    assert.equal(notices[0].health.videoId, 'V', 'どの配信の話かが分からない');
+  });
+
+  test('監視していないタブからの報告は捨てる', async () => {
+    // dom-chat.js は manifest の自動注入で、見ていない配信の live_chat にも乗っている
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    domSession(sw);
+    const popup = chrome.__connectPopup();
+
+    await fromTab(chrome, { action: 'domChatHealth', health: { state: 'unreadable' } },
+      senderFor(9, 'OTHER'));
+
+    assert.equal(popup.notifications().filter(m => m.action === 'domChatHealth').length, 0);
+  });
+
+  test('控えを失っていても、タブに聞いていまの状態を答える', async () => {
+    // Service Worker は終了すると控えごと消える。正は content script 側にある
+    const { chrome } = createChromeMock({
+      tabs: watchTab(3, 'V'),
+      onTabMessage: (tabId, message) =>
+        message.action === 'getDomChatHealth' ? { health: { state: 'reading', extracted: 42 } } : undefined
+    });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    domSession(sw);
+    const popup = chrome.__connectPopup();
+
+    const response = await popup.request({ action: 'getDomChatHealth' });
+
+    assert.equal(response.health.state, 'reading');
+    assert.equal(response.health.extracted, 42);
+  });
+
+  test('タブが答えなくても、最後に受けた報告で答える', async () => {
+    const { chrome } = createChromeMock({
+      tabs: watchTab(3, 'V'),
+      onTabMessage: () => { throw new Error('Could not establish connection'); }
+    });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    domSession(sw);
+    const popup = chrome.__connectPopup();
+    await fromTab(chrome, { action: 'domChatHealth', health: { state: 'no-chat' } }, senderFor(3, 'V'));
+
+    const response = await popup.request({ action: 'getDomChatHealth' });
+
+    assert.equal(response.health.state, 'no-chat');
+  });
+
+  test('タブが応答しなくても、問い合わせは打ち切られる', async () => {
+    // 同じタブの content-script.js は扱わない action でも return true を返す（#30）。
+    // dom-chat.js が居ないフレーム構成では応答が永久に返らず、popup の待ちが宙に浮く
+    const { chrome } = createChromeMock({
+      tabs: watchTab(3, 'V'),
+      onTabMessage: () => new Promise(() => {}) // いつまでも返らない
+    });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    domSession(sw);
+    const popup = chrome.__connectPopup();
+
+    const response = await popup.request({ action: 'getDomChatHealth' });
+
+    assert.equal(response.health, null);
+  });
+
+  test('APIモードと停止中は、状態を出さない', async () => {
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    const popup = chrome.__connectPopup();
+
+    assert.equal((await popup.request({ action: 'getDomChatHealth' })).health, null,
+      '停止中なのに読み取り状態を出している');
+
+    sw.setState({ isMonitoring: true, chatMode: 'api', tabId: 3, videoId: 'V' });
+    assert.equal((await popup.request({ action: 'getDomChatHealth' })).health, null,
+      'APIモードにDOMの読み取り状態を出している');
+  });
+
+  test('content script からの新着リレーはもう受け付けない', async () => {
+    // SW → content script → SW → popup という echo があり、popup は同じバッチを
+    // 2回受け取っていた（フェーズ6b からの申し送り）。ポートで保証した
+    // 「送った順に1回ずつ」を崩すのはこの経路だけだった
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    domSession(sw);
+    const popup = chrome.__connectPopup();
+
+    // 扱わない action では onMessage が false を返す（＝チャネルを開いたままにしない）
+    const handled = chrome.__onMessage(
+      { action: 'newSpecialComments', comments: [domComment(1)] }, senderFor(3, 'V'), () => {});
+
+    assert.equal(handled, false, 'リレーの分岐が残っている');
+    assert.equal(popup.notifications().filter(m => m.action === 'newSpecialComments').length, 0);
+  });
+});
