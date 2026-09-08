@@ -335,6 +335,30 @@ MV3 の Service Worker は約30秒アイドルで終了する。
 判断材料が SW と一緒に消える）。IndexedDB の `meta` は append のたびに
 `updatedAt` が入るので、そこから引けば足りる。
 
+**番人の「再注入」で直せるのは、注入時に走るものだけ**（フェーズ7で判明）。
+content script は二重注入ガード（`window.__domChatInitialized`）で包まれているので、
+`executeScript` をもう一度撃っても**中身は1行も走らない**。つまり
+「すでに走っているスクリプトの壊れた状態」——外れた `MutationObserver` など——は、
+番人からは直せない。番人が実際に効かせられるのは、一緒に送っている
+`requestInitialSweep`（＝メッセージを受けて動く処理）の側だけ。
+**自分で気付いて直す仕組みは content script 側に要る。** 番人はその保険。
+
+### 壊れたことを見えるようにする（ヘルス状態）
+
+根本原因F の裏返し。**ログを出しても利用者には見えない**ので、
+「いま読めているか」は画面に出す。フェーズ7で DOMモードに入れた形を残す。
+
+- **正は、いちばん現場に近いところ（content script）が持つ。**
+  Service Worker のメモリに置くと約30秒で消え、popup を開いた時点では
+  たいてい失われている。SW は受けた報告を控えるだけにして、
+  控えが無い／古いときは**タブに聞き直す**
+- 送るのは**状態が変わったときだけ**（片道の通知）。1件ごとに送ると、
+  その通信自体が流量になる
+- popup 側は「読めている」を静かに、「読めていない」を目立たせる。
+  平常時に幅を取る表示は、既存の画面を押しのけるだけで情報量が無い
+- **「壊れた」の判定は、単発の失敗ではなく連続で見る。** 本文の器を持たない行や
+  お知らせ行は普通に混ざるので、1件2件で騒ぐと狼少年になる
+
 ### popup と SW の通信
 
 `chrome.runtime.connect` のポートに変える。得られるもの:
@@ -349,7 +373,16 @@ MV3 の Service Worker は約30秒アイドルで終了する。
 **ポートにするのは popup ↔ SW だけ。** content script は `runtime.connect` の
 相手ではない（SW から見て content script は「タブの中のスクリプト」で、
 話しかける口は `tabs.sendMessage`）。つまり拡張機能の中には
-**通信路が2本ある**状態が残る。SW 側で分岐を2組持たないよう、
+**通信路が2本ある**状態が残る。
+
+**content script への `tabs.sendMessage` を `await` するときは、必ず打ち切りを
+付けること**（フェーズ7で判明）。`content-script.js` の `onMessage` は
+**扱わない `action` でも同期分岐で `return true`** を返す（#30）ため、
+応答チャネルが開いたまま残り、**応答が永久に返らない**ことがある。
+`Promise.race` でタイムアウトを添えるか、そもそも応答を要らない形にする。
+—— 皮肉なことに、これがいちばん起きるのは
+「content script が正常に動いていないのでは」と疑って問い合わせるときで、
+つまり**診断のための問い合わせが、いちばん固まりやすい**。SW 側で分岐を2組持たないよう、
 要求の処理は1つの関数（`handleRequest`）に畳み、
 ポートと `onMessage` はその応答を配るだけの薄い口にする。
 
@@ -1841,6 +1874,167 @@ content script の通信には触っていない、フェーズ7以降には手�
   ここでのテストは「壊れたときに気付ける仕組みが動くか」であって、
   「セレクタが正しいか」ではない。セレクタの正しさは実ブラウザでしか確認できない
 
+**実施記録（2026-09-08 完了）**
+
+4つとも実装できた。地雷は踏んでいない（両 content script に `'use strict'` を
+足していない、ES モジュールにもしていない、`sourceType` は `script` のまま、
+`shared/` はガードで包まず `self` へ代入、生の U+0000 も書いていない、
+実行時の依存はゼロのまま、`enqueueDomChatMessages` の鎖は外していない、
+既存の見た目は変えていない（足したのはヘルス表示だけ）、
+フェーズ8以降には手を出していない）。
+フェーズ6b からの申し送り6点はどれも正確で、行番号も全部当たっていた。
+判断が要った点と、節の指示だけでは決まらなかったことを残す。
+
+1. **「番人から定期確認する」は、それだけでは成立しない。** 節のやること1は
+   「安定した祖先を監視するか、番人（フェーズ6）から定期確認する」と
+   2つを同格に並べているが、**番人からの再注入では直らない**。
+   `executeScript` は二重注入ガード（`window.__domChatInitialized`）に弾かれて
+   1行も走らないので、外れた `MutationObserver` はそのまま残る。
+   番人が実際に効かせているのは、一緒に送っている `requestInitialSweep`
+   （メッセージを受けて動く処理）の側だけで、これは3分ごとの取りこぼし回収にしかならない。
+   採ったのは**祖先の監視（自己修復）を本体、番人の再スキャンを保険**という形。
+   両方入れても「静かな配信で毎分張り直す」にはならない ——
+   `ensureObserving()` が「差し替わっていなければ何もしない」ので、
+   番人から来ても普通は空振りするため。**指針側（「番人」の節）に書き足した。**
+
+2. **祖先の購読には `subtree: true` が要る。** `#items` は
+   `yt-live-chat-item-list-renderer` の直下ではなく、間にスクローラが挟まる。
+   `childList` だけだと `#items` の差し替えを拾えない。そのぶん**行が増えるたびに
+   コールバックが呼ばれる**ので、中身は「いま見ている `#items` がまだ
+   `document.contains()` か」を確かめるだけにして、
+   外れているときだけ `querySelector` からやり直す形にした。
+
+3. **ヘルスの正を Service Worker に置くと、popup を開いた時点でたいてい失われている。**
+   SW は約30秒で終了するので、受けた報告をメモリに控えるだけでは
+   「監視中だが状態は不明」になる時間のほうが長い。正は dom-chat.js（content script）に
+   置き、SW は控えるだけ、popup に聞かれたら**タブに聞き直す**形にした。
+   フェーズ6a の「番人が見る値は SW の終了に耐える場所に」と同じ形の問題だが、
+   **答えは違う**（あちらは IndexedDB、こちらは content script に聞く）。
+   共通しているのは「SW のメモリは判断材料の置き場にならない」という一点で、
+   **指針側に「壊れたことを見えるようにする（ヘルス状態）」の節を新設して書いた。**
+
+4. **その「聞き直す」が、いちばん固まりやすい経路だった。** `tabs.sendMessage` は
+   タブの全フレームに配られ、`content-script.js` の `onMessage` は
+   **扱わない `action` でも同期分岐で `return true`** を返す（#30）。
+   dom-chat.js が居ないフレーム構成だと応答チャネルが開いたまま残り、
+   `await` が永久に解けない —— そしてそれは、まさにこの問い合わせで
+   診断したい状況そのもの。`Promise.race` で 1.5 秒の打ち切りを付けた。
+   **指針側（「popup と SW の通信」の節）に書き足した。** 根治は #30 で、フェーズ9。
+
+5. **「読み取れない」の判定は、連続で見ないと狼少年になる。** 単発の取り込み失敗は
+   普通に起きる（本文の器を持たない行など）。5件連続で失敗したときだけ
+   `unreadable` にした。あわせて**行のタグ名ごと変わった場合**も要る ——
+   この場合 `kindOf()` が全部 null になるので「失敗」としてすら数えられない。
+   ただし1行ずつ見ると、お知らせ行（`yt-live-chat-viewer-engagement-message-renderer`）
+   のような未知のタグは普通に混ざるので、**全件スキャンでだけ**
+   「既知のタグが1つも無く、行は5つ以上ある」を見る形にした。
+
+6. **状態の語は5つになった。** 節は「読み取れています / 読み取れていません」の
+   2値で書かれているが、実際には利用者への言い分けが要る:
+   `searching`（探している最中）/ `no-chat`（30秒探して見つからない）/
+   `watching`（監視中・まだ1件も流れていない）/ `reading`（読み取れている）/
+   `unreadable`（行はあるのに読めない）。
+   とくに `watching` と `unreadable` を分けないと、**静かな配信が
+   「壊れています」と表示される**（この機能で避けたかったことの裏返し）。
+
+7. **見た目は「読めているときに幅を取らない」形にした。** トップバーは 420px の中で
+   開始／停止ボタンと場所を分け合っていて、動画IDのチップは既に
+   `max-width: 120px` で省略されている。文言を常時出すと動画IDが潰れるので、
+   平常時は点（7px の丸）だけ、異常時にだけ文言を添える。文言はいつでも
+   `title` から読める。**見た目の変更はこの1要素だけ**で、APIモードでは出ない。
+
+8. **セレクタのレジストリは19個ちょうどだった。** 内訳は `querySelector` の
+   文字列14個（`#items` とその祖先を含む）＋ 行のタグ名5個（`KIND_BY_TAG`）。
+   属性名（`author-type`）も YouTube 由来なので同じブロックに入れた。
+   ハーネス側の許可リスト（`ROW_SELECTORS` / `ITEM_LIST_SELECTOR`）は
+   文字列が変わっていないのでそのまま通ったが、**祖先のセレクタが増えたぶんだけ
+   `document.querySelector` のモックを2つ引ける形に直した**（#T2 の厳格さは維持）。
+
+9. **#28 は `.src` に揃えるだけで済んだ。** 配信ホストの確認は入れていない ——
+   popup 側の `AVATAR_IMAGE_HOSTS`（`.ggpht.com` / `.googleusercontent.com`）が
+   既にやっており、ステッカーと違って**アバターはホストの幅が広い**ので、
+   ここで狭めると表示が減るだけになる。dom-chat 側は `https:` のみを見る。
+
+10. **content script の新着リレー（echo）を消した**（フェーズ6b からの申し送り1）。
+    `content-script.js` の `notifyPopupOfNewComments` と、SW 側の
+    `handleRequest` の `newSpecialComments` 分岐を対で削除。
+    `addNewComments` 自体は残す（`getSpecialComments` が返す配列を保っているため）。
+    テストは「SW が `newSpecialComments` を**扱わない**」ことを、
+    `onMessage` の戻り値が `false` になることで固定した。
+
+11. **完了条件のうち、実ブラウザでの確認は未実施。**
+    「YouTube 側で『上位のチャット ↔ チャット』を切り替えても取得が止まらない」は、
+    モックでは原理的に確かめられない（#T1 #T2）。固定したのは
+    「差し替えを検知して古い監視を切り、新しい `#items` に張り直し、
+    外れていた間の行を全件スキャンで拾う」という段取りのほう。
+    **セレクタが今の YouTube で正しいかどうかは、実ブラウザでしか分からない**ので、
+    切り替え操作での確認は持ち主の手元でお願いしたい。
+    残り2つ（読めないときに popup に出る・プロトコル相対のアバターURLが解決される）は
+    テストで確認済み。
+
+テストは 167 件 → **201 件**（張り直し5件・ヘルス（dom-chat 側）8件・
+役割の判定3件（#T9）・アバターURL 4件・SW 側のヘルス7件・popup の表示8件を追加。
+既存の1件は、祖先の監視が増えたぶん「監視は1つだけ」→「#items と祖先に1つずつ」に
+書き換えた。確かめている内容は変えていない）。
+
+**詰まった箇所**: 上の1（番人では直らない）と4（診断の問い合わせが固まる）の2つ。
+1 は節の書き方を素直に読むと「番人からの再注入で直す」を選びかねないので、
+**書く前に気付けたのは二重注入ガードのコメントを読んでいたから**という、
+かなり運の要素があった。4 は逆に、テストを書くまで気付かなかった
+（ハーネスの `onTabMessage` が既定で `undefined` を返すため、素直に書くと通ってしまう。
+「いつまでも返らない」タブを作るテストを足して固定した）。
+**資料に書いてほしかったこと**は3つで、どれも指針側に書き足した:
+(a) 番人の「再注入」で直せるのは注入時に走るものだけ（「番人」の節）、
+(b) 「いま読めているか」の正の置き場（新設した「壊れたことを見えるようにする」の節）、
+(c) content script への `tabs.sendMessage` は打ち切ること（「popup と SW の通信」の節）。
+
+**フェーズ8への申し送り**
+
+- **行番号**（フェーズ7 後の実測）
+  - `content/dom-chat.js`（全606行）: **`SELECTORS` 62**（セレクタの正。
+    ここ以外に生の文字列を書かないこと）/ `HEALTH` 103 / `health` 118 /
+    `setHealthState` 129 / `doInitialSweep` 150 / `attachObserver` 185 /
+    **`ensureObserving` 232 / `observeHost` 271 / `handleHostMutations` 280** /
+    `onMessage` 287 / `handleMutations` 300 / `takeMessage` 323 /
+    `roleOf` 483 / `extractAvatarUrl` 556 / `sendToBackground` 589
+  - `content/content-script.js`（全634行）: `setupMessageListener` 263
+    （**扱わない action でも `return true` する = #30。フェーズ9**）/
+    `addNewComments` 387 / `sendMessageWithRetry` 561（9箇所から呼ばれる）
+  - `background/service-worker.js`（全1,926行）: `isPopupOpen` 885 /
+    `notifyPopup` 901 / **`domChatHealth` 914 / `recordDomChatHealth` 916 /
+    `askTabForHealth` 937 / `getDomChatHealth` 946** / `handleRequest` 970（23分岐）/
+    `dispatchRequest` 1098 / `stopBackgroundMonitoring` 1240 / `injectDomChat` 1435 /
+    `requestInitialSweep` 1451 / `startDomMonitoring` 1456 /
+    `enqueueDomChatMessages` 1505 / `handleDomChatMessages` 1512 /
+    `startWatchdog` 1651 / `runWatchdog` 1686
+  - `popup/popup.js`（全2,648行）: **`CHAT_HEALTH_VIEW` 140**（表示の語の対応表）/
+    `connectToBackground` 373 / `requestBackground` 389 /
+    `handleBackgroundMessage` 410 / `resyncAfterReconnect` 476 /
+    `initializeElements` 780 / **`updateChatHealth` 2049 / `refreshChatHealth` 2068** /
+    `updateStatus` 2081
+  - `popup/popup.html`（全246行）: ヘルスの表示は 15-20行目（トップバーの中）
+- **フェーズ8は `popup.css` / `popup.html` / `options.css` が主戦場。**
+  フェーズ7で足した見た目は
+  `#chat-health` / `.chat-health-dot` / `.chat-health-text`（`popup.css` の
+  「Video ID chip」の直前）の1組だけ。**ダークモード（#14 #15）を触るとき、
+  この3つの色（緑 `#4caf50` / 橙 `#e0a02a` / 赤 `#e05a5a`）も一緒に見ること** ——
+  いまは変数化しておらず、ライトテーマで見え方が変わる。
+- **キーボード操作（#13）を入れるとき、ヘルス表示は操作対象ではない**
+  （`role="status"` の読み上げ専用。フォーカスを取らせないこと）。
+- **`updateStatus()`（`popup:2081`）と `updateChatHealth()`（`popup:2049`）は別物。**
+  前者は「取得中／停止済み」（拡張機能が動いているか）、後者は
+  「チャットを読み取れているか」（YouTube 側のDOMが読めているか）。
+  #17（エラーの再試行ボタンが文言と違うことをする）を直すときに、
+  この2つを1つにまとめたくなるが、**別の軸なので混ぜないこと**。
+- **ハーネスに増えた口**: dom-chat 側は `h.replaceItemList(rows)`（#items の差し替え）/
+  `h.emitHost(records)`（祖先側の監視を叩く）/ `h.deliver(request)`（SW からの要求）/
+  `h.healthState()` / `h.healthReports()` / `h.host` と、`avatarImage()`。
+  `h.sendCount()` と `h.messages()` は**コメントの送信だけ**を数えるようになった
+  （ヘルスの報告が混ざらないよう `action` で振り分けている）。
+  SW 側は `createChromeMock({ onTabMessage })` でタブの応答を作れる
+  （既存の口だが、フェーズ7で初めて使った）。
+- **テストの現在値は 201 件。**
+
 ---
 
 ### フェーズ8 — UI の穴
@@ -1934,6 +2128,7 @@ content script の通信には触っていない、フェーズ7以降には手�
 | APIキー無しでデバッグモードをONにでき、リロード後も残る | 0 |
 | `chrome://extensions` の Service Worker を手動で「終了」させてもコメントが続く | 3, 6a |
 | **YouTube 側で「上位のチャット ↔ チャット」を切り替えても止まらない** | 7 |
+| DOMモードで監視中、トップバーに読み取り状態の点が出る（読めていれば緑） | 7 |
 | **フィルターを切り替えると過去分にも効く** | 4 |
 | 数千件たまっても popup のスクロールと検索がカクつかない | 5 |
 | APIモードで quota エラーを踏んだあと、放置して再開する | 6a |
