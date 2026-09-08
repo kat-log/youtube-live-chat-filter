@@ -2275,12 +2275,21 @@ CSS の効き方とタブ移動は本物のレンダリングエンジンで確�
 **やること**
 
 1. **`content-script.js` から API モードの残骸を撤去**。
-   `specialComments` (`cs:47`)、`notifyPopupOfNewComments` (`cs:400`)、
-   `waitForYouTubeLive` の `setInterval` (`cs:432`)、`setupVisibilityMonitoring` (`cs:635`、#31)
+   `specialComments` (`cs:48`)、`waitForYouTubeLive` の `setInterval` (`cs:404`)、
+   `setupVisibilityMonitoring` (`cs:607`、#31)
+   （`notifyPopupOfNewComments` は**フェーズ7で削除済み**。SW 側のリレー分岐と対で消した）
 2. **#24 SPA遷移検知を SW へ**。`cs:446-475` の `document.body` 全体購読をやめ、
    `chrome.tabs.onUpdated`（`tabs` 権限は取得済み）に移す
 3. **#30 メッセージリスナーを整理**。同期分岐の `return true` をやめ、
-   未知の `action` に応答する分岐を足す
+   未知の `action` に応答する分岐を足す。
+   **これには外から支えが1つ乗っている**（フェーズ7）——
+   Service Worker が dom-chat.js のヘルスをタブに聞く `askTabForHealth`
+   (`SW:937`) は、#30 のせいで応答が永久に返らないことがあるため
+   `HEALTH_QUERY_TIMEOUT_MS`（1.5秒）で打ち切っている。**対症療法なので、
+   #30 を直したら一緒に外せるか確かめること**（外すなら、
+   「タブが応答しなくても問い合わせは打ち切られる」テストも対で見直す）。
+   なお `tabs.sendMessage` を `await` する箇所は他にもあるので、
+   #30 を直す前に一度洗い出すこと
 4. **#40 権限を絞る**。`activeTab` を削除、`*://*.googleapis.com/*` を
    `https://www.googleapis.com/youtube/v3/*` に、`tabs` の要否を確認。
    APIモードが任意機能である以上、googleapis は `optional_host_permissions` が本来の形
