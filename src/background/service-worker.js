@@ -883,7 +883,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   
   if (request.action === 'getCommentsHistory') {
-    getCommentsHistory(request.videoId)
+    getCommentsHistory(request.videoId, request.bucket)
       .then(response => sendResponse(response))
       .catch(error => sendResponse({ success: false, error: error.message }));
     return true;
@@ -1512,18 +1512,24 @@ async function cleanupOldCommentHistories() {
 
 // popup へ渡すコメントを読む。
 // 特別コメント（primary）を先に確保してから、残りの枠を bulk の直近で埋める。
-// popup 側の上限に当たっても特別コメントは押し出されない（決定3）
-async function readCommentsForPopup(videoId) {
+// popup 側の上限に当たっても特別コメントは押し出されない（決定3）。
+//
+// bucket に 'primary' を渡すと primary だけを返す。popup の既定はこちらで、
+// メンバー・一般（bulk）は popup が必要になったとき IndexedDB から直接引く（決定4）。
+// 数万件をメッセージの構造化クローンで往復させないため
+async function readCommentsForPopup(videoId, bucket = null) {
   // 上限は shared/store.js が正（popup も同じ値を見る）。ここで束縛せず毎回引く
   const limit = store.MAX_COMMENTS_TO_POPUP;
   const primary = await store.read(videoId, { bucket: 'primary', limit });
+  if (bucket === 'primary') return primary;
+
   const room = limit - primary.length;
   const bulk = room > 0 ? await store.read(videoId, { bucket: 'bulk', limit: room }) : [];
   return primary.concat(bulk).sort((a, b) => a.seq - b.seq);
 }
 
 // コメント履歴を取得（Video ID別）
-async function getCommentsHistory(videoId = null) {
+async function getCommentsHistory(videoId = null, bucket = null) {
   await ensureStateRestored();
   // デバウンス中の未保存分を反映してから読み出す
   await flushCommentsHistory();
@@ -1537,7 +1543,7 @@ async function getCommentsHistory(videoId = null) {
   }
 
   try {
-    const comments = await readCommentsForPopup(targetVideoId);
+    const comments = await readCommentsForPopup(targetVideoId, bucket);
     // 監視中の動画のアバターはメモリのマップが最新（保存待ちを含む）
     const avatars = targetVideoId === monitoringState.currentVideoId
       ? { ...monitoringState.avatarsByAuthor }

@@ -33,6 +33,16 @@ function idsInPopupHtml() {
 }
 
 /**
+ * `.class` / `#id` / `tag` だけを解釈する最小の照合。
+ * popup.js が closest に渡すのはクラス1つだけなので、これで足りる
+ */
+function matchesSelector(el, selector) {
+  if (selector.startsWith('.')) return el.classList.contains(selector.slice(1));
+  if (selector.startsWith('#')) return el.id === selector.slice(1);
+  return el.tagName === selector.toUpperCase();
+}
+
+/**
  * 最小の偽要素。dom-chat-harness.js の element() と同じ流儀で、
  * 書き込まれた内容をそのまま持っておく。
  *
@@ -48,6 +58,12 @@ function createElement(tagName, { id = null, ownerDocument = null } = {}) {
     attributes: {},
     dataset: {},
     style: {},
+    // レイアウトは持たないので、寸法は数値の既定値だけ置く。
+    // 描画のあと popup.js が1回だけ読む（#22）ので、undefined だと NaN が伝わる
+    scrollTop: 0,
+    scrollHeight: 0,
+    clientHeight: 0,
+    hidden: false,
     // addEventListener で登録されたハンドラ。type -> 関数の配列
     listeners: {},
     // textContent / innerHTML への代入の履歴（古い順）
@@ -67,6 +83,14 @@ function createElement(tagName, { id = null, ownerDocument = null } = {}) {
     },
 
     appendChild(child) {
+      // DocumentFragment は「中身だけ」が移る。本物と同じく、足したあとの
+      // fragment は空になる（popup.js が1回の appendChild で新着行を足すため）
+      if (child.tagName === '#DOCUMENT-FRAGMENT') {
+        for (const grandChild of child.children.slice()) el.appendChild(grandChild);
+        child.children = [];
+        return child;
+      }
+      child.parentNode?.removeChild(child);
       el.children.push(child);
       child.parentNode = el;
       ownerDocument?.calls.appendChild.push({ parent: el.id || el.tagName, child: child.tagName });
@@ -78,6 +102,14 @@ function createElement(tagName, { id = null, ownerDocument = null } = {}) {
       return child;
     },
     remove() { el.parentNode?.removeChild(el); },
+    /** 本物と同じく、自分を置き換えてDOMから外れる（画像の読み込み失敗で使う） */
+    replaceWith(node) {
+      const parent = el.parentNode;
+      if (!parent) return;
+      parent.children = parent.children.map(c => (c === el ? node : c));
+      node.parentNode = parent;
+      el.parentNode = null;
+    },
 
     setAttribute(name, value) {
       el.attributes[name] = String(value);
@@ -105,9 +137,16 @@ function createElement(tagName, { id = null, ownerDocument = null } = {}) {
     // 完全一致の対応表だけ持たせる（dom-chat-harness の element() と同じ割り切り）
     selectors: {},
     querySelector(selector) { return el.selectors[selector] || null; },
-    // 本物の closest は祖先をたどるが、偽DOMは親子関係を持たない。
-    // querySelector と同じ対応表を引き、載っていなければ null を返す
-    closest(selector) { return el.selectors[selector] || null; },
+    // 対応表を先に引く（レイアウトを持たない要素のための逃げ道）。
+    // 載っていなければ、appendChild が張った親子関係を自分からたどる。
+    // イベント委譲（#22）が closest を使うので、ここは本物に寄せておく
+    closest(selector) {
+      if (el.selectors[selector]) return el.selectors[selector];
+      for (let node = el; node; node = node.parentNode) {
+        if (matchesSelector(node, selector)) return node;
+      }
+      return null;
+    },
     querySelectorAll(selector) {
       const found = el.selectors[selector];
       return found ? (Array.isArray(found) ? found : [found]) : [];
@@ -150,13 +189,22 @@ function createFakeDocument({ ids = idsInPopupHtml(), strictIds = true } = {}) {
 
   const doc = {
     // 記録。誰が何を作り、どこに足し、どの属性を書いたか
-    calls: { createElement: [], appendChild: [], setAttribute: [], getElementById: [] },
+    calls: {
+      createElement: [], createDocumentFragment: [],
+      appendChild: [], setAttribute: [], getElementById: []
+    },
     listeners: {},
     activeElement: null,
 
     createElement(tagName) {
       doc.calls.createElement.push(String(tagName));
       return createElement(tagName, { ownerDocument: doc });
+    },
+
+    /** 新着行をまとめて1回で足すための入れ物（appendChild が中身だけ移す） */
+    createDocumentFragment() {
+      doc.calls.createDocumentFragment.push(true);
+      return createElement('#document-fragment', { ownerDocument: doc });
     },
 
     getElementById(id) {
@@ -270,11 +318,17 @@ function createChromeMock({ storage = {}, onMessage = () => undefined, queryTabs
  * @param {object} [options.document] 差し替える偽 document（既定は createFakeDocument()）
  * @param {object} [options.chrome]   差し替える chrome モック（既定は createChromeMock()）
  * @param {object} [options.storage]  chrome.storage.local が返す中身
+ * @param {number} [options.maxCommentsToPopup] メモリ上限を小さくする
+ *   （10,000件を積まずに切り詰めの挙動を見るため。store 側の LIMITS と同じ流儀）
  */
-function loadPopup({ document = createFakeDocument(), storage = {}, chrome = createChromeMock({ storage }) } = {}) {
-  // popup は履歴の読み書きにはまだ IndexedDB を使わない（フェーズ5の担当）。
-  // それでも store.js は popup.html が読むので、開ける先だけ用意しておく。
-  // タイマーは下の「積むだけ」を使わず Node の実時間で回す
+function loadPopup({
+  document = createFakeDocument(),
+  storage = {},
+  chrome = createChromeMock({ storage }),
+  maxCommentsToPopup = null
+} = {}) {
+  // popup は bulk 枠（メンバー・一般）を IndexedDB から直接読む（決定4）。
+  // 偽 IndexedDB のタイマーはこの下の「積むだけ」ではなく Node の実時間で回る
   const idb = createIndexedDBMock();
   // id -> 関数。clearTimeout で消せるように Map で持つ
   const timers = new Map();
@@ -283,6 +337,10 @@ function loadPopup({ document = createFakeDocument(), storage = {}, chrome = cre
   const context = vm.createContext({
     console,
     setTimeout(fn) { timers.set(nextTimerId, fn); return nextTimerId++; },
+    // 本物は次の描画の直前に走る。ここでは setTimeout と同じ「積むだけ」にして、
+    // テストから進められるようにしておく
+    requestAnimationFrame(fn) { timers.set(nextTimerId, fn); return nextTimerId++; },
+    cancelAnimationFrame(id) { timers.delete(id); },
     clearTimeout(id) { timers.delete(id); },
     setInterval(fn) { timers.set(nextTimerId, fn); return nextTimerId++; },
     clearInterval(id) { timers.delete(id); },
@@ -305,6 +363,8 @@ function loadPopup({ document = createFakeDocument(), storage = {}, chrome = cre
   context.self = context;
   vm.runInContext(fs.readFileSync(SHARED_PATH, 'utf8'), context, { filename: SHARED_PATH });
   vm.runInContext(fs.readFileSync(STORE_PATH, 'utf8'), context, { filename: STORE_PATH });
+  // popup.js は読み込み時に上限を束縛するので、差し替えるならこの順番でしかできない
+  if (maxCommentsToPopup !== null) context.YTFStore.MAX_COMMENTS_TO_POPUP = maxCommentsToPopup;
   vm.runInContext(fs.readFileSync(POPUP_PATH, 'utf8') + expose, context, { filename: POPUP_PATH });
 
   Object.assign(context.__popup, {
@@ -324,6 +384,49 @@ function loadPopup({ document = createFakeDocument(), storage = {}, chrome = cre
   return context;
 }
 
+/** 行の中からクラス名で1つ探す（偽DOMには本物のセレクタが無い） */
+function findByClass(element, className) {
+  for (const child of element.children || []) {
+    if (child.classList?.contains(className)) return child;
+    const found = findByClass(child, className);
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * 一覧に出来ている行を、テストから読める形にほどく。
+ *
+ * フェーズ5 で描画が「innerHTML の全置換」から「1コメント1行を作って
+ * hidden を切り替える」に変わったので、画面に出ているものを見るには
+ * DOM をたどる必要がある。hidden の行も返す（作り直していないことを
+ * 数えたいのはむしろそちら）。
+ */
+function readCommentRows(commentsList) {
+  return commentsList.children.map(element => {
+    const author = findByClass(element, 'comment-author');
+    const message = findByClass(element, 'comment-message');
+    const avatar = findByClass(element, 'comment-avatar');
+    return {
+      element,
+      hidden: !!element.hidden,
+      id: element.getAttribute('data-comment-id'),
+      username: author ? author.getAttribute('data-username') : null,
+      authorText: author ? author.textContent : null,
+      author,
+      avatar,
+      message: message ? message.textContent : null,
+      classes: element.classList._names.slice()
+    };
+  });
+}
+
+/** いま画面に出ている（hidden でない）行の発言者名 */
+function visibleUsernames(commentsList) {
+  return readCommentRows(commentsList).filter(row => !row.hidden).map(row => row.username);
+}
+
 module.exports = {
-  loadPopup, createFakeDocument, createChromeMock, createElement, idsInPopupHtml
+  loadPopup, createFakeDocument, createChromeMock, createElement, idsInPopupHtml,
+  readCommentRows, visibleUsernames, findByClass
 };

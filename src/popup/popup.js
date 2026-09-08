@@ -7,7 +7,7 @@ async function loadDebugMode() {
     const result = await chrome.storage.local.get(['debugMode']);
     debugMode = result.debugMode || false;
   } catch (error) {
-    console.error('[Popup] Failed to load debug mode:', error);
+    debugError('[Popup] Failed to load debug mode:', error);
   }
 }
 
@@ -17,7 +17,7 @@ async function loadTheme() {
     const { theme } = await chrome.storage.local.get(['theme']);
     document.documentElement.setAttribute('data-theme', theme || 'light');
   } catch (error) {
-    console.error('[Popup] Failed to load theme:', error);
+    debugError('[Popup] Failed to load theme:', error);
   }
 }
 
@@ -58,11 +58,6 @@ function debugWarn(prefix, ...args) {
 // エラーだけは debugMode に関係なく必ず出す。
 // 「数時間使い込まないと出ない」種類の不具合を追うのに、既定でエラーが
 // 消えているのがいちばん困る（既定構成では debugMode を ON にする手段も無かった）
-//
-// popup 側は現状すべて生の console.log / console.warn で書かれているため、
-// この関数はまだ呼ばれていない。呼び出し側の差し替えは #34（フェーズ5）の担当で、
-// ここで消すと SW / content script と非対称になるので残す
-// eslint-disable-next-line no-unused-vars -- 呼び出し側の差し替えはフェーズ5（#34）
 function debugError(prefix, ...args) {
   console.error(prefix, ...args);
 }
@@ -82,8 +77,7 @@ const {
     normalizeComment,
     normalizeForSearch,
     searchTextOf,
-    stripHtmlTags,
-    escapeAttr
+    stripHtmlTags
 } = self.YTF;
 
 const FILTER_PRESETS = {
@@ -95,8 +89,22 @@ const FILTER_PRESETS = {
 // popup がメモリに載せるコメントの上限。Service Worker が1回に渡してくる件数と
 // 同じ値を shared/store.js から引く（#33）。以前は popup が 10,000、SW が 2,000 と
 // 5倍食い違っていて、popup を開き直すと差分が黙って消えていた。
-// 決定4（IndexedDB からの範囲読み）に変えるのはフェーズ5
+// 起動時に載せるのは primary だけで、bulk は必要になってからこの枠の残りに読む（決定4）
 const MAX_COMMENTS_IN_MEMORY = self.YTFStore.MAX_COMMENTS_TO_POPUP;
+
+// 保存の入口は shared/store.js が正（決定2）。popup が直接引くのは
+// bulk 枠（メンバー・一般）だけで、それ以外は Service Worker 越しに読む。
+// 移行（storage.local -> IndexedDB）は migrateFromLocal() を呼んだ環境だけが
+// 走る作りなので、popup からは絶対に呼ばないこと。Service Worker と同時に
+// 走らせると同じ履歴が二重に積まれる（フェーズ3の制約）
+const store = self.YTFStore;
+
+// bulk 枠に入る保持枠のフィルターキー（決定3）。この2つだけは
+// メモリに載っていないことがあるので、件数の出し方が他と違う
+const BULK_FILTER_KEYS = ['sponsor', 'normal'];
+
+// 下端判定の許容誤差（px）
+const SCROLL_BOTTOM_THRESHOLD = 5;
 
 const ROLE_LABELS = {
     owner:     ['配信者',       'role-owner'],
@@ -113,7 +121,14 @@ const KIND_ICONS = {
     gift:         ['\u{1F381}', 'メンバーシップギフト']
 };
 
-// ステッカー画像の配信ホスト。dom-chat.js が組み立てるURLと同じものだけを通す
+// 画像の配信ホスト。https の前方一致だけだと、外部由来のURLを img の src に
+// 載せる以上「任意のHTTPS先へリクエストが飛ぶ」構造が残る（#26）。
+// 先頭が '.' のエントリは下位ドメインをまとめて許可する。
+//
+// アバターは YouTube 側がホスト名を増やす（yt3 -> yt4 など）ことがあり、
+// 完全一致で列挙すると増えた日に全員のアバターが黙って消える。
+// ステッカーは dom-chat.js が組み立てるURLと1対1なので完全一致のままにする
+const AVATAR_IMAGE_HOSTS = ['.ggpht.com', '.googleusercontent.com'];
 const STICKER_IMAGE_HOSTS = ['lh3.googleusercontent.com', 'yt3.ggpht.com'];
 
 class PopupController {
@@ -122,6 +137,16 @@ class PopupController {
         this.comments = [];
         // this.comments に入っているコメントのID。重複判定はこれだけを見る（#3）
         this.commentIds = new Set();
+        // 描画済みの行。id -> { element, author, displayName }。
+        // 1コメントにつき1回だけ作り、以後は hidden を切り替えるだけにする（#22）
+        this.rows = new Map();
+        // 区切り線を消す「最後に見えている行」。:last-child は hidden を見ない
+        this.lastVisibleRow = null;
+        // bulk 枠（メンバー・一般）をメモリへ読みにいったか（決定4）
+        this.bulkLoaded = false;
+        // 保存されているのに、まだメモリへ載せていない bulk の件数。
+        // 0 でない間は「メンバー」「一般」の件数を数字で出せない
+        this.unloadedBulk = 0;
         // DOMモードのアバターURL（発言者名 -> URL）。背景側から受け取る
         this.avatarsByAuthor = {};
         this.currentTab = null;
@@ -215,7 +240,7 @@ class PopupController {
             }
 
         } catch (error) {
-            console.error('[YouTube Special Comments] ❌ Critical initialization error:', error);
+            debugError('[YouTube Special Comments] ❌ Critical initialization error:', error);
             this.showInitializationStatus('初期化エラーが発生しました');
             
             // フォールバック: 基本的な初期化のみ実行
@@ -236,6 +261,10 @@ class PopupController {
         // 並列に混ぜると一瞬だけ旧形式で描かれてそのまま残る）
         await this.loadTimeSettings();
 
+        // フィルターの状態も先に確定させる。bulk 枠を読むかどうかがこれで決まるので
+        // （決定4）、履歴復元と並列にすると、順番次第で要らない bulk を読み込む
+        await this.loadCommentFilters();
+
         // 初期状態設定
         this.updateMonitoringButtons(false);
         this.updateMonitoringButtonStates();
@@ -243,7 +272,6 @@ class PopupController {
         // 非同期初期化タスクを並行実行
         await Promise.all([
             this.loadSavedApiKey(),
-            this.loadCommentFilters(),
             this.loadChatMode(),
             loadTheme(),
             this.checkCurrentTab()
@@ -258,7 +286,7 @@ class PopupController {
     
     // 緊急時のフォールバック初期化
     async emergencyFallbackInitialization() {
-        console.log('[YouTube Special Comments] 🆘 Running emergency fallback initialization');
+        debugLog('[YouTube Special Comments] 🆘 Running emergency fallback initialization');
         
         try {
             this.updateMonitoringButtons(false);
@@ -269,9 +297,9 @@ class PopupController {
             const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
             this.currentTab = tab;
             
-            console.log('[YouTube Special Comments] ✅ Emergency fallback completed');
+            debugLog('[YouTube Special Comments] ✅ Emergency fallback completed');
         } catch (error) {
-            console.error('[YouTube Special Comments] ❌ Emergency fallback also failed:', error);
+            debugError('[YouTube Special Comments] ❌ Emergency fallback also failed:', error);
             this.showError('拡張機能の初期化に失敗しました。ブラウザを再起動してください。');
         }
     }
@@ -291,26 +319,26 @@ class PopupController {
             filterSettings: this.commentFilters
         };
         
-        console.log('[YouTube Special Comments] 📋 Initialization Summary:', summary);
+        debugLog('[YouTube Special Comments] 📋 Initialization Summary:', summary);
     }
     
     // Service Worker準備状態確認
     async waitForServiceWorker(maxAttempts = 8, delayMs = 300) {
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
-                console.log(`[YouTube Special Comments] Service worker check attempt ${attempt}/${maxAttempts}`);
+                debugLog(`[YouTube Special Comments] Service worker check attempt ${attempt}/${maxAttempts}`);
                 
                 const response = await this.sendMessageWithTimeout({
                     action: 'ping'
                 }, 2000);
                 
                 if (response && response.success) {
-                    console.log('[YouTube Special Comments] ✅ Service worker ping successful');
+                    debugLog('[YouTube Special Comments] ✅ Service worker ping successful');
                     this.serviceWorkerReady = true;
                     return true;
                 }
             } catch (error) {
-                console.log(`[YouTube Special Comments] Service worker ping failed (attempt ${attempt}):`, error.message);
+                debugLog(`[YouTube Special Comments] Service worker ping failed (attempt ${attempt}):`, error.message);
                 
                 if (attempt < maxAttempts) {
                     // 短い間隔で再試行
@@ -319,7 +347,7 @@ class PopupController {
             }
         }
         
-        console.warn('[YouTube Special Comments] Service worker readiness check timeout');
+        debugWarn('[YouTube Special Comments] Service worker readiness check timeout');
         return false;
     }
     
@@ -352,18 +380,18 @@ class PopupController {
     async checkContentScriptInjection() {
         // 既に監視中であればcontent scriptは動作している
         if (this.isMonitoring) {
-            console.log('[YouTube Special Comments] Already monitoring, skipping content script check');
+            debugLog('[YouTube Special Comments] Already monitoring, skipping content script check');
             return true;
         }
 
         const isYouTubePage = this.currentTab && this.currentTab.url && 
             (this.currentTab.url.includes('youtube.com/watch') || this.currentTab.url.includes('youtube.com/live/'));
         if (!isYouTubePage) {
-            console.log('[YouTube Special Comments] Not a YouTube watch or live page, skipping content script check');
+            debugLog('[YouTube Special Comments] Not a YouTube watch or live page, skipping content script check');
             return true;
         }
         
-        console.log('[YouTube Special Comments] Checking content script injection status...');
+        debugLog('[YouTube Special Comments] Checking content script injection status...');
         
         try {
             // Content Scriptとの通信をテスト
@@ -374,13 +402,13 @@ class PopupController {
             }, 3000);
             
             if (response) {
-                console.log('[YouTube Special Comments] ✅ Content script is properly injected');
+                debugLog('[YouTube Special Comments] ✅ Content script is properly injected');
                 return true;
             } else {
                 throw new Error('No response from content script');
             }
         } catch (error) {
-            console.log('[YouTube Special Comments] Content script not detected (expected on first use):', error.message);
+            debugLog('[YouTube Special Comments] Content script not detected (expected on first use):', error.message);
             
             // 自動回復を試行
             return await this.attemptContentScriptRecovery();
@@ -389,7 +417,7 @@ class PopupController {
     
     // Content Script回復試行
     async attemptContentScriptRecovery() {
-        console.log('[YouTube Special Comments] 🔄 Attempting content script recovery...');
+        debugLog('[YouTube Special Comments] 🔄 Attempting content script recovery...');
         this.showInitializationStatus('Content Scriptを修復中...');
         
         try {
@@ -398,19 +426,19 @@ class PopupController {
                 action: 'getLastInjectionResult'
             }, 2);
             
-            console.log('[YouTube Special Comments] Last injection result:', injectionResult);
+            debugLog('[YouTube Special Comments] Last injection result:', injectionResult);
             
             // 2. 手動でContent Script再注入を要求
             // 対象は現在のタブのみ。全タブに注入すると、正常に動いている
             // 他のYouTubeタブにまで不要な注入を行うことになる
-            console.log('[YouTube Special Comments] Requesting manual content script re-injection...');
+            debugLog('[YouTube Special Comments] Requesting manual content script re-injection...');
             const reinjectResponse = await this.sendMessageWithRetry({
                 action: 'reinjectContentScripts',
                 tabId: this.currentTab?.id
             }, 2);
             
             if (reinjectResponse && reinjectResponse.success) {
-                console.log('[YouTube Special Comments] ✅ Content script re-injection requested successfully');
+                debugLog('[YouTube Special Comments] ✅ Content script re-injection requested successfully');
 
                 // 3. 再注入後の確認（待機時間を延長: 2秒→3秒）
                 await this.delay(3000);
@@ -420,7 +448,7 @@ class PopupController {
                     const verified = await this.verifyContentScriptAfterRecovery();
                     if (verified) return true;
                     if (attempt < 3) {
-                        console.log(`[YouTube Special Comments] Ping attempt ${attempt} failed, retrying in 1s...`);
+                        debugLog(`[YouTube Special Comments] Ping attempt ${attempt} failed, retrying in 1s...`);
                         await this.delay(1000);
                     }
                 }
@@ -432,7 +460,7 @@ class PopupController {
                 throw new Error('Re-injection request failed');
             }
         } catch (error) {
-            console.error('[YouTube Special Comments] ❌ Content script recovery failed:', error);
+            debugError('[YouTube Special Comments] ❌ Content script recovery failed:', error);
             this.showContentScriptError();
             return false;
         }
@@ -440,7 +468,7 @@ class PopupController {
     
     // 回復後のContent Script確認
     async verifyContentScriptAfterRecovery() {
-        console.log('[YouTube Special Comments] Verifying content script after recovery...');
+        debugLog('[YouTube Special Comments] Verifying content script after recovery...');
         
         try {
             const response = await this.sendTabMessageWithTimeout(this.currentTab.id, {
@@ -448,7 +476,7 @@ class PopupController {
             }, 2000);
             
             if (response) {
-                console.log('[YouTube Special Comments] ✅ Content script recovery successful!');
+                debugLog('[YouTube Special Comments] ✅ Content script recovery successful!');
                 this.hideInitializationStatus();
                 this.hideDetailedError();
                 this.elements.fixExtensionContainer.style.display = 'none';
@@ -457,7 +485,7 @@ class PopupController {
                 throw new Error('Still no response after recovery');
             }
         } catch {
-            console.warn('[YouTube Special Comments] ⚠️ Content script still not responding after recovery');
+            debugWarn('[YouTube Special Comments] ⚠️ Content script still not responding after recovery');
             // showContentScriptError()は呼び出し元(attemptContentScriptRecovery)で制御
             return false;
         }
@@ -485,14 +513,14 @@ class PopupController {
     
     // 拡張機能修復機能
     async fixExtension() {
-        console.log('[YouTube Special Comments] 🔧 Starting extension repair process...');
+        debugLog('[YouTube Special Comments] 🔧 Starting extension repair process...');
         this.elements.fixExtensionBtn.disabled = true;
         this.elements.fixExtensionBtn.textContent = '修復中...';
         this.showInitializationStatus('拡張機能を修復中...');
         
         try {
             // Step 1: Content Script再注入を要求
-            console.log('[YouTube Special Comments] Step 1: Requesting content script re-injection');
+            debugLog('[YouTube Special Comments] Step 1: Requesting content script re-injection');
             this.showInitializationStatus('Content Scriptを再注入中...');
             
             const reinjectResponse = await this.sendMessageWithRetry({
@@ -505,12 +533,12 @@ class PopupController {
             }
             
             // Step 2: 注入完了を待機
-            console.log('[YouTube Special Comments] Step 2: Waiting for injection to complete');
+            debugLog('[YouTube Special Comments] Step 2: Waiting for injection to complete');
             this.showInitializationStatus('注入完了を待機中...');
             await this.delay(3000); // 注入処理の完了を待つ
             
             // Step 3: Content Script通信テスト
-            console.log('[YouTube Special Comments] Step 3: Testing content script communication');
+            debugLog('[YouTube Special Comments] Step 3: Testing content script communication');
             this.showInitializationStatus('通信をテスト中...');
             
             const testResponse = await this.sendTabMessageWithTimeout(this.currentTab.id, {
@@ -518,7 +546,7 @@ class PopupController {
             }, 3000);
             
             if (testResponse && testResponse.success) {
-                console.log('[YouTube Special Comments] ✅ Extension repair successful!');
+                debugLog('[YouTube Special Comments] ✅ Extension repair successful!');
                 this.showInitializationStatus('修復完了！');
                 
                 // 成功時の処理
@@ -535,7 +563,7 @@ class PopupController {
             }
             
         } catch (error) {
-            console.error('[YouTube Special Comments] ❌ Extension repair failed:', error);
+            debugError('[YouTube Special Comments] ❌ Extension repair failed:', error);
             this.showInitializationStatus('修復失敗');
             
             // 失敗時のフォールバック: タブ再読み込みを提案
@@ -566,16 +594,16 @@ class PopupController {
     
     // タブ再読み込み機能
     async reloadCurrentTab() {
-        console.log('[YouTube Special Comments] Reloading current tab...');
+        debugLog('[YouTube Special Comments] Reloading current tab...');
         
         try {
             await chrome.tabs.reload(this.currentTab.id);
-            console.log('[YouTube Special Comments] Tab reload initiated');
+            debugLog('[YouTube Special Comments] Tab reload initiated');
             
             // ポップアップを閉じる（タブ再読み込み後にユーザーが再度開く）
             window.close();
         } catch (error) {
-            console.error('[YouTube Special Comments] Failed to reload tab:', error);
+            debugError('[YouTube Special Comments] Failed to reload tab:', error);
             this.showError('タブの再読み込みに失敗しました。手動でページを更新してください。');
         }
     }
@@ -753,11 +781,53 @@ class PopupController {
             this.autoScroll = this.isAtBottom();
             this.updateScrolledToBottom();
         });
+
+        // 行ごとではなく、一覧に1つだけリスナーを張る（#22）。
+        // 以前は描画のたびに querySelectorAll 3回 + 最大3N個のクロージャを
+        // 張り直していた。行は作り直さなくなったので、張り替えも要らない
+        this.elements.commentsList.addEventListener('click', event => {
+            this.onCommentsListClick(event);
+        });
+        // error はバブリングしないので、捕捉フェーズで受ける
+        this.elements.commentsList.addEventListener('error', event => {
+            this.onCommentsListError(event);
+        }, true);
+    }
+
+    // 発言者名のクリックでユーザー絞り込みを切り替える
+    onCommentsListClick(event) {
+        const author = event.target?.closest?.('.comment-author');
+        const username = author?.getAttribute('data-username');
+        if (!username) return;
+
+        if (this.selectedUser === username) {
+            // 既に選択済みのユーザーをクリックした場合は絞り込み解除
+            this.clearUserFilter();
+        } else {
+            // 新しいユーザーで絞り込み
+            this.filterByUser(username);
+        }
+    }
+
+    // 画像が404などで読めなかったときの後始末。
+    // MV3のCSPはインラインの onerror= を禁止するのでJSから受ける
+    onCommentsListError(event) {
+        const image = event.target;
+        if (!image?.classList) return;
+
+        if (image.classList.contains('comment-avatar')) {
+            // アバターは頭文字表示に差し替える
+            image.replaceWith(
+                this.avatarFallbackNode(image.getAttribute('data-initial') || '?'));
+        } else if (image.classList.contains('comment-sticker')) {
+            // ステッカーは取り除く。ステッカー名の行はそのまま残る
+            image.remove();
+        }
     }
     
     setupMessageListener() {
         chrome.runtime.onMessage.addListener((request, _sender, _sendResponse) => {
-            console.log('[Popup] Received message:', request.action, 'with', request.comments?.length || 0, 'comments');
+            debugLog('[Popup] Received message:', request.action, 'with', request.comments?.length || 0, 'comments');
             if (request.action === 'newSpecialComments') {
                 // formatComment がアバターを引けるよう、コメントより先に取り込む
                 Object.assign(this.avatarsByAuthor, request.avatars || {});
@@ -787,7 +857,7 @@ class PopupController {
                 this.showError('');
             }
         } catch (error) {
-            console.error('[YouTube Special Comments] Error loading chat mode:', error);
+            debugError('[YouTube Special Comments] Error loading chat mode:', error);
         }
     }
 
@@ -838,12 +908,12 @@ class PopupController {
             if (response && response.apiKey) {
                 this.elements.apiKeyInput.value = response.apiKey;
                 this.updateMonitoringButtons(true);
-                console.log('[YouTube Special Comments] ✅ API key loaded successfully');
+                debugLog('[YouTube Special Comments] ✅ API key loaded successfully');
             } else {
-                console.log('[YouTube Special Comments] No API key found in storage');
+                debugLog('[YouTube Special Comments] No API key found in storage');
             }
         } catch (error) {
-            console.error('[YouTube Special Comments] Error loading API key:', error);
+            debugError('[YouTube Special Comments] Error loading API key:', error);
             this.showError('APIキーの読み込みに失敗しました。ページを再読み込みしてください。');
         }
     }
@@ -880,7 +950,7 @@ class PopupController {
             const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
             this.currentTab = tab;
             
-            console.log('[YouTube Special Comments] Current tab:', tab.url);
+            debugLog('[YouTube Special Comments] Current tab:', tab.url);
             
             const isYouTubePage = tab.url && (tab.url.includes('youtube.com/watch') || tab.url.includes('youtube.com/live/'));
             if (isYouTubePage) {
@@ -891,23 +961,23 @@ class PopupController {
                 this.updateMonitoringButtons(false);
             }
         } catch (error) {
-            console.error('Error checking current tab:', error);
+            debugError('Error checking current tab:', error);
             this.updateStatus('エラー');
         }
     }
     
     async loadExistingComments() {
         try {
-            console.log('[YouTube Special Comments] === Starting comment history restoration ===');
+            debugLog('[YouTube Special Comments] === Starting comment history restoration ===');
             
             // Step 1: 現在のVideo IDを取得
             const currentVideoId = await this.getCurrentVideoId();
             this.currentVideoId = currentVideoId;
-            console.log('[YouTube Special Comments] Current video ID:', currentVideoId);
+            debugLog('[YouTube Special Comments] Current video ID:', currentVideoId);
             
             // Step 2: Background scriptから監視状態を取得
             const monitoringState = await this.getBackgroundMonitoringState();
-            console.log('[YouTube Special Comments] Background monitoring state:', monitoringState);
+            debugLog('[YouTube Special Comments] Background monitoring state:', monitoringState);
             
             // Step 3: 監視状態を更新
             if (monitoringState.success) {
@@ -940,10 +1010,10 @@ class PopupController {
                 await this.checkContentScriptStatus();
             }
             
-            console.log('[YouTube Special Comments] === Comment history restoration completed ===');
+            debugLog('[YouTube Special Comments] === Comment history restoration completed ===');
             
         } catch (error) {
-            console.error('[YouTube Special Comments] Error loading existing comments:', error);
+            debugError('[YouTube Special Comments] Error loading existing comments:', error);
             this.showError('コメント履歴の読み込みに失敗しました。');
             this.updateStatus('エラー');
         }
@@ -957,28 +1027,28 @@ class PopupController {
             }, 2);
             
             if (response && response.videoId) {
-                console.log('[YouTube Special Comments] Video ID from content script:', response.videoId);
+                debugLog('[YouTube Special Comments] Video ID from content script:', response.videoId);
                 return response.videoId;
             }
         } catch (contentError) {
-            console.log('[YouTube Special Comments] Content script not available:', contentError);
+            debugLog('[YouTube Special Comments] Content script not available:', contentError);
         }
         
         // URLから抽出
         if (this.currentTab.url) {
             const urlMatch = this.currentTab.url.match(/[?&]v=([^&]+)/);
             if (urlMatch) {
-                console.log('[YouTube Special Comments] Video ID from URL:', urlMatch[1]);
+                debugLog('[YouTube Special Comments] Video ID from URL:', urlMatch[1]);
                 return urlMatch[1];
             }
             const liveMatch = this.currentTab.url.match(/\/live\/([^/?]+)/);
             if (liveMatch) {
-                console.log('[YouTube Special Comments] Video ID from URL (live):', liveMatch[1]);
+                debugLog('[YouTube Special Comments] Video ID from URL (live):', liveMatch[1]);
                 return liveMatch[1];
             }
         }
         
-        console.log('[YouTube Special Comments] Could not extract video ID');
+        debugLog('[YouTube Special Comments] Could not extract video ID');
         return null;
     }
     
@@ -990,14 +1060,18 @@ class PopupController {
             
             return response || { success: false };
         } catch (error) {
-            console.log('[YouTube Special Comments] Error getting monitoring state:', error.message);
+            debugLog('[YouTube Special Comments] Error getting monitoring state:', error.message);
             return { success: false };
         }
     }
     
     async restoreCommentHistory(currentVideoId) {
+        // 動画が変わったら bulk の状態も引き継がない
+        this.bulkLoaded = false;
+        this.unloadedBulk = 0;
+
         if (!currentVideoId) {
-            console.log('[YouTube Special Comments] No video ID available, clearing comments');
+            debugLog('[YouTube Special Comments] No video ID available, clearing comments');
             this.setComments([]);
             this.renderComments();
             return;
@@ -1005,15 +1079,17 @@ class PopupController {
         
         let targetVideoId = currentVideoId;
         
-        // プライマリ取得を試行
+        // プライマリ取得を試行。読むのは primary 枠だけで、
+        // メンバー・一般（bulk）は必要になってから popup が直接 IndexedDB から引く（決定4）
         let historyLoaded = false;
         try {
             const historyResponse = await this.sendMessageWithRetry({
                 action: 'getCommentsHistory',
-                videoId: targetVideoId
+                videoId: targetVideoId,
+                bucket: 'primary'
             }, 2);
             
-            console.log('[YouTube Special Comments] History response for', targetVideoId + ':', {
+            debugLog('[YouTube Special Comments] History response for', targetVideoId + ':', {
                 success: historyResponse?.success,
                 commentsCount: historyResponse?.comments?.length || 0
             });
@@ -1022,17 +1098,19 @@ class PopupController {
                 Object.assign(this.avatarsByAuthor, historyResponse.avatars || {});
                 const formattedComments = this.formatHistoryComments(historyResponse.comments);
                 this.setComments(formattedComments);
-                this.renderComments();
-                console.log('[YouTube Special Comments] Successfully restored', formattedComments.length, 'comments');
+                // 保存済みの bulk 件数を控えてから、要るときだけ読む
+                await this.loadBulkCount(targetVideoId);
+                await this.renderWithBulk();
+                debugLog('[YouTube Special Comments] Successfully restored', formattedComments.length, 'comments');
                 historyLoaded = true;
             }
         } catch (error) {
-            console.log('[YouTube Special Comments] Primary history loading failed:', error.message);
+            debugLog('[YouTube Special Comments] Primary history loading failed:', error.message);
         }
         
         // フォールバック1: Content scriptから直接コメントを取得
         if (!historyLoaded) {
-            console.log('[YouTube Special Comments] === Fallback 1: Getting comments from content script ===');
+            debugLog('[YouTube Special Comments] === Fallback 1: Getting comments from content script ===');
             try {
                 const contentResponse = await this.sendTabMessageWithRetry(this.currentTab.id, {
                     action: 'getSpecialComments'
@@ -1042,23 +1120,23 @@ class PopupController {
                     const formattedComments = this.formatHistoryComments(contentResponse.comments);
                     this.setComments(formattedComments);
                     this.renderComments();
-                    console.log('[YouTube Special Comments] Fallback 1 successful: loaded', formattedComments.length, 'comments from content script');
+                    debugLog('[YouTube Special Comments] Fallback 1 successful: loaded', formattedComments.length, 'comments from content script');
                     historyLoaded = true;
                 }
             } catch {
-                console.log('[YouTube Special Comments] Fallback 1: content script not ready, continuing with empty state');
+                debugLog('[YouTube Special Comments] Fallback 1: content script not ready, continuing with empty state');
             }
         }
         
         // 最終フォールバック: 空の状態で表示
         if (!historyLoaded) {
-            console.log('[YouTube Special Comments] === All fallbacks failed, starting with empty comments ===');
+            debugLog('[YouTube Special Comments] === All fallbacks failed, starting with empty comments ===');
             this.setComments([]);
             this.renderComments();
             
             // 空の状態でも監視中であることを示すメッセージを表示
             if (this.isMonitoring) {
-                console.log('[YouTube Special Comments] Monitoring is active but no history found - new comments will appear');
+                debugLog('[YouTube Special Comments] Monitoring is active but no history found - new comments will appear');
             }
         }
     }
@@ -1068,7 +1146,7 @@ class PopupController {
             try {
                 return this.formatComment(comment);
             } catch (error) {
-                console.error(`[YouTube Special Comments] Error formatting comment ${index}:`, error);
+                debugError(`[YouTube Special Comments] Error formatting comment ${index}:`, error);
                 return null;
             }
         }).filter(comment => comment !== null);
@@ -1086,7 +1164,7 @@ class PopupController {
                 this.updateStatus('ライブチャット未検出');
             }
         } catch {
-            console.log('[YouTube Special Comments] Content script not available');
+            debugLog('[YouTube Special Comments] Content script not available');
             this.updateStatus('ライブチャット未検出');
         }
     }
@@ -1125,7 +1203,7 @@ class PopupController {
             return;
         }
         
-        console.log('[YouTube Special Comments] Starting monitoring...');
+        debugLog('[YouTube Special Comments] Starting monitoring...');
         this.showLoading(true);
         this.showError(''); // エラーメッセージをクリア
         
@@ -1137,7 +1215,7 @@ class PopupController {
                     chatMode: 'dom'
                 }, 3);
 
-                console.log('[YouTube Special Comments] Start DOM monitoring response:', response);
+                debugLog('[YouTube Special Comments] Start DOM monitoring response:', response);
 
                 if (response && response.success) {
                     this.isMonitoring = true;
@@ -1165,13 +1243,13 @@ class PopupController {
                 action: 'getSpecialComments'
             }, 3);
 
-            console.log('[YouTube Special Comments] Content script test response:', testResponse);
+            debugLog('[YouTube Special Comments] Content script test response:', testResponse);
 
             const response = await this.sendTabMessageWithRetry(this.currentTab.id, {
                 action: 'startMonitoring'
             }, 3);
             
-            console.log('[YouTube Special Comments] Start monitoring response:', response);
+            debugLog('[YouTube Special Comments] Start monitoring response:', response);
             
             if (response && response.success) {
                 this.isMonitoring = true;
@@ -1186,9 +1264,9 @@ class PopupController {
             }
         } catch (error) {
             if (suppressErrors || error.message.includes('Could not establish connection')) {
-                console.log('[YouTube Special Comments] Start monitoring: content script not ready (expected on first use):', error.message);
+                debugLog('[YouTube Special Comments] Start monitoring: content script not ready (expected on first use):', error.message);
             } else {
-                console.error('[YouTube Special Comments] Start monitoring error:', error);
+                debugError('[YouTube Special Comments] Start monitoring error:', error);
             }
 
             if (!suppressErrors) {
@@ -1211,7 +1289,7 @@ class PopupController {
     }
     
     async stopMonitoring() {
-        console.log('[YouTube Special Comments] Stopping monitoring...');
+        debugLog('[YouTube Special Comments] Stopping monitoring...');
         this.showLoading(true);
         
         try {
@@ -1219,7 +1297,7 @@ class PopupController {
                 action: 'stopMonitoring'
             }, 3);
             
-            console.log('[YouTube Special Comments] Stop monitoring response:', response);
+            debugLog('[YouTube Special Comments] Stop monitoring response:', response);
             
             if (response && response.success) {
                 this.isMonitoring = false;
@@ -1230,7 +1308,7 @@ class PopupController {
                 this.showError('取得を停止できませんでした');
             }
         } catch (error) {
-            console.error('[YouTube Special Comments] Stop monitoring error:', error);
+            debugError('[YouTube Special Comments] Stop monitoring error:', error);
             if (error.message.includes('Could not establish connection')) {
                 this.showError('ページを再読み込みしてみてください。（Content scriptが読み込まれていません...）');
                 // 強制的に停止状態にする
@@ -1252,7 +1330,7 @@ class PopupController {
                 videoId: this.currentVideoId
             }, 2);
         } catch (e) {
-            console.warn('[Popup] Failed to clear storage history:', e);
+            debugWarn('[Popup] Failed to clear storage history:', e);
         }
         // content script のキャッシュもクリア
         try {
@@ -1264,6 +1342,8 @@ class PopupController {
         }
         this.setComments([]);
         this.avatarsByAuthor = {};
+        this.bulkLoaded = false;
+        this.unloadedBulk = 0;
         this.renderComments(true); // コメントクリア時はトップにスクロール
     }
     
@@ -1276,13 +1356,11 @@ class PopupController {
             ? comments.slice(-MAX_COMMENTS_IN_MEMORY)
             : comments;
         this.commentIds = new Set(this.comments.map(comment => comment.id));
+        // 母集団そのものが入れ替わったので、行も作り直す
+        this.rebuildCommentRows();
     }
 
     addNewComments(newComments) {
-        console.log('[Popup] === addNewComments called ===');
-        console.log('[Popup] Received', newComments.length, 'new comments');
-        console.log('[Popup] Current comments count before adding:', this.comments.length);
-        
         const formattedComments = newComments.map(comment => this.formatComment(comment));
         
         // 重複チェックは id だけを見る（#3）。以前は本文・発言者・時刻など5フィールドの
@@ -1295,19 +1373,33 @@ class PopupController {
             return true;
         });
         
-        console.log('[Popup] Adding', uniqueComments.length, 'unique comments out of', formattedComments.length, 'total');
-        
         this.comments.push(...uniqueComments);
-        
-        if (this.comments.length > MAX_COMMENTS_IN_MEMORY) {
-            // 切り詰めで落ちたぶんのIDも一緒に落とす（残っていると、
-            // 一度消えたコメントが二度と入らなくなる）
-            this.setComments(this.comments);
-            console.log('[Popup] Trimmed comments to', MAX_COMMENTS_IN_MEMORY, 'current count:', this.comments.length);
-        }
-        
-        console.log('[Popup] Final comments count after adding:', this.comments.length);
+        // 新着は「新しい行だけ」を作って1回で足す。既存の行には触らない（#22）
+        this.appendCommentRows(uniqueComments);
+        this.trimCommentsToLimit();
+
+        debugLog('[Popup] Added', uniqueComments.length, 'of', formattedComments.length,
+            'new comments (total', this.comments.length + ')');
         this.renderComments();
+    }
+
+    // 上限を超えたぶんを古い方から落とす。行も一緒に落として、
+    // メモリから消えたコメントの DOM が残らないようにする
+    trimCommentsToLimit() {
+        const excess = this.comments.length - MAX_COMMENTS_IN_MEMORY;
+        if (excess <= 0) return;
+
+        // 切り詰めで落ちたぶんのIDも一緒に落とす（残っていると、
+        // 一度消えたコメントが二度と入らなくなる）
+        const dropped = this.comments.splice(0, excess);
+        for (const comment of dropped) {
+            this.commentIds.delete(comment.id);
+            const row = this.rows.get(comment.id);
+            if (!row) continue;
+            row.element.remove();
+            this.rows.delete(comment.id);
+        }
+        debugLog('[Popup] Trimmed comments to', MAX_COMMENTS_IN_MEMORY);
     }
     
     // 取り込み口はここ1つ。APIモードとDOMモードの違いは normalizeComment が
@@ -1319,6 +1411,10 @@ class PopupController {
 
         return {
             ...normalized,
+            // 保存時に振られる通し番号。正準形には無い（保存の都合の値）が、
+            // あとから読んだ bulk を並びに差し込むのに要る（決定4）ので持ち越す。
+            // 保存を経ていない新着では undefined になり、いちばん新しい扱いになる
+            seq: comment.seq,
             // 表示用の役割ラベルとクラス。絞り込みと集計が見るのは
             // 正準形の role（'owner' などのキー）のほう
             roleLabel,
@@ -1350,43 +1446,79 @@ class PopupController {
         }
     }
 
-    // 画像URLは外部由来なので https のみ通す（javascript:/data: を弾く）
-    safeAvatarUrl(url) {
-        return typeof url === 'string' && url.startsWith('https://') ? url : null;
-    }
-
-    // アバター1つぶんのHTML。URLが無い／読み込めない場合は頭文字にフォールバックする
-    avatarHtml(comment) {
-        // サロゲートペア（絵文字など）を1文字として扱う
-        const initial = Array.from(comment.displayName || '?')[0] || '?';
-        const fallback = `<span class="comment-avatar comment-avatar--fallback" aria-hidden="true">${this.escapeHtml(initial)}</span>`;
-        const url = this.safeAvatarUrl(comment.profileImageUrl);
-        if (!url) return fallback;
-        return `<img class="comment-avatar" src="${escapeAttr(url)}" alt="" `
-             + `loading="lazy" decoding="async" width="24" height="24" `
-             + `data-initial="${escapeAttr(initial)}">`;
-    }
-
-    // ステッカー画像のURL。https に加えて配信ホストも確認する
-    // （本文と違い img の src に流し込むので、素性の知れないURLは載せない）
-    safeStickerUrl(url) {
-        const safe = this.safeAvatarUrl(url);
-        if (!safe) return null;
+    // 画像URLは外部由来（YouTubeのDOM／APIの応答）なので、https と配信ホストの
+    // 両方を見る。https の前方一致だけでは任意のHTTPS先へ img のリクエストが飛ぶ（#26）
+    safeImageUrl(url, allowedHosts) {
+        if (typeof url !== 'string' || !url.startsWith('https://')) return null;
+        let hostname;
         try {
-            return STICKER_IMAGE_HOSTS.includes(new URL(safe).hostname) ? safe : null;
+            hostname = new URL(url).hostname;
         } catch {
             return null;
         }
+        const allowed = allowedHosts.some(
+            host => host.startsWith('.') ? hostname.endsWith(host) : hostname === host);
+        return allowed ? url : null;
+    }
+
+    safeAvatarUrl(url) {
+        return this.safeImageUrl(url, AVATAR_IMAGE_HOSTS);
+    }
+
+    safeStickerUrl(url) {
+        return this.safeImageUrl(url, STICKER_IMAGE_HOSTS);
+    }
+
+    // 要素を1つ作る小道具。文字列HTMLを組まないので、
+    // 属性のエスケープ漏れ（#25）という種類の欠陥がそもそも成立しない
+    createNode(tag, className, text) {
+        const node = document.createElement(tag);
+        if (className) node.classList.add(...className.split(' '));
+        // 空文字の代入は「書き込み」として記録に残るだけで意味が無い
+        if (text) node.textContent = text;
+        return node;
+    }
+
+    // アバター1つぶん。URLが無い／読み込めない場合は頭文字にフォールバックする
+    avatarNode(comment) {
+        // サロゲートペア（絵文字など）を1文字として扱う
+        const initial = Array.from(comment.displayName || '?')[0] || '?';
+        const url = this.safeAvatarUrl(comment.profileImageUrl);
+        if (!url) return this.avatarFallbackNode(initial);
+
+        const img = this.createNode('img', 'comment-avatar');
+        img.setAttribute('src', url);
+        img.setAttribute('alt', '');
+        img.setAttribute('loading', 'lazy');
+        img.setAttribute('decoding', 'async');
+        img.setAttribute('width', '24');
+        img.setAttribute('height', '24');
+        // 読み込みに失敗したときの差し替え先。委譲したリスナーがここを読む
+        img.setAttribute('data-initial', initial);
+        return img;
+    }
+
+    avatarFallbackNode(initial) {
+        const span = this.createNode('span', 'comment-avatar comment-avatar--fallback', initial);
+        span.setAttribute('aria-hidden', 'true');
+        return span;
     }
 
     // スーパーステッカーの画像。中身はアニメーションWebPで、img に貼るだけで再生される。
     // URLが無い／読み込めない場合も、ステッカー名は本文として別に出ているので情報は消えない
-    stickerHtml(comment) {
-        if (comment.kind !== 'supersticker') return '';
+    stickerNode(comment) {
+        if (comment.kind !== 'supersticker') return null;
         const url = this.safeStickerUrl(comment.stickerUrl);
-        if (!url) return '';
-        return `<img class="comment-sticker" src="${escapeAttr(url)}" alt="" `
-             + `loading="lazy" decoding="async" width="96" height="96">`;
+        if (!url) return null;
+
+        const img = this.createNode('img', 'comment-sticker');
+        img.setAttribute('src', url);
+        img.setAttribute('alt', '');
+        img.setAttribute('loading', 'lazy');
+        img.setAttribute('decoding', 'async');
+        img.setAttribute('width', '96');
+        img.setAttribute('height', '96');
+        return img;
     }
 
     // 時刻表示の設定を読み込む。未設定時は従来の見た目（24時間・秒あり）を維持する
@@ -1397,7 +1529,7 @@ class PopupController {
             this.timeHour12 = timeHour12 === true;
             this.timeShowSeconds = timeShowSeconds !== false;
         } catch (error) {
-            console.error('[YouTube Special Comments] Error loading time settings:', error);
+            debugError('[YouTube Special Comments] Error loading time settings:', error);
         }
         this.syncTimeToggleUI();
     }
@@ -1407,6 +1539,9 @@ class PopupController {
         if (hour12 !== undefined) this.timeHour12 = (hour12 === true);
         if (showSeconds !== undefined) this.timeShowSeconds = (showSeconds !== false);
         this.syncTimeToggleUI();
+        // 時刻は行を作るときに焼き付けている。表記が変わったときだけは、
+        // 行そのものを作り直さないと古い表記が残る
+        this.rebuildCommentRows();
         this.renderComments();
     }
 
@@ -1439,53 +1574,217 @@ class PopupController {
 
     // 一覧の役割バッジ。文字ではなくアイコンで出し、意味は title/aria-label で補う。
     // 一般コメントはバッジ無し（特別コメントだけが目に留まるようにする）
-    roleBadgeHtml(comment) {
+    roleBadgeNode(comment) {
         const icons = {
             'role-owner':     '\u{1F451}',
             'role-moderator': '\u{1F527}',
             'role-sponsor':   '\u{2B50}'
         };
         const icon = icons[comment.roleClass];
-        if (!icon) return '';
+        if (!icon) return null;
 
-        const label = escapeAttr(comment.roleLabel);
-        return `<span class="comment-role comment-role--icon ${comment.roleClass}" `
-             + `title="${label}" role="img" aria-label="${label}">${icon}</span>`;
+        const span = this.createNode(
+            'span', `comment-role comment-role--icon ${comment.roleClass}`, icon);
+        span.setAttribute('title', comment.roleLabel);
+        span.setAttribute('role', 'img');
+        span.setAttribute('aria-label', comment.roleLabel);
+        return span;
     }
 
     // 種別バッジ。スパチャ・メンバーイベントだけに付き、通常のコメントには出ない
-    kindBadgeHtml(comment) {
+    kindBadgeNode(comment) {
         const entry = KIND_ICONS[comment.kind];
-        if (!entry) return '';
+        if (!entry) return null;
 
         const [icon, label] = entry;
-        return `<span class="comment-kind comment-kind--icon" `
-             + `title="${label}" role="img" aria-label="${label}">${icon}</span>`;
+        const span = this.createNode('span', 'comment-kind comment-kind--icon', icon);
+        span.setAttribute('title', label);
+        span.setAttribute('role', 'img');
+        span.setAttribute('aria-label', label);
+        return span;
     }
 
-    // スパチャの金額。DOMモードは表示文字列、APIモードは amountDisplayString をそのまま出す
-    amountHtml(comment) {
-        if (!comment.amountText) return '';
-        return `<span class="comment-amount">${this.escapeHtml(comment.amountText)}</span>`;
+    // 1行ぶんの要素を組み立てる。ここで作った要素は、フィルターや検索を
+    // 切り替えても作り直さない（hidden を切り替えるだけ）。
+    // DOM の構造とクラス名は文字列組み立て時代と同じ — popup.css:1005-1008 の
+    // :has() が構造に依存しているので、入れ替えたり増やしたりしないこと
+    createCommentRow(comment) {
+        const kindClass = comment.kind && comment.kind !== 'text' ? ` kind-${comment.kind}` : '';
+        const row = this.createNode('div', `comment-item${kindClass}`);
+        // 委譲したリスナーから、どの行かを引くための目印
+        row.setAttribute('data-comment-id', comment.id);
+
+        const header = this.createNode('div', 'comment-header');
+        header.appendChild(this.avatarNode(comment));
+
+        const roleBadge = this.roleBadgeNode(comment);
+        if (roleBadge) header.appendChild(roleBadge);
+
+        const kindBadge = this.kindBadgeNode(comment);
+        if (kindBadge) header.appendChild(kindBadge);
+
+        const author = this.createNode('span', 'comment-author', comment.displayName);
+        author.setAttribute('data-username', comment.displayName);
+        header.appendChild(author);
+
+        // スパチャの金額。DOMモードは表示文字列、APIモードは amountDisplayString
+        if (comment.amountText) {
+            header.appendChild(this.createNode('span', 'comment-amount', comment.amountText));
+        }
+
+        header.appendChild(
+            this.createNode('span', 'comment-time', this.formatTimestamp(comment.publishedAt)));
+        row.appendChild(header);
+
+        // 「新規メンバー」「◯か月連続のメンバー」など、本文とは別に出す一行
+        if (comment.eventText) {
+            row.appendChild(this.createNode('div', 'comment-event', comment.eventText));
+        }
+
+        const sticker = this.stickerNode(comment);
+        if (sticker) row.appendChild(sticker);
+
+        // 金額だけのスパチャやギフト告知は本文が無いので、空の行を作らない
+        if (comment.message) {
+            row.appendChild(this.createNode('div', 'comment-message', comment.message));
+        }
+
+        return { element: row, author, displayName: comment.displayName };
     }
 
-    // 「新規メンバー」「◯か月連続のメンバー」など、本文とは別に出す一行
-    eventTextHtml(comment) {
-        if (!comment.eventText) return '';
-        return `<div class="comment-event">${this.escapeHtml(comment.eventText)}</div>`;
+    // === bulk 枠の遅延読み込み（決定4） =====================================
+    // 起動時にメモリへ載せるのは primary（配信者・モデレーター・スパチャ・
+    // メンバーシップ）だけにする。メンバーと一般は流量が桁違いで、
+    // 全件取り込み（決定1）のあとは数万件になりうるため。
+    //
+    // bulk を読むのは「表示に要るとき」だけ。トグルがONになった、検索が始まった、
+    // ユーザー絞り込みが掛かった、のいずれか。検索が取得済み全件に効くという
+    // 約束は、検索を needsBulk() に含めることで維持している。
+    //
+    // Service Worker 越しではなく popup が直接 IndexedDB を読むのは、
+    // メッセージで渡すと数万件を構造化クローンで往復させることになるから。
+    // 移行だけは絶対に走らせない（store.migrateFromLocal を呼ばない）。
+    // Service Worker と同時に走らせると履歴が二重に積まれる
+
+    /** いま表示するのに bulk 枠が要るか */
+    needsBulk() {
+        return this.commentFilters.sponsor === true
+            || this.commentFilters.normal === true
+            || this.searchQuery.length > 0
+            || this.selectedUser !== null;
+    }
+
+    /** これから読みにいく必要があるか（要るのに、まだ載っていない） */
+    shouldLoadBulk() {
+        return !this.bulkLoaded
+            && this.unloadedBulk > 0
+            && !!this.currentVideoId
+            && this.needsBulk();
+    }
+
+    /** 保存されている bulk の件数を控える。読み込みはまだしない */
+    async loadBulkCount(videoId) {
+        this.bulkLoaded = false;
+        this.unloadedBulk = 0;
+        if (!videoId) return;
+        try {
+            const counts = await store.count(videoId);
+            this.unloadedBulk = counts.bulk || 0;
+        } catch (error) {
+            debugError('[Popup] Failed to count bulk comments:', error);
+        }
+    }
+
+    /**
+     * 必要なら bulk 枠を IndexedDB から読んでメモリへ載せる。
+     * 読んだら true を返す（呼び出し側は描き直す）
+     */
+    async ensureBulkLoaded() {
+        if (!this.shouldLoadBulk()) return false;
+
+        // メモリの上限（#33）は primary と bulk で共有する。
+        // primary を先に確保してあるので、bulk は残り枠に新しい方から入る
+        const room = MAX_COMMENTS_IN_MEMORY - this.comments.length;
+        if (room <= 0) return false;
+
+        this.bulkLoaded = true;
+        try {
+            const bulk = await store.read(this.currentVideoId, { bucket: 'bulk', limit: room });
+            const loaded = this.mergeBulkComments(bulk);
+            // 残っているぶんは「載せきれなかった件数」。0 でない間、
+            // メンバー・一般のバッジは数字を出さない
+            this.unloadedBulk = Math.max(0, this.unloadedBulk - loaded);
+            debugLog('[Popup] Loaded', loaded, 'bulk comments (', this.unloadedBulk, 'left)');
+            return true;
+        } catch (error) {
+            debugError('[Popup] Failed to load bulk comments:', error);
+            this.bulkLoaded = false;
+            return false;
+        }
+    }
+
+    /** 読んだ bulk を this.comments へ差し込む。並びは保存順（seq）に揃える */
+    mergeBulkComments(bulk) {
+        const fresh = bulk
+            .filter(comment => comment?.id && !this.commentIds.has(comment.id))
+            .map(comment => this.formatComment(comment));
+        if (!fresh.length) return 0;
+
+        // seq は保存時に振られる通し番号。持たないもの（popup を開いている間に
+        // 届いた新着）はいちばん新しいので末尾に置く。sort は安定なので、
+        // 同じ順位のものは元の並びのまま残る
+        const order = comment => (typeof comment.seq === 'number' ? comment.seq : Infinity);
+        this.setComments(this.comments.concat(fresh).sort((a, b) => order(a) - order(b)));
+        return fresh.length;
+    }
+
+    /** bulk が要るなら読んでから描く。トグル・検索・ユーザー絞り込みの入口はこれを通す */
+    async renderWithBulk(forceScrollToTop = false, forceScrollToBottom = false) {
+        // 読むものが無いときは await を1つも挟まない。async 関数は最初の await まで
+        // 同期で走るので、この分岐があるかどうかで描画が1フレーム遅れるかが変わる
+        if (this.shouldLoadBulk()) await this.ensureBulkLoaded();
+        this.renderComments(forceScrollToTop, forceScrollToBottom);
+    }
+
+    // === 一覧の描画 =========================================================
+    // 行は1コメントにつき1回だけ作る（#22 = 根本原因D）。以前は新着1件ごとに
+    // innerHTML を全置換していたので、1描画ごとに約4N要素の破棄と再生成・
+    // 最大3N個のリスナー登録・強制同期レイアウト3回が走っていた
+    // （N=10,000 で 300〜800ms）。ここでやるのは数えることと、
+    // hidden の切り替えと、スクロール位置の復元だけ。
+
+    /** 行を作り直す。母集団そのものが入れ替わったときだけ通る */
+    rebuildCommentRows() {
+        this.rows.clear();
+        this.lastVisibleRow = null;
+        // 空文字の代入はHTMLのパースを伴わない。絞り込みが0件のときに
+        // 古いDOMが最大1万ノード残っていたのが #11 で、その置き場をここに一本化した
+        this.elements.commentsList.innerHTML = '';
+        this.appendCommentRows(this.comments);
+    }
+
+    /** 新しい行だけを作り、DocumentFragment にまとめて1回だけ足す */
+    appendCommentRows(comments) {
+        if (!comments.length) return;
+
+        const fragment = document.createDocumentFragment();
+        for (const comment of comments) {
+            // 同じIDの行を2つ作らない。作ってしまうと、片方が this.rows に
+            // 載らないまま DOM に残り、二度と隠せなくなる
+            if (this.rows.has(comment.id)) continue;
+            const row = this.createCommentRow(comment);
+            this.rows.set(comment.id, row);
+            fragment.appendChild(row.element);
+        }
+        this.elements.commentsList.appendChild(fragment);
     }
 
     renderComments(forceScrollToTop = false, forceScrollToBottom = false) {
-        console.log('[Popup] === renderComments called ===');
-        console.log('[Popup] Total comments:', this.comments.length);
-        console.log('[Popup] Filter state:', this.commentFilters);
-        console.log('[Popup] Selected user:', this.selectedUser);
-        console.log('[Popup] Force scroll to top:', forceScrollToTop);
-        console.log('[Popup] Force scroll to bottom:', forceScrollToBottom);
-        
-        // スクロール位置を保存
-        const previousScrollTop = this.elements.commentsList.scrollTop;
-        
+        const list = this.elements.commentsList;
+        // レイアウトの読み取りは、ここと行を出し入れしたあとの1回だけにする（#22）。
+        // 以前は3か所で scrollTop / scrollHeight を読み書きしていた
+        const previousScrollTop = list.scrollTop;
+
         // 母集団は1つだけにする（#18）。以前は合計が「絞り込み後」、内訳が
         // 「this.comments 全件」で、並べて出しているのに数え方が違っていた。
         // ここで作る scoped が唯一の母集団で、内訳もそこから数える。
@@ -1510,19 +1809,40 @@ class PopupController {
         for (const comment of scoped) counts[filterKeyOf(comment)]++;
 
         // 役割・種別の絞り込み。取り込みは全件になったので（決定1）、
-        // トグルをONに戻せば過去分もここから出てくる
-        const filteredComments = scoped.filter(
-            comment => isCommentEnabled(comment.kind, comment.role, this.commentFilters));
+        // トグルをONに戻せば過去分もここから出てくる。
+        // 行はもう出来ているので、決めるのは「どれを見せるか」だけ
+        const visibleIds = new Set();
+        for (const comment of scoped) {
+            if (isCommentEnabled(comment.kind, comment.role, this.commentFilters)) {
+                visibleIds.add(comment.id);
+            }
+        }
 
-        console.log('[Popup] Filtered comments:', filteredComments.length);
+        this.updateCountBadges(counts, visibleIds.size);
+        this.syncRowVisibility(visibleIds);
 
-        // コメント数表示を更新
-        this.elements.totalCount.textContent = `${filteredComments.length}件`;
-        this.updateSearchMatchCount(filteredComments.length);
+        // 0件でも早期 return しない。以前はここで抜けていたので、古いDOMが
+        // 残ったまま display:none になり、スクロール状態も前のまま固まっていた（#11）
+        const isEmpty = visibleIds.size === 0;
+        if (isEmpty) this.updateEmptyStateMessage();
+        this.elements.noComments.style.display = isEmpty ? 'block' : 'none';
+        list.style.display = isEmpty ? 'none' : 'block';
+
+        this.syncScrollPosition(previousScrollTop, forceScrollToTop, forceScrollToBottom);
+    }
+
+    // 件数バッジ。メンバー・一般だけは bulk 枠（決定3）で、メモリに載っていない
+    // ことがある。数えられないものを 0 と出すと「そもそも無い」という嘘になるので、
+    // そのときは ? を出して title に未読み込みの件数を書く
+    updateCountBadges(counts, visibleCount) {
+        const unknownBulk = this.unloadedBulk > 0;
+
+        this.elements.totalCount.textContent = `${visibleCount}件`;
+        this.updateSearchMatchCount(visibleCount);
         this.elements.ownerCount.textContent = `配信者: ${counts.owner}`;
         this.elements.moderatorCount.textContent = `モデレーター: ${counts.moderator}`;
-        this.elements.sponsorCount.textContent = `メンバー: ${counts.sponsor}`;
-        this.elements.normalCount.textContent = `一般: ${counts.normal}`;
+        this.elements.sponsorCount.textContent = `メンバー: ${unknownBulk ? '?' : counts.sponsor}`;
+        this.elements.normalCount.textContent = `一般: ${unknownBulk ? '?' : counts.normal}`;
         this.elements.superchatCount.textContent = `スパチャ: ${counts.superchat}`;
         this.elements.membershipCount.textContent = `加入・ギフト: ${counts.membership}`;
 
@@ -1533,110 +1853,74 @@ class PopupController {
             const enabled = !!this.commentFilters[key];
             element.classList.toggle('filter-inactive', !enabled);
             // バッジ単体でも状態を確かめられるように、見た目に加えて文言でも示す
-            element.title = enabled ? 'クリックで非表示にする（現在: 表示中）'
-                                    : 'クリックで表示する（現在: 非表示）';
+            if (unknownBulk && BULK_FILTER_KEYS.includes(key)) {
+                element.title = `クリックで読み込んで表示する（未読み込み${this.unloadedBulk}件）`;
+            } else {
+                element.title = enabled ? 'クリックで非表示にする（現在: 表示中）'
+                                        : 'クリックで表示する（現在: 非表示）';
+            }
             element.setAttribute('aria-pressed', String(enabled));
         }
-        
-        if (filteredComments.length === 0) {
-            console.log('[Popup] No filtered comments to display, showing placeholder');
-            this.updateEmptyStateMessage();
-            this.elements.noComments.style.display = 'block';
-            this.elements.commentsList.style.display = 'none';
-            return;
+    }
+
+    // 表示・非表示の切り替え。行は作り直さない（決定4・#22）
+    syncRowVisibility(visibleIds) {
+        let lastVisible = null;
+
+        for (const [id, row] of this.rows) {
+            const hidden = !visibleIds.has(id);
+            // 同じ値でも書けばスタイルの再計算が走るので、変わったときだけ書く
+            if (!!row.element.hidden !== hidden) row.element.hidden = hidden;
+
+            const selected = this.selectedUser !== null && row.displayName === this.selectedUser;
+            if (row.author.classList.contains('selected') !== selected) {
+                row.author.classList.toggle('selected', selected);
+            }
+
+            if (!hidden) lastVisible = row;
         }
-        
-        console.log('[Popup] Displaying filtered comments list');
-        this.elements.noComments.style.display = 'none';
-        this.elements.commentsList.style.display = 'block';
-        
-        const commentsToDisplay = filteredComments;
-        
-        this.elements.commentsList.innerHTML = commentsToDisplay.map(comment => {
-            const isSelected = this.selectedUser === comment.displayName;
-            const authorClass = isSelected ? 'comment-author selected' : 'comment-author';
-            
-            // 金額だけのスパチャやギフト告知は本文が無いので、空の行を作らない
-            const messageHtml = comment.message
-                ? `<div class="comment-message">${this.escapeHtml(comment.message)}</div>`
-                : '';
-            const kindClass = comment.kind && comment.kind !== 'text' ? ` kind-${comment.kind}` : '';
 
-            return `
-                <div class="comment-item${kindClass}">
-                    <div class="comment-header">
-                        ${this.avatarHtml(comment)}
-                        ${this.roleBadgeHtml(comment)}
-                        ${this.kindBadgeHtml(comment)}
-                        <span class="${authorClass}" data-username="${escapeAttr(comment.displayName)}">${this.escapeHtml(comment.displayName)}</span>
-                        ${this.amountHtml(comment)}
-                        <span class="comment-time">${this.formatTimestamp(comment.publishedAt)}</span>
-                    </div>
-                    ${this.eventTextHtml(comment)}
-                    ${this.stickerHtml(comment)}
-                    ${messageHtml}
-                </div>
-            `;
-        }).join('');
-        
-        // 画像が404などで読めなかったら頭文字表示に差し替える
-        // （MV3のCSPはインラインの onerror= を禁止するのでJSから張る）
-        this.elements.commentsList.querySelectorAll('img.comment-avatar').forEach(img => {
-            img.addEventListener('error', () => {
-                const span = document.createElement('span');
-                span.className = 'comment-avatar comment-avatar--fallback';
-                span.setAttribute('aria-hidden', 'true');
-                span.textContent = img.dataset.initial || '?';
-                img.replaceWith(span);
-            }, { once: true });
-        });
+        // 区切り線を消すのは「最後に見えている行」。CSS の :last-child は
+        // hidden を見ないので、末尾が隠れていると線が1本余る
+        if (this.lastVisibleRow !== lastVisible) {
+            this.lastVisibleRow?.element.classList.remove('comment-item--last');
+            lastVisible?.element.classList.add('comment-item--last');
+            this.lastVisibleRow = lastVisible;
+        }
+    }
 
-        // ステッカー画像が読めなかったら取り除く。ステッカー名の行はそのまま残る
-        this.elements.commentsList.querySelectorAll('img.comment-sticker').forEach(img => {
-            img.addEventListener('error', () => img.remove(), { once: true });
-        });
+    // 行の出し入れが終わったあとに1回だけレイアウトを読み、
+    // 「下端にいるか」はそこから計算で出す（読み直さない。#22）
+    syncScrollPosition(previousScrollTop, forceScrollToTop, forceScrollToBottom) {
+        const list = this.elements.commentsList;
+        const scrollHeight = list.scrollHeight;
+        const clientHeight = list.clientHeight;
 
-        // ユーザー名のクリックイベントを追加
-        this.elements.commentsList.querySelectorAll('.comment-author').forEach(element => {
-            element.addEventListener('click', (e) => {
-                const username = e.target.getAttribute('data-username');
-                if (username) {
-                    if (this.selectedUser === username) {
-                        // 既に選択済みのユーザーをクリックした場合は絞り込み解除
-                        this.clearUserFilter();
-                    } else {
-                        // 新しいユーザーで絞り込み
-                        this.filterByUser(username);
-                    }
-                }
-            });
-        });
-        
-        // スクロール位置の制御
+        let target;
         if (forceScrollToTop) {
             // フィルター変更やクリア時は強制的にトップへ
-            this.elements.commentsList.scrollTop = 0;
-            console.log('[Popup] Scrolled to top (forced)');
-        } else if (forceScrollToBottom) {
-            // ユーザーフィルター時は強制的にボトムへ
-            this.elements.commentsList.scrollTop = this.elements.commentsList.scrollHeight;
-            console.log('[Popup] Scrolled to bottom (forced)');
-        } else if (!forceScrollToTop && this.autoScroll) {
-            // 自動追従モードの場合は新しいコメント表示後も一番下を維持
-            this.elements.commentsList.scrollTop = this.elements.commentsList.scrollHeight;
-            console.log('[Popup] Scrolled to bottom (auto-follow)');
+            target = 0;
+        } else if (forceScrollToBottom || this.autoScroll) {
+            // ユーザーフィルター時と自動追従モードは一番下を維持
+            target = scrollHeight;
         } else {
             // ユーザーが上にスクロール中は位置を維持
-            this.elements.commentsList.scrollTop = previousScrollTop;
-            console.log('[Popup] Maintained scroll position');
+            target = previousScrollTop;
         }
-        // スクロール後に autoScroll フラグを再同期
-        this.autoScroll = this.isAtBottom();
-        this.updateScrolledToBottom();
-        
-        console.log('[Popup] Comments rendered successfully, scroll position:', this.elements.commentsList.scrollTop);
+        list.scrollTop = target;
+
+        // scrollTop への代入は scrollHeight - clientHeight で頭打ちになるので、
+        // 下端判定は代入した値のまま計算できる（読み直すと同期レイアウトが増える）
+        const atBottom = target + clientHeight >= scrollHeight - SCROLL_BOTTOM_THRESHOLD;
+        this.autoScroll = atBottom;
+
+        const commentsArea = list.closest('.comments-area');
+        if (commentsArea) {
+            const hasScroll = scrollHeight > clientHeight;
+            commentsArea.classList.toggle('scrolled-to-bottom', !hasScroll || atBottom);
+        }
     }
-    
+
     updateStatus(status) {
         this.elements.statusIndicator.textContent = status;
         
@@ -1719,7 +2003,7 @@ class PopupController {
     }
     
     showMessage(message, type = 'info') {
-        console.log(`${type}: ${message}`);
+        debugLog(`${type}: ${message}`);
         
         if (type === 'success') {
             this.elements.successMessage.textContent = message;
@@ -1750,12 +2034,6 @@ class PopupController {
         }
     }
     
-    escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-    
     async loadCommentFilters() {
         try {
             const response = await this.sendMessageWithRetry({ action: 'getCommentFilters' }, 2);
@@ -1764,7 +2042,7 @@ class PopupController {
                 this.updateFilterUI();
             }
         } catch (error) {
-            console.error('[YouTube Special Comments] Error loading comment filters:', error);
+            debugError('[YouTube Special Comments] Error loading comment filters:', error);
             // デフォルト値を使用
             this.updateFilterUI();
         }
@@ -1776,7 +2054,10 @@ class PopupController {
         }
 
         this.updatePresetButtons();
-        this.renderComments(false, true); // フィルターが変更されたら再描画（一番下にスクロール）
+        // トグルの内容によっては bulk 枠を読む必要が出る（決定4）。
+        // await しない経路なので、失敗はここで拾って出す
+        this.renderWithBulk(false, true).catch(error =>
+            debugError('[Popup] Failed to render after filter change:', error));
     }
     
     updatePresetButtons() {
@@ -1798,7 +2079,7 @@ class PopupController {
     async onFilterToggleChange(filterType) {
         this.commentFilters[filterType] = this.elements[filterType + 'Toggle'].checked;
         
-        console.log('[YouTube Special Comments] Filter changed:', filterType, '=', this.commentFilters[filterType]);
+        debugLog('[YouTube Special Comments] Filter changed:', filterType, '=', this.commentFilters[filterType]);
         
         try {
             await this.sendMessageWithRetry({
@@ -1807,15 +2088,15 @@ class PopupController {
             }, 2);
             
             this.updatePresetButtons();
-            this.renderComments(false, true); // フィルターが変更されたら再描画（一番下にスクロール）
+            await this.renderWithBulk(false, true);
             
         } catch (error) {
-            console.error('[YouTube Special Comments] Error saving comment filters:', error);
+            debugError('[YouTube Special Comments] Error saving comment filters:', error);
         }
     }
 
     async toggleBadgeFilter(filterType) {
-        console.log('[YouTube Special Comments] Badge clicked:', filterType);
+        debugLog('[YouTube Special Comments] Badge clicked:', filterType);
         
         // 該当のカテゴリのみが現在有効であるか判定 (他はすべて無効)
         const isOnlyActive = this.commentFilters[filterType] && 
@@ -1839,12 +2120,12 @@ class PopupController {
             this.updateFilterUI();
             
         } catch (error) {
-            console.error('[YouTube Special Comments] Error toggling badge filter:', error);
+            debugError('[YouTube Special Comments] Error toggling badge filter:', error);
         }
     }
     
     async applyPreset(presetType) {
-        console.log('[YouTube Special Comments] Applying preset:', presetType);
+        debugLog('[YouTube Special Comments] Applying preset:', presetType);
         
         if (!FILTER_PRESETS[presetType]) return;
         this.commentFilters = { ...FILTER_PRESETS[presetType] };
@@ -1858,12 +2139,12 @@ class PopupController {
             this.updateFilterUI();
             
         } catch (error) {
-            console.error('[YouTube Special Comments] Error applying preset:', error);
+            debugError('[YouTube Special Comments] Error applying preset:', error);
         }
     }
     
     updateVideoIdDisplay() {
-        console.log('[YouTube Special Comments] Updating video ID display:', {
+        debugLog('[YouTube Special Comments] Updating video ID display:', {
             currentVideoId: this.currentVideoId,
             isMonitoring: this.isMonitoring
         });
@@ -1877,7 +2158,7 @@ class PopupController {
     }
     
     handleAutoStop(reason) {
-        console.log('[Popup] Monitoring auto-stopped:', reason);
+        debugLog('[Popup] Monitoring auto-stopped:', reason);
         
         // 監視状態を更新
         this.isMonitoring = false;
@@ -1914,7 +2195,7 @@ class PopupController {
     }
     
     showDetailedError(errorInfo) {
-        console.log('[Popup] Showing detailed error:', errorInfo);
+        debugLog('[Popup] Showing detailed error:', errorInfo);
         
         // 通常のエラーメッセージを隠す
         this.elements.errorMessage.style.display = 'none';
@@ -1988,7 +2269,7 @@ class PopupController {
     }
     
     handleRetry() {
-        console.log('[Popup] Retry button clicked');
+        debugLog('[Popup] Retry button clicked');
         this.hideDetailedError();
         
         // 取得開始を再試行
@@ -1998,7 +2279,7 @@ class PopupController {
     }
     
     openOptionsPage() {
-        console.log('[Popup] Opening options page');
+        debugLog('[Popup] Opening options page');
         chrome.runtime.openOptionsPage();
     }
     
@@ -2006,18 +2287,18 @@ class PopupController {
     async sendMessageWithRetry(message, maxRetries = 3, baseDelay = 1000) {
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                console.log(`[YouTube Special Comments] [Popup] Sending message attempt ${attempt}/${maxRetries}:`, message.action);
+                debugLog(`[YouTube Special Comments] [Popup] Sending message attempt ${attempt}/${maxRetries}:`, message.action);
                 
                 const response = await this.sendMessageWithTimeout(message, 5000);
-                console.log(`[YouTube Special Comments] [Popup] ✅ Message successful on attempt ${attempt}`);
+                debugLog(`[YouTube Special Comments] [Popup] ✅ Message successful on attempt ${attempt}`);
                 return response;
                 
             } catch (error) {
-                console.warn(`[YouTube Special Comments] [Popup] Message failed on attempt ${attempt}:`, error.message);
+                debugWarn(`[YouTube Special Comments] [Popup] Message failed on attempt ${attempt}:`, error.message);
                 
                 // Extension context invalidated の場合は特別処理
                 if (error.message.includes('Extension context invalidated')) {
-                    console.error('[YouTube Special Comments] [Popup] 🔄 Extension context invalidated - attempting recovery');
+                    debugError('[YouTube Special Comments] [Popup] 🔄 Extension context invalidated - attempting recovery');
                     
                     // Service Worker再接続を試行
                     await this.delay(1000);
@@ -2032,7 +2313,7 @@ class PopupController {
                 
                 // "Could not establish connection" の場合も再接続試行
                 if (error.message.includes('Could not establish connection')) {
-                    console.warn('[YouTube Special Comments] [Popup] 🔄 Connection lost - attempting recovery');
+                    debugWarn('[YouTube Special Comments] [Popup] 🔄 Connection lost - attempting recovery');
                     
                     if (attempt === 1) {
                         this.showInitializationStatus('拡張機能に再接続中...');
@@ -2042,7 +2323,7 @@ class PopupController {
                     const recovered = await this.waitForServiceWorker(3);
                     
                     if (recovered) {
-                        console.log('[YouTube Special Comments] [Popup] ✅ Connection recovered');
+                        debugLog('[YouTube Special Comments] [Popup] ✅ Connection recovered');
                         this.hideInitializationStatus();
                     }
                 }
@@ -2057,7 +2338,7 @@ class PopupController {
                 
                 // 指数バックオフで待機
                 const delay = baseDelay * Math.pow(2, attempt - 1);
-                console.log(`[YouTube Special Comments] [Popup] Waiting ${delay}ms before retry...`);
+                debugLog(`[YouTube Special Comments] [Popup] Waiting ${delay}ms before retry...`);
                 await this.delay(delay);
             }
         }
@@ -2065,14 +2346,17 @@ class PopupController {
     
     // ユーザーフィルタリング機能
     filterByUser(username) {
-        console.log('[YouTube Special Comments] Filtering by user:', username);
+        debugLog('[YouTube Special Comments] Filtering by user:', username);
         this.selectedUser = username;
         this.updateUserFilterStatus();
-        this.renderComments(false, true); // ユーザーフィルター適用時は一番下にスクロール
+        // 絞り込んだ相手の発言は bulk 枠にもある。ユーザー絞り込みだけ
+        // primary しか見ないと、同じ人の一般コメントが黙って抜け落ちる
+        this.renderWithBulk(false, true) // ユーザーフィルター適用時は一番下にスクロール
+            .catch(error => debugError('[Popup] Failed to render for user filter:', error));
     }
     
     clearUserFilter() {
-        console.log('[YouTube Special Comments] Clearing user filter');
+        debugLog('[YouTube Special Comments] Clearing user filter');
         this.selectedUser = null;
         this.updateUserFilterStatus();
         this.renderComments(false, true); // ユーザーフィルタークリア時は一番下にスクロール
@@ -2089,7 +2373,16 @@ class PopupController {
         const wrapper = this.elements.searchKeywordInput.closest('.search-input-wrapper');
         wrapper.classList.toggle('is-active', isSearching);
         clearTimeout(this._searchDebounceTimer);
-        this._searchDebounceTimer = setTimeout(() => this.renderComments(false, false), 150);
+        // 検索は取得済み全件に効く（それがこの拡張機能の売り）。bulk 枠を
+        // メモリに載せていなければ、ここで読んでから描く
+        this._searchDebounceTimer = setTimeout(() => {
+            if (isSearching && this.shouldLoadBulk()) {
+                this.elements.searchMatchCount.textContent = '検索中…';
+                this.elements.searchMatchCount.style.display = 'inline-block';
+            }
+            this.renderWithBulk(false, false).catch(error =>
+                debugError('[Popup] Failed to render search results:', error));
+        }, 150);
     }
 
     clearSearch() {
@@ -2114,7 +2407,9 @@ class PopupController {
     // 0件のときに理由まで出す。「まだコメントがありません」だけだと、
     // 検索が全件に効いているのか、そもそも取得できていないのかが見分けられない
     updateEmptyStateMessage() {
-        const total = this.comments.length;
+        // 「取得済み」はメモリに載っているぶんだけではない。
+        // まだ読んでいない bulk も取り込み済みなので足して数える（決定1・決定4）
+        const total = this.comments.length + this.unloadedBulk;
 
         if (total === 0) {
             this.elements.noComments.textContent = 'まだコメントがありません';
@@ -2125,9 +2420,14 @@ class PopupController {
             // キーワードだけなら当たるのに0件なら、消しているのは役割・ユーザーの絞り込み
             const keywordHits = this.comments
                 .filter(comment => searchTextOf(comment).includes(this.searchQuery)).length;
+            // 検索した範囲は正直に書く。上限や読み込み失敗で全件を見られていないのに
+            // 「すべてを検索」と出すと、0件の理由がまた見分けられなくなる
+            const scope = this.unloadedBulk > 0
+                ? `${this.comments.length}件を検索・${this.unloadedBulk}件は未読み込み`
+                : `取得済み${total}件すべてを検索`;
             this.elements.noComments.textContent = keywordHits > 0
                 ? `「${this.searchKeyword.trim()}」に一致する${keywordHits}件は、いまのフィルターで非表示です`
-                : `「${this.searchKeyword.trim()}」に一致するコメントはありません（取得済み${total}件すべてを検索）`;
+                : `「${this.searchKeyword.trim()}」に一致するコメントはありません（${scope}）`;
             return;
         }
 
@@ -2153,7 +2453,7 @@ class PopupController {
     async sendTabMessageWithRetry(tabId, message, maxRetries = 3) {
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                console.log(`[YouTube Special Comments] [Popup] Sending tab message attempt ${attempt}/${maxRetries}:`, message.action);
+                debugLog(`[YouTube Special Comments] [Popup] Sending tab message attempt ${attempt}/${maxRetries}:`, message.action);
                 
                 const response = await new Promise((resolve, reject) => {
                     chrome.tabs.sendMessage(tabId, message, (response) => {
@@ -2165,15 +2465,15 @@ class PopupController {
                     });
                 });
                 
-                console.log(`[YouTube Special Comments] [Popup] ✅ Tab message successful on attempt ${attempt}`);
+                debugLog(`[YouTube Special Comments] [Popup] ✅ Tab message successful on attempt ${attempt}`);
                 return response;
                 
             } catch (error) {
-                console.log(`[YouTube Special Comments] [Popup] Tab message failed on attempt ${attempt}:`, error.message);
+                debugLog(`[YouTube Special Comments] [Popup] Tab message failed on attempt ${attempt}:`, error.message);
                 
                 // Content Scriptが準備できていない可能性
                 if (error.message.includes('Could not establish connection')) {
-                    console.log('[YouTube Special Comments] [Popup] Content script not ready, waiting...');
+                    debugLog('[YouTube Special Comments] [Popup] Content script not ready, waiting...');
                     await this.delay(1000 * attempt); // 段階的に遅延を増加
                 }
                 
