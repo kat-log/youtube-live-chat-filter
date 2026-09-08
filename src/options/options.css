@@ -1,3 +1,92 @@
+/* ═══════════════════════════════════════════
+   CSS Variables (#14)
+   ═══════════════════════════════════════════
+   ダークモードのトグルを載せているページ自身が、永久にライトテーマだった。
+   popup.css と同じ「変数を data-theme で差し替える」方式にする。
+
+   **極性は popup.css と逆で、:root がライト。**
+   popup は :root がダークで [data-theme="light"] が上書き側だが、こちらは
+   もともとライトしか無かったページなので、:root にいまの色をそのまま置く。
+   こうすると **JS が1行も走らなくてもライトの見た目が完全に保たれる**
+   （data-theme を立てるのは shared/theme.js で、head から同期で走る）。 */
+:root {
+    --bg-page:        #f5f5f5;
+    --bg-surface:     #ffffff;
+    --bg-panel:       #f8f9fa;
+    --bg-input:       #ffffff;
+    --bg-hover:       #f0f0f0;
+    --bg-footer:      #fafafa;
+
+    --text-primary:   #333333;
+    --text-secondary: #555555;
+    --text-muted:     #666666;
+
+    --border:         #e0e0e0;
+    --shadow:         rgba(0, 0, 0, 0.1);
+
+    --accent:         #1976d2;
+    --accent-dim:     #1565c0;
+    --accent-soft:    #e3f2fd;
+    --accent-glow:    rgba(25, 118, 210, 0.1);
+    --accent-shadow:  rgba(25, 118, 210, 0.3);
+
+    --header-from:    #1976d2;
+    --header-to:      #1565c0;
+
+    --btn-secondary:      #757575;
+    --btn-secondary-dim:  #616161;
+    --btn-secondary-shadow: rgba(117, 117, 117, 0.3);
+
+    --warn:           #ff9800;
+    --bg-warm:        #fff3e0;
+    --bg-note:        #fff9c4;
+    --note-border:    #fbc02d;
+    --note-text:      #f57f17;
+
+    --switch-off:     #ccc;
+    --switch-knob:    #ffffff;
+}
+
+/* ダークテーマ。色の当て方は popup.css のダーク側に合わせている
+   （地は #0d0d0d 系、青は白地用の #1976d2 では暗すぎるので明るいカットに） */
+[data-theme="dark"] {
+    --bg-page:        #0d0d0d;
+    --bg-surface:     #161616;
+    --bg-panel:       #1e1e1e;
+    --bg-input:       #1e1e1e;
+    --bg-hover:       #252525;
+    --bg-footer:      #111111;
+
+    --text-primary:   #f0f0f0;
+    --text-secondary: #b8b8b8;
+    --text-muted:     #909090;
+
+    --border:         rgba(255, 255, 255, 0.12);
+    --shadow:         rgba(0, 0, 0, 0.6);
+
+    --accent:         #5c9ef5;
+    --accent-dim:     #7fb4f8;
+    --accent-soft:    rgba(92, 158, 245, 0.28);
+    --accent-glow:    rgba(92, 158, 245, 0.2);
+    --accent-shadow:  rgba(92, 158, 245, 0.25);
+
+    --header-from:    #123a63;
+    --header-to:      #0d2b4a;
+
+    --btn-secondary:      #3a3a3a;
+    --btn-secondary-dim:  #4a4a4a;
+    --btn-secondary-shadow: rgba(0, 0, 0, 0.5);
+
+    --warn:           #ffa726;
+    --bg-warm:        rgba(255, 152, 0, 0.10);
+    --bg-note:        rgba(251, 192, 45, 0.10);
+    --note-border:    #fbc02d;
+    --note-text:      #fbc02d;
+
+    --switch-off:     rgba(255, 255, 255, 0.22);
+    --switch-knob:    #ffffff;
+}
+
 * {
     margin: 0;
     padding: 0;
@@ -6,21 +95,21 @@
 
 body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background-color: #f5f5f5;
-    color: #333;
+    background-color: var(--bg-page);
+    color: var(--text-primary);
     line-height: 1.6;
 }
 
 .container {
     max-width: 800px;
     margin: 0 auto;
-    background-color: white;
+    background-color: var(--bg-surface);
     min-height: 100vh;
-    box-shadow: 0 0 20px rgba(0,0,0,0.1);
+    box-shadow: 0 0 20px var(--shadow);
 }
 
 .header {
-    background: linear-gradient(135deg, #1976d2, #1565c0);
+    background: linear-gradient(135deg, var(--header-from), var(--header-to));
     color: white;
     padding: 32px;
     text-align: center;
@@ -49,8 +138,8 @@ body {
     font-size: 20px;
     font-weight: 600;
     margin-bottom: 16px;
-    color: #1976d2;
-    border-bottom: 2px solid #e3f2fd;
+    color: var(--accent);
+    border-bottom: 2px solid var(--accent-soft);
     padding-bottom: 8px;
 }
 
@@ -63,13 +152,15 @@ body {
     display: block;
     margin-bottom: 8px;
     font-weight: 500;
-    color: #555;
+    color: var(--text-secondary);
 }
 
 .form-group input {
     width: 100%;
     padding: 12px 16px;
-    border: 2px solid #e0e0e0;
+    background-color: var(--bg-input);
+    color: var(--text-primary);
+    border: 2px solid var(--border);
     border-radius: 8px;
     font-size: 16px;
     transition: all 0.3s;
@@ -78,8 +169,8 @@ body {
 
 .form-group input:focus {
     outline: none;
-    border-color: #1976d2;
-    box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.1);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
 .toggle-btn {
@@ -89,7 +180,7 @@ body {
     transform: translateY(-50%);
     background: none;
     border: none;
-    color: #1976d2;
+    color: var(--accent);
     cursor: pointer;
     font-size: 14px;
     padding: 4px 8px;
@@ -98,18 +189,18 @@ body {
 }
 
 .toggle-btn:hover {
-    background-color: #f0f0f0;
+    background-color: var(--bg-hover);
 }
 
 .help-text {
     font-size: 14px;
-    color: #666;
+    color: var(--text-muted);
     margin-top: 8px;
     line-height: 1.5;
 }
 
 .help-text a {
-    color: #1976d2;
+    color: var(--accent);
     text-decoration: none;
 }
 
@@ -137,32 +228,40 @@ body {
 }
 
 .btn-primary {
-    background-color: #1976d2;
+    background-color: var(--accent);
     color: white;
 }
 
 .btn-primary:hover {
-    background-color: #1565c0;
+    background-color: var(--accent-dim);
     transform: translateY(-1px);
-    box-shadow: 0 4px 8px rgba(25, 118, 210, 0.3);
+    box-shadow: 0 4px 8px var(--accent-shadow);
 }
 
 .btn-secondary {
-    background-color: #757575;
+    background-color: var(--btn-secondary);
     color: white;
 }
 
 .btn-secondary:hover {
-    background-color: #616161;
+    background-color: var(--btn-secondary-dim);
     transform: translateY(-1px);
-    box-shadow: 0 4px 8px rgba(117, 117, 117, 0.3);
+    box-shadow: 0 4px 8px var(--btn-secondary-shadow);
+}
+
+/* キーボードで掴んでいることを見せる（#13）。popup.css と同じ考え方で、
+   :focus-visible だけに出す（マウスで押しても見た目は変わらない） */
+.btn:focus-visible,
+.toggle-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
 }
 
 .instructions {
-    background-color: #f8f9fa;
+    background-color: var(--bg-panel);
     padding: 20px;
     border-radius: 8px;
-    border-left: 4px solid #1976d2;
+    border-left: 4px solid var(--accent);
 }
 
 .instructions ol {
@@ -171,7 +270,7 @@ body {
 
 .instructions li {
     margin-bottom: 8px;
-    color: #555;
+    color: var(--text-secondary);
 }
 
 .comment-types {
@@ -185,7 +284,7 @@ body {
     align-items: center;
     gap: 12px;
     padding: 12px;
-    background-color: #f8f9fa;
+    background-color: var(--bg-panel);
     border-radius: 8px;
 }
 
@@ -216,15 +315,15 @@ body {
 }
 
 .description {
-    color: #555;
+    color: var(--text-secondary);
     font-size: 14px;
 }
 
 .api-instructions {
-    background-color: #fff3e0;
+    background-color: var(--bg-warm);
     padding: 20px;
     border-radius: 8px;
-    border-left: 4px solid #ff9800;
+    border-left: 4px solid var(--warn);
 }
 
 .api-instructions ol {
@@ -234,11 +333,11 @@ body {
 
 .api-instructions li {
     margin-bottom: 8px;
-    color: #555;
+    color: var(--text-secondary);
 }
 
 .api-instructions a {
-    color: #ff9800;
+    color: var(--warn);
     text-decoration: none;
 }
 
@@ -247,20 +346,20 @@ body {
 }
 
 .note {
-    background-color: #fff9c4;
+    background-color: var(--bg-note);
     padding: 12px;
     border-radius: 6px;
-    border-left: 4px solid #fbc02d;
-    color: #f57f17;
+    border-left: 4px solid var(--note-border);
+    color: var(--note-text);
     font-size: 14px;
 }
 
 .footer {
-    background-color: #fafafa;
+    background-color: var(--bg-footer);
     padding: 20px;
     text-align: center;
-    border-top: 1px solid #e0e0e0;
-    color: #666;
+    border-top: 1px solid var(--border);
+    color: var(--text-muted);
     font-size: 14px;
 }
 
@@ -300,10 +399,25 @@ body {
     display: flex;
     align-items: center;
     gap: 12px;
+    /* 中の input を絶対配置で退避させるので、基準をここに置く（#13） */
+    position: relative;
 }
 
+/* display: none は要素をタブ順から外す（#13）。この画面の5つのスイッチ
+   （ダークモード・12時間表記・秒表示・デバッグモード・自動取得）が、
+   キーボードだけの利用者にはまったく操作できなかった。
+   レイアウトに影響しない形で「見えないが掴める」に変える —— 絶対配置なので
+   flex の子として数えられず、**見た目は1pxも変わらない** */
 .debug-switch {
-    display: none;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    opacity: 0;
+    /* 実際に押されるのは常に隣のラベル（for で結ばれている） */
+    pointer-events: none;
 }
 
 .switch-label {
@@ -311,7 +425,7 @@ body {
     display: inline-block;
     width: 48px;
     height: 26px;
-    background-color: #ccc;
+    background-color: var(--switch-off);
     border-radius: 13px;
     cursor: pointer;
     transition: background-color 0.3s;
@@ -324,13 +438,13 @@ body {
     left: 2px;
     width: 22px;
     height: 22px;
-    background-color: white;
+    background-color: var(--switch-knob);
     border-radius: 50%;
     transition: transform 0.3s;
 }
 
 .debug-switch:checked + .switch-label {
-    background-color: #1976d2;
+    background-color: var(--accent);
 }
 
 .debug-switch:checked + .switch-label:before {
@@ -338,7 +452,13 @@ body {
 }
 
 .switch-label:hover {
-    box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.1);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+/* input は透明なので、見えている本体（ラベル）に枠を出す */
+.debug-switch:focus-visible + .switch-label {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
 }
 
 @media (max-width: 600px) {
@@ -346,27 +466,27 @@ body {
         margin: 0;
         box-shadow: none;
     }
-    
+
     .header {
         padding: 20px;
     }
-    
+
     .header h1 {
         font-size: 24px;
     }
-    
+
     .content {
         padding: 20px;
     }
-    
+
     .form-actions {
         flex-direction: column;
     }
-    
+
     .btn {
         width: 100%;
     }
-    
+
     .comment-type {
         flex-direction: column;
         align-items: flex-start;

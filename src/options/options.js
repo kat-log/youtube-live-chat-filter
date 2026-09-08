@@ -3,6 +3,22 @@
 // 読み込みだけは走る。options.html で options.js より先に読み込んでいる
 const { stripHtmlTags } = self.YTF;
 
+// テーマの適用は shared/theme.js が正（#14 #15）。options.html の <head> から
+// 読み込んでいるので、この画面もダークモードに追従する。
+// 以前はこのページだけが仕組みの外にあり、**ダークモードのトグルを載せている
+// ページ自身が永久にライトテーマ**だった
+const { applyTheme } = self.YTFTheme;
+
+// テーマはこの画面からも popup からも変えられる。どちらで変えても
+// 経路を1本にするため、自分の保存も含めて storage.onChanged で受ける
+// （chrome.storage.onChanged は書いた本人のページにも飛ぶ）
+chrome.storage.onChanged.addListener((changes) => {
+    if (!changes.theme) return;
+    const theme = applyTheme(changes.theme.newValue);
+    const toggle = document.getElementById('theme-toggle');
+    if (toggle) toggle.checked = (theme === 'dark');
+});
+
 class OptionsController {
     constructor() {
         this.initializeElements();
@@ -181,7 +197,9 @@ class OptionsController {
 
     async saveTheme() {
         try {
-            const theme = this.elements.themeToggle.checked ? 'dark' : 'light';
+            // 塗るのが先、保存が後。storage.onChanged は非同期に返ってくるので、
+            // 待ってから塗ると切り替えが一拍遅れて見える
+            const theme = applyTheme(this.elements.themeToggle.checked ? 'dark' : 'light');
             await chrome.storage.local.set({ theme });
         } catch (error) {
             console.error('Error saving theme setting:', error);

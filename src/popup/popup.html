@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <title>YouTube Special Comments Filter</title>
     <link rel="stylesheet" href="popup.css">
+    <!-- テーマは最初の描画より前に決める（#15）。body の末尾で読むと、
+         ライトテーマの利用者が一瞬ダーク（popup.css の :root）を見る -->
+    <script src="../shared/theme.js"></script>
 </head>
 <body>
     <div class="app">
@@ -184,7 +187,7 @@
                     <span id="total-count" class="comment-count comment-count-total">0件</span>
                     <div class="comment-count-details">
                         <span role="button" tabindex="0" id="owner-count" class="comment-count-item owner-count">配信者: 0</span>
-                        <span role="button" tabindex="0" id="moderator-count" class="comment-count-item moderator-count">モデレ: 0</span>
+                        <span role="button" tabindex="0" id="moderator-count" class="comment-count-item moderator-count">モデレーター: 0</span>
                         <span role="button" tabindex="0" id="sponsor-count" class="comment-count-item sponsor-count">メンバー: 0</span>
                         <span role="button" tabindex="0" id="normal-count" class="comment-count-item normal-count">一般: 0</span>
                         <span role="button" tabindex="0" id="superchat-count" class="comment-count-item superchat-count">スパチャ: 0</span>

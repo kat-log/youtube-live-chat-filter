@@ -359,6 +359,48 @@ content script は二重注入ガード（`window.__domChatInitialized`）で包
 - **「壊れた」の判定は、単発の失敗ではなく連続で見る。** 本文の器を持たない行や
   お知らせ行は普通に混ざるので、1件2件で騒ぐと狼少年になる
 
+### キーボードで触れること
+
+フェーズ8で判明したこと。**「フォーカスを与える」は、与えた先が
+画面に出ているかとセットでしか意味を持たない。**
+
+- 見た目のためにネイティブの部品を隠すときは、`display: none` ではなく
+  **レイアウトに影響しない絶対配置 + `opacity: 0`** にする。
+  `display: none` と `visibility: hidden` はタブ順から要素を外すので、
+  「見えている代役（スライダー等）はマウスでしか押せない」状態になる
+- 隠した部品にフォーカスが入っても見えないので、
+  **枠は代役のほうに出す**（`input:focus-visible + .slider`）。
+  `:focus` ではなく `:focus-visible` を使えば、マウス操作時の見た目は変わらない
+- **「畳んである入れ物」は `inert` にする。** `max-height: 0` +
+  `overflow: hidden` で畳んだ領域は、視覚的に切り取られているだけで
+  **中の要素は生きている**。掴める部品を増やすと、そのぶん
+  「見えないのにフォーカスが入る」箇所が増える。閉じたら `inert`、
+  閉じるときはフォーカスを開いた本人（トグルボタン）へ返す
+- **一覧の中の要素に `tabindex` を配らない。** 行が数千あれば Tab も数千回になる。
+  同じ操作に届く道が他にあるなら（件数バッジなど）、そちらを正しく作るほうが速い
+
+### テーマの当て方
+
+**見た目に出る設定は、非同期のストレージだけでは間に合わない**（#15）。
+
+- 正は `chrome.storage.local` の `theme` ただ1つ。ただし `chrome.storage` は
+  非同期なので、応答を待ってから塗ると、待っているあいだ CSS の既定が見える
+  （`popup.css` は `:root` がダークなので、ライトテーマの利用者が真っ黒な画面を見る）
+- 同期で読めるのは `localStorage` だけ。これを**写し**として持ち、
+  `<head>` から読む `shared/theme.js` が
+  「写しで即塗る → 正が返ったら塗り直す」の2段でやる。
+  写しが無い初回だけは既定値（ライト）で出るが、それは誤りではない
+- 塗る口は `applyTheme()` 1つ。**写しの更新もその中でやる**
+  （別々に書くと、片方だけ更新される経路が必ず生える）
+- **拡張機能のページが2枚ある以上、テーマの実装も1つに置く。**
+  #14（設定画面だけが永久にライトテーマ）は、popup だけが仕組みを持っていたために起きた
+
+なお `src/shared/` は「3環境すべてから読む」ではなく
+**「2つ以上の環境から読む」**の意味になっている（`store.js` は SW と popup、
+`theme.js` は popup と options）。`theme.js` は `document` と `localStorage` を
+使うので **Service Worker からは読めない**。ESLint はこのファイルだけ
+別のグローバルで見ている。
+
 ### popup と SW の通信
 
 `chrome.runtime.connect` のポートに変える。得られるもの:
@@ -2068,6 +2110,163 @@ content script の通信には触っていない、フェーズ7以降には手�
 - **見た目を変えない。** 到達できるようにするだけ。
   `docs/comment-display-design.md` で決めた font-weight とフォントスタックは維持する
 
+**実施記録（2026-09-08 完了）**
+
+6つとも実装できた。地雷は踏んでいない（両 content script に `'use strict'` を
+足していない、ES モジュールにもしていない、`sourceType` は `script` のまま、
+`shared/` はガードで包まず `self` へ代入、生の U+0000 も書いていない、
+実行時の依存はゼロのまま、CSS のクラス名と DOM 構造は維持（`:has()` は
+コメント行の側で、フィルターのトグルとは無関係だった）、
+フォントスタックと font-weight は popup も options も触っていない、
+フェーズ9 には手を出していない）。
+フェーズ7 からの申し送り5点はどれも正確で、行番号も全部当たっていた。
+判断が要った点と、節の指示だけでは決まらなかったことを残す。
+
+1. **「`display: none` をやめる」だけでは、キーボードで触れるようにならない。**
+   閉じているドロワー（`popup.css` の `.settings-drawer`）は
+   `max-height: 0` + `overflow: hidden` で**切り取られているだけ**で、中の要素は
+   生きている。つまり `display: none` を外した瞬間、**閉じたドロワーの中の
+   見えない9個のトグルに Tab で順番に入る**ようになる（もともと中のボタン4つは
+   そうなっていたが、9個増えると実害になる）。`inert` を付けて丸ごとタブ順から
+   外し、Esc で閉じたときはフォーカスを歯車ボタンへ返す形にした。
+   **節の「やること1」を素直に読むと、ここは見落とす。**
+   フォーカスを与えるときは「与えた先が**いま画面に出ているか**」を必ず一緒に見ること。
+   **指針側（「目指す設計」に「キーボードで触れること」の節を新設）に書いた。**
+
+2. **`#15` は「`loadTheme()` を読み込み時に実行する」だけでは直りきらない。**
+   `chrome.storage` は非同期なので、応答を待つあいだ CSS の既定
+   （`popup.css` は `:root` がダーク）が見える。`loadDebugMode()` を手本にすると
+   ここで止まるが、デバッグモードは**見た目に出ない**設定なので、同じ形でよかっただけだった。
+   同期で読める場所は `localStorage` しか無いので、
+   **正は `chrome.storage.local`、`localStorage` はその写し**という形にして、
+   `<head>` から読む `src/shared/theme.js` が写しで即塗り → 正が返ったら塗り直す、
+   の2段にした。写しが無い初回だけライトで出るが、それは既定値と同じなので誰も損しない。
+   **指針側（「テーマの当て方」の節を新設）に書いた。**
+
+3. **`shared/` は「3環境すべてから読む」ではなくなった。** テーマの適用は popup と
+   options の両方が要る（#14 は、まさに options がその仕組みの外にあった不具合）ので
+   `src/shared/theme.js` に置いたが、これは `document` と `localStorage` を使うため
+   **Service Worker からは読めない**。`store.js` も既に「SW と popup だけ」なので、
+   実態としては shared = 「2つ以上の環境から読む」の意味になっている。
+   `eslint.config.js` は `src/shared/**` に SW でも在るグローバルしか許していないので、
+   `src/shared/theme.js` だけを後から上書きする設定を1つ足した
+   （ブロックの順番を入れ替えると効かなくなる）。
+
+4. **#17 は「文言どおりに動かす」を選べなかった。** 5つの文言のうち
+   「1分後に再試行」「明日再試行」は、popup が閉じれば死ぬ以上どうやっても代行できない
+   （待てるのは popup が開いている間だけで、待たせる意味も無い）。
+   「接続確認」「再確認」は、やることが結局「取得を開始し直す」と同じ。
+   唯一「ページ再読込」だけは本当にできるので、**採ったのは
+   「実際にできる2つだけを名乗る」**という形——`再試行` と `ページ再読込`。
+   待ち時間の案内（「1分待ってから」「明日の00:00にリセット」）は
+   `service-worker.js` の `ERROR_SOLUTIONS` の `solution` 文に元から入っていて、
+   ボタンの上の行に出ているので、**情報としては何も失われていない**。
+   申し送りどおり `updateStatus()` と `updateChatHealth()` は混ぜていない。
+
+5. **options ページにハーネスを足した**（#T7）。#14 で options.js に
+   テーマの追従を入れる以上、テスト0件のままにはできなかった。
+   popup ハーネスの偽 document をそのまま借り、**引ける id の正だけを
+   `options.html` の実物に差し替える**形で 60 行ほどで書けた。
+   popup 側と1つだけ違えてあるのは、**`storage.local.set` が `onChanged` を
+   発火させる**こと（本物と同じ）。テーマは「保存 → 通知 → 塗り直し」で
+   自分の画面にも効く作りなので、そこを切ると往復が見えない。
+
+6. **`.comment-author` にはフォーカスを与えなかった。** #13 は
+   「フォーカス表示が無い7つのセレクタ」に `.comment-author` を挙げているが、
+   これはコメント行の中の発言者名で、**数千行ぶん存在しうる**。
+   `tabindex` を与えると Tab キーが数千回ぶん潰れて、キーボード利用者にはむしろ後退する。
+   役割での絞り込みは件数バッジ（`role="button" tabindex="0"`、Enter/Space 対応済み）から
+   できるので、残りの6つ（ボタン類）だけに `:focus-visible` を足した。
+
+7. **ヘルス表示の色を変数にした**（フェーズ7 からの申し送り1）。
+   緑・橙・赤の直書きのうち、**橙と赤は白地では文字として読めない**
+   （コントラスト比2〜3）。役割色と同じ考え方で、ライトテーマ側に暗いカットを置いた。
+   点（7px の丸）だけなら直書きでも困らなかったが、文言と同じ色なので分けなかった。
+
+テストは 201 件 → **239 件**（`shared/theme.js` 9件・options 11件・popup の UI 18件を追加。
+既存のテストは1件も書き換えていない —— popup ハーネスに theme.js の評価を
+1行足しただけで通った）。ハーネスは2つ増えた（`test/helpers/options-harness.js`、
+`test/helpers/theme-harness.js`）。
+
+**詰まった箇所**: 上の1（`display: none` を外すと閉じたドロワーが罠になる）と
+2（読み込み時に実行しても非同期の窓が残る）の2つ。どちらも
+**「節に書かれた対処をそのとおりやると、直ったつもりで別の穴が開く」**形で、
+実装中に自分で気付く必要があった。**資料に書いてほしかったこと**は2つで、
+どちらも指針側に節を新設して書いた:
+(a) キーボードで触れるようにするときは「触れる先が画面に出ているか」を一緒に見る、
+(b) テーマのように**見た目に出る設定**は、非同期のストレージだけでは間に合わない。
+
+**完了条件の確認**
+
+テストに加えて、**Chromium（Playwright）で `popup.html` と `options.html` を
+直接開いて実測した**。`chrome.*` は最小限のスタブ、`file://` からの読み込みなので
+**拡張機能としての本番確認ではない**（Service Worker も YouTube も居ない）が、
+CSS の効き方とタブ移動は本物のレンダリングエンジンで確かめられる。
+以下は全部その実測つき。
+
+- Tab キーだけでフィルターの ON/OFF とダークモード切替ができる ——
+  ドロワーを開いた状態の Tab 順は
+  `chat-mode-toggle > api-key-input > save-api-key > (リンク) > preset-special >
+  preset-all > preset-none > owner-toggle > ... > membership-toggle > dark-mode-toggle`。
+  Space で `owner-toggle` の checked が反転することも確認。
+  **閉じているときは1つも入らない**（`settings-toggle-btn` の次が
+  `search-keyword-input`）——`inert` が効いている。Esc で閉じるとフォーカスは歯車へ戻る
+- 設定画面がダークテーマに追従する —— テスト（options 11件）＋実際の描画で確認
+- popup を開いた瞬間から正しいテーマで表示される ——
+  保存が `dark` の状態で開くと `data-theme="dark"` が立ち、
+  **ポートに応答が1つも返っていない状態でも**そうなる。
+  ただし**写しが無い初回だけ**は、正が返るまでライト（＝既定値）で出る
+- 初回描画でチップの幅が動かない —— HTML の初期値と JS が書く文言の一致をテストで固定
+- **見た目を変えていない** —— 変更前（`b3dac9b`）と変更後で同じ手順のスクリーンショットを
+  撮ってピクセル比較した。`options`（ライト）は**完全に一致**、popup は
+  756,000バイト中 15〜34 ピクセルだけが1階調ずれる（文字の縁の
+  アンチエイリアスのゆらぎで、位置も色も動いていない）
+
+**フェーズ9への申し送り**
+
+- **行番号**（フェーズ8 後の実測）
+  - `popup/popup.js`（全2,702行）: `applyTheme` の取り込み 19 /
+    `showContentScriptError` 619 / `attachEventListeners` 854
+    （修復ボタンの分岐 860・エラー詳細のボタン 891-899）/
+    `updateErrorActionButtons` 2412 / `handleRetry` 2454 / `openQuotaConsole` 2471 /
+    `initDrawer` 2627（`drawer.inert` 2639・2644・2652、Esc の受け口 2668）
+  - `popup/popup.css`（全1,417行）: `:root` 4（ヘルスの色 41-43）/
+    `[data-theme="light"]` 57（同 94-96）/ **Focus visibility の節 129-147** /
+    ヘルス表示 224 付近 / **チェックボックス 605**（`display: none` をやめた本体）/
+    `:focus-visible` + スライダー 620 / `.toggle-slider` 625
+  - `popup/popup.html`（全249行）: `theme.js` の読み込み 9（**`<head>`。動かさないこと**）/
+    ヘルス表示 18-23 / フィルターのトグル 86-116 / 件数バッジ 189-194
+  - `options/options.css`（全495行）: `:root` 12 / **`[data-theme="dark"]` 52** /
+    `.btn:focus-visible` 254 / `.debug-switch` 411 / `.switch-label` 423 /
+    `:focus-visible` + ラベル 459
+  - `options/options.js`（全285行）: `applyTheme` の取り込み 10 /
+    `storage.onChanged` の受け口 15-20 / `saveTheme` 199
+  - `options/options.html`（全169行）: `theme.js` の読み込み 10（`<head>`）
+  - `shared/theme.js`（全74行・新設）: `applyTheme` 46 / `applyCachedTheme` 54 /
+    `loadTheme` 58 / 読み込み時の実行 71-72
+  - `content/content-script.js`（全634行・フェーズ9の主戦場）: `specialComments` 48 /
+    `setupMessageListener` 263（**#30。扱わない action でも `return true`**）/
+    `addNewComments` 387 / `waitForYouTubeLive` の `setInterval` 405 /
+    SPA遷移の購読 446 付近（#24）/ `sendMessageWithRetry` 561 /
+    `setupVisibilityMonitoring` 607（#31）——
+    フェーズ9 の節の値（#81 で更新済み）と同じ
+  - `manifest.json`（全48行）: `permissions` 7（`activeTab` は #40）/
+    `host_permissions` 9 / `content_scripts` 15-27（match の非対称は #41）
+- **フェーズ9で権限を削るとき、`popup.js` の `chrome.tabs` 依存は6箇所ある**
+  （節が挙げていた `popup.js:299 / 912 / 602` はもう当たらないので、
+  フェーズ9 の「注意」を実測値に直しておいた）。
+- **`shared/theme.js` を `importScripts` しないこと。** `document` と
+  `localStorage` を使うので Service Worker では即死する。
+  ESLint も `src/shared/theme.js` だけ別のグローバルで見ている。
+- **テストの現在値は 239 件**、ハーネスは6つ（service-worker / dom-chat / popup /
+  options / theme / store と indexeddb-mock）。
+  `content-script.js` は**まだテスト0件**（#T6）なので、フェーズ9 で
+  ここを大きく削るなら、削る前に「いま何が起きているか」を固定する網が要る。
+- **options の見た目には手を付けていない部分がある。** フォントスタックは
+  popup（日本語向けに設計したもの）と別のまま（`'Segoe UI', Tahoma, ...`）。
+  #14 はこれも指摘しているが、**直すと見た目が変わる**ためフェーズ8 の
+  「見た目を変えない」に反する。揃えるなら独立した判断として行うこと。
+
 ---
 
 ### フェーズ9 — 掃除
@@ -2115,7 +2314,9 @@ content script の通信には触っていない、フェーズ7以降には手�
 **注意**
 
 - **権限の削減は挙動に影響しうる。** 1つずつ外して実ブラウザで確認すること。
-  特に `tabs` は `popup.js:299` / `popup.js:912` / `popup.js:602` が依存している
+  特に `tabs` は popup の6箇所が依存している（フェーズ8後の実測:
+  `tabs.query` `popup:330` `popup:1071` / `tabs.reload` `popup:729` `popup:1022` /
+  `tabs.sendMessage` `popup:747` `popup:2592`）
 
 ---
 
@@ -2143,6 +2344,15 @@ content script の通信には触っていない、フェーズ7以降には手�
 | APIモードで quota エラーを踏んだあと、放置して再開する | 6a |
 | Tab キーだけでフィルターとダークモードを操作できる | 8 |
 | 書き込み量が減っている（`chrome.storage.local.getBytesInUse(null)` と DevTools で前後比較） | 3 |
+
+**UI の確認は、途中まで自動化できる**（フェーズ8で判明）。`popup.html` /
+`options.html` は `chrome.*` を最小限スタブすれば `file://` から直接開けるので、
+ヘッドレスの Chromium に読ませれば**タブ順・フォーカスリング・テーマの色・
+前後のスクリーンショット比較**までは機械で確かめられる。
+「見た目を変えていない」を目視の記憶ではなくピクセル差で言えるのは大きい。
+ただし **Service Worker も YouTube も居ない**ので、これは
+`chrome://extensions` からの読み込み確認の代わりにはならない
+（この道具立てはリポジトリに入れていない。必要なときに書き捨てればよい）。
 
 ---
 
