@@ -26,6 +26,8 @@
   - `manifest.json` - Chrome拡張機能のマニフェストファイル
   - `shared/comment.js` - **コメントの型・正規化・IDの唯一の置き場**（3環境から読む）
   - `shared/store.js` - **コメント履歴の唯一の保存先**（IndexedDB。Service Worker と popup から読む）
+  - `shared/theme.js` - **テーマの唯一の当て場**（popup と options から読む。
+    `document` と `localStorage` を使うので **Service Worker からは読めない**）
   - `background/` - Background Scripts
   - `content/` - Content Scripts
   - `popup/` - ポップアップ画面のHTML/CSS/JS
@@ -36,10 +38,14 @@
   - `helpers/popup-harness.js` - 偽 document（id の正は `popup.html`）と chrome APIモック
   - `helpers/indexeddb-mock.js` - IndexedDB の最小の偽実装（依存パッケージは足していない）
   - `helpers/store-harness.js` - `shared/store.js` を単体で評価する
+  - `helpers/options-harness.js` - 偽 document（id の正は `options.html`）と chrome APIモック。
+    `storage.local.set` は本物と同じく `onChanged` を発火させる
+  - `helpers/theme-harness.js` - `shared/theme.js` を単体で評価する（`localStorage` は差し替え可能）
 
-3つのハーネスはいずれも、対象スクリプトより先に `src/shared/comment.js` を
-同じコンテキストで評価する（本番の読み込み順を再現するため）。
-popup ハーネスはそのあと `src/shared/store.js` も評価する（`popup.html` と同じ順番）。
+service-worker / dom-chat / popup / options のハーネスはいずれも、対象スクリプトより先に
+`src/shared/comment.js` を同じコンテキストで評価する（本番の読み込み順を再現するため）。
+popup ハーネスはさらに `theme.js`（`popup.html` の `<head>`）→ `comment.js` → `store.js`、
+options ハーネスは `theme.js` → `comment.js` の順に評価する（どちらも HTML と同じ順番）。
 
 ## 技術スタック
 
@@ -125,6 +131,13 @@ ESLint と CI はフェーズ1で導入済み。devDependency は `eslint` 1つ�
   「制御がイベントループに戻ったら commit」に揃える）
 - `test/helpers/store-harness.js` — `shared/comment.js` → `shared/store.js` の順に
   評価して、偽 IndexedDB と偽 `storage.local` を差す。移行のテストはここから
+- `test/helpers/options-harness.js` — 設定画面（フェーズ8で新設）。popup ハーネスの
+  偽 document を借り、**引ける id の正だけ `options.html` の実物**に差し替える。
+  `storage.local.set` が `onChanged` を発火するので、
+  「保存 → 通知 → 塗り直し」の往復がそのまま見える
+- `test/helpers/theme-harness.js` — `shared/theme.js` を単体で評価する。
+  `localStorage` は「無い」「例外を投げる」も作れる（写しが取れない環境で
+  ページが死なないことを見るため）
 
 対象は「数時間使い込まないと発現せず手動再現が困難」なバグに絞っている。
 これまでに4度、その種のバグが本番で発覚しているため（Service Worker終了時の
@@ -136,10 +149,14 @@ ESLint と CI はフェーズ1で導入済み。devDependency は `eslint` 1つ�
 
 - 実ブラウザの挙動（本物のquotaの出方、Service Workerが終了するタイミング、
   メッセージパッシングの実挙動、**IndexedDB の実際の書き込み量**）
+- **CSS の効き方**。偽DOMはセレクタもレイアウトも解釈しないので、
+  「Tab で本当に届くか」「テーマの色が読めるか」は実ブラウザでしか分からない
+  （CSS 側は文字列として規則の有無を見ているだけ）
 - YouTube側のDOM変更。dom-chat のモックはセレクタ文字列の完全一致でしか引けず、
   検証できるのは「どのタイミングで何を読むか」という段取りだけ。
   **セレクタが今のYouTubeで正しいかどうかは、実ブラウザでしか確認できない**
-- ポップアップ／オプション画面のUI
+- ポップアップ／オプション画面の**見た目**（配線と組み立ては
+  popup / options のハーネスで見ている）
 
 Service Worker の状態は `session` 1つに畳んである（フェーズ6a）。
 `beginSession()` のたびに丸ごと再代入されるため、ハーネスは getter 経由で
@@ -445,6 +462,34 @@ Service Worker が渡すのは `readCommentsForPopup(videoId, 'primary')` の結
 `yt-live-chat-sponsorships-gift-redemption-announcement-renderer`）は
 受け取った人数ぶん流れて量が多いため、意図的に対象外にしている。
 
+### テーマとキーボード操作
+
+**テーマの正は `chrome.storage.local` の `theme` ただ1つ。当てるのは
+`src/shared/theme.js` だけ**（popup と options の両方が読む）。
+以前は popup だけが仕組みを持っていて、**ダークモードのトグルを載せている
+設定画面自身が永久にライトテーマ**だった（`docs/audit-2026-09.md` #14）。
+
+- `theme.js` は **両ページの `<head>`** から読み込む。`localStorage` の写しで
+  同期に塗ってから、`storage.local` の応答で塗り直す。
+  body の末尾で読むと、ライトテーマの利用者が起動直後に真っ黒な画面を見る（#15）
+- 塗る口は `applyTheme()` 1つ。写しの更新もその中でやる
+- `popup.css` は `:root` がダークで `[data-theme="light"]` が上書き側、
+  `options.css` は**逆**（`:root` がライト、`[data-theme="dark"]` が上書き側）。
+  options は元からライトしか無かったページなので、
+  こうすると JS が動かなくても既存の見た目が保たれる
+
+**キーボードで触れること**は、`display: none` をやめるだけでは成立しない。
+
+- トグルの `input` は「レイアウトに影響しない絶対配置 + `opacity: 0`」で隠す。
+  `display: none` / `visibility: hidden` はタブ順から外れる
+- フォーカスの枠は、見えている代役（`.toggle-slider` / `.switch-label`）に
+  `:focus-visible` で出す。マウス操作時の見た目は変わらない
+- **畳んである入れ物は `inert` にする。** 設定ドロワーは `max-height: 0` で
+  切り取られているだけなので、閉じたままでも中の要素にフォーカスが入る。
+  Esc で閉じたらフォーカスは歯車ボタンへ返す
+- **コメント一覧の行には `tabindex` を配らない**（行が数千あれば Tab も数千回）。
+  役割での絞り込みは件数バッジ（`role="button" tabindex="0"`）から届く
+
 ## 次のステップ
 
 再設計のフェーズを順に進める。**各フェーズは別セッションで、単独でリリースできる形で行う。**
@@ -460,7 +505,7 @@ Service Worker が渡すのは `readCommentsForPopup(videoId, 'primary')` の結
 | 6a | ライフサイクル: 状態の一本化（単一状態・epoch・alarms・アバターの保持枠） | **完了**（2026-09-08） |
 | 6b | ライフサイクル: ポート化（`chrome.runtime.connect`・retry の撤去） | **完了**（2026-09-08） |
 | 7 | dom-chat 耐性 | **完了**（2026-09-08） |
-| 8 | UI の穴（キーボード・テーマ） | 未着手 |
+| 8 | UI の穴（キーボード・テーマ） | **完了**（2026-09-08） |
 | 9 | 掃除（権限・docs） | 未着手 |
 
 フェーズ6は当初1本だったが、**軸が2つ入っていた**ため 6a / 6b に分けた

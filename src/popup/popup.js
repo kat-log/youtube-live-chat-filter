@@ -11,15 +11,12 @@ async function loadDebugMode() {
   }
 }
 
-// テーマ設定を取得して適用
-async function loadTheme() {
-  try {
-    const { theme } = await chrome.storage.local.get(['theme']);
-    document.documentElement.setAttribute('data-theme', theme || 'light');
-  } catch (error) {
-    debugError('[Popup] Failed to load theme:', error);
-  }
-}
+// テーマの適用は shared/theme.js が正（#15）。popup.html の <head> から
+// 読み込んでいるので、**この popup.js が走り出す時点でもう塗り終わっている**。
+// 以前はここに loadTheme() を持ち、completeBasicInitialization の Promise.all
+// （Service Worker の起床待ちの後ろ）で呼んでいたため、ライトテーマの利用者は
+// コールドスタート時に最悪十数秒のあいだ真っ黒な popup を見せられていた
+const { applyTheme } = self.YTFTheme;
 
 // 生成中のコントローラ。ストレージ変更を再描画へ橋渡しするために保持する
 let popupController = null;
@@ -28,8 +25,7 @@ let popupController = null;
 // ドロワー・オプション画面・別ウィンドウのどこで変えても、経路はここ1本に集約する
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.theme) {
-    const newTheme = changes.theme.newValue || 'light';
-    document.documentElement.setAttribute('data-theme', newTheme);
+    const newTheme = applyTheme(changes.theme.newValue);
     const toggle = document.getElementById('dark-mode-toggle');
     if (toggle) toggle.checked = (newTheme === 'dark');
   }
@@ -304,11 +300,12 @@ class PopupController {
         this.updateMonitoringButtons(false);
         this.updateMonitoringButtonStates();
         
-        // 非同期初期化タスクを並行実行
+        // 非同期初期化タスクを並行実行。
+        // テーマはここに混ぜない（#15）。この関数は Service Worker との
+        // やり取りの後ろに並んでいるので、塗るのがそのぶん遅れる
         await Promise.all([
             this.loadSavedApiKey(),
             this.loadChatMode(),
-            loadTheme(),
             this.checkCurrentTab()
         ]);
         
@@ -702,19 +699,24 @@ class PopupController {
                 severity: 'high'
             });
             
-            // タブ再読み込み用のボタンテキストを変更
+            // タブ再読み込み用のボタンテキストを変更。
+            // 押されたときに何をするかは dataset.action で伝える（#16）。
+            // onclick を代入すると attachEventListeners のリスナーと二重に発火し、
+            // 修復とタブ再読み込みが同時に走っていた
             this.elements.fixExtensionBtn.textContent = 'タブを再読み込み';
             this.elements.fixExtensionBtn.disabled = false;
-            this.elements.fixExtensionBtn.onclick = () => this.reloadCurrentTab();
-            
+            this.elements.fixExtensionBtn.dataset.action = 'reload';
+
         } finally {
             await this.delay(1000);
             this.hideInitializationStatus();
             
-            // 通常の修復ボタン状態に戻す
+            // 通常の修復ボタン状態に戻す。文言を戻すなら、押したときの
+            // 行き先（dataset.action）も一緒に戻す（#16）
             if (this.elements.fixExtensionBtn.textContent === '修復中...') {
                 this.elements.fixExtensionBtn.textContent = '修復';
                 this.elements.fixExtensionBtn.disabled = false;
+                delete this.elements.fixExtensionBtn.dataset.action;
             }
         }
     }
@@ -886,9 +888,16 @@ class PopupController {
             }
         });
         
-        // エラー詳細のボタンイベント
+        // エラー詳細のボタンイベント。押したときの行き先は dataset.action で
+        // 切り替える（onclick を後から代入すると二重に発火する = #16）
         this.elements.retryButton.addEventListener('click', () => this.handleRetry());
-        this.elements.optionsButton.addEventListener('click', () => this.openOptionsPage());
+        this.elements.optionsButton.addEventListener('click', () => {
+            if (this.elements.optionsButton.dataset.action === 'quotaConsole') {
+                this.openQuotaConsole();
+            } else {
+                this.openOptionsPage();
+            }
+        });
         
         // ユーザーフィルター関連のイベント
         this.elements.clearUserFilterBtn.addEventListener('click', () => this.clearUserFilter());
@@ -2384,56 +2393,83 @@ class PopupController {
         this.elements.errorDetails.style.display = 'none';
     }
     
+    /**
+     * エラー詳細の2つのボタンを、いまのエラーに合わせて作り直す。
+     *
+     * **文言は、押したときに実際に起きることだけを名乗る**（#17）。
+     * 以前は「1分後に再試行」「明日再試行」「接続確認」「再確認」と出し分けていたが、
+     * handleRetry() は常に「エラーを閉じて取得を開始し直す」だけで、
+     * 5種類のうち4つは嘘だった。popup は閉じれば死ぬので「1分待ってから押す」
+     * を代行することもできない。**待ち時間の情報は solution の文（SW の
+     * ERROR_SOLUTIONS が持っている）に残っている**ので、ボタンからは落として、
+     * 実際にできる2つ——取得のやり直しと、タブの再読み込み——だけを名乗らせる。
+     *
+     * 押したときの行き先は dataset.action で伝える。`onclick` を代入すると
+     * attachEventListeners が張ったリスナーと二重に発火し、しかも
+     * **元に戻らない**（quota エラーを一度踏むと、以後「設定画面」を押すたびに
+     * Cloud Console と設定画面の両方が開いていた = #16）
+     */
     updateErrorActionButtons(action) {
         // デフォルトでは両方のボタンを表示
         this.elements.retryButton.style.display = 'inline-block';
         this.elements.optionsButton.style.display = 'inline-block';
-        
+
+        // 行き先も文言も、毎回ここで全部書き直す（前のエラーの設定を残さない）
+        this.elements.retryButton.textContent = '再試行';
+        this.elements.retryButton.dataset.action = 'retry';
+        this.elements.optionsButton.textContent = '設定画面';
+        this.elements.optionsButton.dataset.action = 'options';
+
         // アクションに応じてボタンをカスタマイズ
         switch (action) {
             case 'setApiKey':
             case 'checkApiKey':
                 this.elements.optionsButton.textContent = 'APIキー設定';
-                this.elements.retryButton.textContent = '再試行';
                 break;
             case 'waitAndRetry':
-                this.elements.retryButton.textContent = '1分後に再試行';
                 this.elements.optionsButton.style.display = 'none';
                 break;
             case 'waitOrUpgrade':
-                this.elements.retryButton.textContent = '明日再試行';
                 this.elements.optionsButton.textContent = 'Cloud Console';
-                this.elements.optionsButton.onclick = () => {
-                    window.open('https://console.cloud.google.com/apis/api/youtube.googleapis.com/quotas', '_blank');
-                };
+                this.elements.optionsButton.dataset.action = 'quotaConsole';
                 break;
             case 'checkConnection':
-                this.elements.retryButton.textContent = '接続確認';
                 this.elements.optionsButton.style.display = 'none';
                 break;
             case 'reload':
+                // これだけは文言どおりに動かせる（タブを再読み込みする）
                 this.elements.retryButton.textContent = 'ページ再読込';
+                this.elements.retryButton.dataset.action = 'reload';
                 this.elements.optionsButton.style.display = 'none';
                 break;
             case 'waitForChat':
             case 'findLiveStream':
-                this.elements.retryButton.textContent = '再確認';
                 this.elements.optionsButton.style.display = 'none';
                 break;
             default:
-                this.elements.retryButton.textContent = '再試行';
-                this.elements.optionsButton.textContent = '設定画面';
+                break;
         }
     }
-    
+
     handleRetry() {
         debugLog('[Popup] Retry button clicked');
         this.hideDetailedError();
-        
+
+        // 文言が「ページ再読込」のときは、そのとおりタブを読み込み直す（#17）
+        if (this.elements.retryButton.dataset.action === 'reload') {
+            this.reloadCurrentTab();
+            return;
+        }
+
         // 取得開始を再試行
         if (!this.isMonitoring) {
             this.startMonitoring();
         }
+    }
+
+    /** quota エラーのときだけ出る「Cloud Console」の行き先（#16） */
+    openQuotaConsole() {
+        window.open('https://console.cloud.google.com/apis/api/youtube.googleapis.com/quotas', '_blank');
     }
     
     openOptionsPage() {
@@ -2595,9 +2631,17 @@ function initDrawer() {
 
     if (!drawer || !backdrop || !gearBtn) return;
 
+    // 閉じているドロワーは max-height: 0 + overflow: hidden で「切り取られている」だけで、
+    // 中のボタンやトグルは生きている。フィルターのチェックボックスがキーボードで
+    // 掴めるようになった（#13）ぶん、閉じたまま Tab を押すと**見えない9個の
+    // トグルに順番にフォーカスが入る**ので、閉じているあいだは inert にして
+    // タブ順から丸ごと外す（読み上げからも外れるので aria-hidden と食い違わない）
+    drawer.inert = true;
+
     function openDrawer() {
         drawer.classList.add('open');
         drawer.setAttribute('aria-hidden', 'false');
+        drawer.inert = false;
         backdrop.classList.add('visible');
         gearBtn.classList.add('active');
     }
@@ -2605,6 +2649,7 @@ function initDrawer() {
     function closeDrawer() {
         drawer.classList.remove('open');
         drawer.setAttribute('aria-hidden', 'true');
+        drawer.inert = true;
         backdrop.classList.remove('visible');
         gearBtn.classList.remove('active');
     }
@@ -2617,6 +2662,14 @@ function initDrawer() {
     backdrop.addEventListener('click', closeDrawer);
 
     drawer.addEventListener('click', (e) => e.stopPropagation());
+
+    // Esc で閉じる。inert にするとフォーカスは中に居られなくなるので、
+    // 開けた本人（歯車ボタン）へ返す（返さないと body に飛んで Tab が先頭に戻る）
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape' || !drawer.classList.contains('open')) return;
+        closeDrawer();
+        gearBtn.focus();
+    });
 
     // ドロワー内 時刻表示トグル。
     // 描画への反映は書き込まない（storage.onChanged 側が拾って再描画する）
@@ -2641,9 +2694,10 @@ function initDrawer() {
             darkToggle.checked = ((theme || 'light') === 'dark');
         });
         darkToggle.addEventListener('change', async () => {
-            const theme = darkToggle.checked ? 'dark' : 'light';
+            // 塗るのが先、保存が後。storage.onChanged は非同期に返ってくるので、
+            // 待ってから塗ると切り替えが一拍遅れて見える
+            const theme = applyTheme(darkToggle.checked ? 'dark' : 'light');
             await chrome.storage.local.set({ theme });
-            document.documentElement.setAttribute('data-theme', theme);
         });
     }
 }

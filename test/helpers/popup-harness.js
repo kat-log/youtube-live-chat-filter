@@ -25,6 +25,9 @@ const POPUP_HTML_PATH = path.join(POPUP_DIR, 'popup.html');
 // 順番も popup.html と同じにする（store.js は bucket の判定で YTF を使う）
 const SHARED_PATH = path.join(__dirname, '..', '..', 'src', 'shared', 'comment.js');
 const STORE_PATH = path.join(__dirname, '..', '..', 'src', 'shared', 'store.js');
+// popup.html が <head> で読む（body の末尾ではない）。テーマを最初の描画より
+// 前に塗るためで、順番も本物と同じくいちばん先にする（フェーズ8 / #15）
+const THEME_PATH = path.join(__dirname, '..', '..', 'src', 'shared', 'theme.js');
 
 /** popup.html に書かれている id を全部拾う。偽 document が引ける id の正はこれ */
 function idsInPopupHtml() {
@@ -434,6 +437,7 @@ function loadPopup({
 
   // popup.html の <script> の並びを、ハーネス側で再現する
   context.self = context;
+  vm.runInContext(fs.readFileSync(THEME_PATH, 'utf8'), context, { filename: THEME_PATH });
   vm.runInContext(fs.readFileSync(SHARED_PATH, 'utf8'), context, { filename: SHARED_PATH });
   vm.runInContext(fs.readFileSync(STORE_PATH, 'utf8'), context, { filename: STORE_PATH });
   // popup.js は読み込み時に上限を束縛するので、差し替えるならこの順番でしかできない

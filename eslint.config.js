@@ -72,6 +72,15 @@ const SHARED_GLOBALS = {
   IDBKeyRange: 'readonly'
 };
 
+// shared/theme.js だけは例外で、拡張機能のページ2枚（popup / options）からしか
+// 読まれない。document と localStorage を使うので Service Worker からは読めず、
+// そのぶん SHARED_GLOBALS では足りない（このファイルを importScripts しないこと）
+const SHARED_PAGE_GLOBALS = {
+  ...SHARED_GLOBALS,
+  document: 'readonly',
+  localStorage: 'readonly'
+};
+
 // Service Worker（MV3）が触るグローバル。window も document も無い
 const WORKER_GLOBALS = {
   ...ES_TIMERS,
@@ -132,6 +141,16 @@ module.exports = [
       ecmaVersion: 2022,
       sourceType: 'script',
       globals: SHARED_GLOBALS
+    },
+    rules: RULES
+  },
+  {
+    // ページ2枚だけが読む shared（上の設定を後から上書きする。順番を変えないこと）
+    files: ['src/shared/theme.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'script',
+      globals: SHARED_PAGE_GLOBALS
     },
     rules: RULES
   },
