@@ -2429,6 +2429,9 @@ popup / options の HTML の id も変えていない）。
    SW の `tabs.onUpdated` なら `reconcile(tabId, videoId)` がそのまま使えるので、
    畳む判断は SW、content script は `pageNavigated` を受けて自分の控えを捨て、
    新しい動画で組み立て直すだけになった。根本原因A の後始末でもある。
+   畳むのに使うのは `autoStopMonitoring` ではなく `stopBackgroundMonitoring` —— 
+   遷移は「停止」ではなく「切り替え」で、この直後に新しい動画で始まるため、
+   popup へ「自動停止しました」を流すと**すぐ再開するのに停止の通知だけが残る**。
 
 7. **実ブラウザでの確認の仕方を1段強くした。** フェーズ8 は `file://` から
    popup を開くところまでだったが、今回は

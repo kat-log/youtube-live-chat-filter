@@ -1608,7 +1608,9 @@ describe('SPA遷移の検知（#24）', () => {
     await chrome.__navigateTab(3, 'https://www.youtube.com/watch?v=NEXT');
 
     assert.equal(sw.session.isMonitoring, false, '別の配信を掴んだまま監視を続けている');
-    assert.equal(popup.notifications().some(m => m.action === 'monitoringAutoStopped'), true);
+    // 「停止しました」とは流さない。遷移は切り替えで、この直後に
+    // content script が新しい動画で開始し直す
+    assert.equal(popup.notifications().some(m => m.action === 'monitoringAutoStopped'), false);
   });
 
   test('同じ配信の中の遷移では畳まない', async () => {

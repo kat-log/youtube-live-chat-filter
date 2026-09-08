@@ -1660,7 +1660,12 @@ async function handleTabUpdated(tabId, url) {
   // 読めないとき（トップページなど）は videoId が null になり 'same' に落ちる
   if (reconcile(tabId, videoId) === 'changed') {
     debugLog('[Background] Video changed by SPA navigation:', session.videoId, '->', videoId);
-    await autoStopMonitoring('配信が切り替わりました');
+    // autoStopMonitoring ではなく stopBackgroundMonitoring を使う。
+    // 遷移は「停止」ではなく「切り替え」で、この直後に content script が
+    // 新しい動画で開始し直す。popup へ「自動停止しました」と流すと、
+    // すぐ再開するのに停止の通知だけが残る（畳み方は同じで、
+    // 保存待ちの flush も含む）
+    await stopBackgroundMonitoring();
   }
 
   // content script は自分では遷移に気付けない。ここから知らせる。
