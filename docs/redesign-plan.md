@@ -1366,6 +1366,207 @@ SW の `onMessage` 分岐21本に触る。1本にすると差分がレビュー�
 - `onSuspend` (`SW:1478`) は MV3 では配送されない（#38）。番人に置き換えたら削除する
 - **ポート化（6b）には手を出さない。** `sendMessage` のままで 6a を完結させる
 
+**実施記録（2026-09-08 完了）**
+
+8つとも実装できた。地雷は踏んでいない（`'use strict'` を足していない、`sourceType` は
+`script` のまま、`shared/` はガードで包まず `self` へ代入、生の U+0000 も書いていない、
+実行時の依存はゼロのまま、`alarms` 権限は manifest に足した、見た目は1ピクセルも
+変えていない、フェーズ6b には手を出していない）。
+フェーズ5からの申し送り8点はどれも正確で、行番号も全部当たっていた。
+判断が要った点と、節の指示だけでは決まらなかったことを残す。
+
+1. **「突き合わせ分岐5本」のうち、SW 側の4本は畳めた。5本目（popup:1175）は残した。**
+   `getStaleSessionReason` / `startDomMonitoring` の再利用分岐 /
+   `handleDomChatMessages` の動画変更検知 / `getMonitoringState` の `||` チェーンは、
+   `reconcile(tabId, videoId)` が返す4語（`idle` / `same` / `changed` / `other`）に
+   全部載った。残る `tryDomAutoStart` の `isStaleSession` は **popup のローカル状態**
+   （`this.monitoringVideoId !== this.currentVideoId`）で判断していて、SW からは
+   見えない。いま消すと「古いセッションを掴んだままの popup が開始し直せない」
+   ので、消せるのは popup が SW に判断を委ねられるようになってから ——
+   つまりポート化（6b）で SW が popup の生存と対象動画を知るときが本当に安い。
+   **害は無い**（SW 側の reconcile が同じ結論を出すので、popup の判断は
+   「もう一度 start を投げるかどうか」にしか効かない）が、5本目が残っていることは
+   ここに明記しておく。
+
+2. **`reconcile` に第4の語（`other`）が要った。** 節が挙げる4本を読むと
+   「同じ／変わった」の2値で足りそうに見えるが、**送り主が別のタブ**という
+   場合がある。manifest の自動注入で dom-chat.js は監視していないタブの
+   live_chat にも乗るので、2値だと別配信のコメントがいま見ている配信の履歴に
+   積まれる（実際、これまでは積まれていた。`handleDomChatMessages` の
+   ガードは「DOMモードで監視中か」しか見ていない）。テストを1本足してある。
+   ついでに `idle`（そもそも監視していない）も語にしたので、
+   呼び出し側から `isMonitoring` の直接参照が消えた。
+
+3. **「セッション状態をまるごと永続化する」は、そのままでは書けない。**
+   決定6 は「`monitoringState` をまるごと永続化する（部分集合をやめる）」だが、
+   `processedMessageIds` は `Set`、`pollingTimer` はタイマーIDで、
+   どちらも `storage.local` に置けない（`Set` は構造化クローンできるが
+   `storage.local` は JSON なので `{}` になる）。採ったのは
+   **「永続化するキーの一覧（`PERSISTED_SESSION_KEYS`）を定数で持ち、
+   `saveSession()` は毎回その全部を書く」**形。「部分集合を書かない」の実体は
+   *保存する項目を毎回変えない* ことなので、これで趣旨は満たせる。
+   runtime だけの持ち物（既読マーク・アバター・タイマー）は復帰時に作り直せる
+   （前2つは IndexedDB から、タイマーは番人が張り直す）。
+   **節に「永続化できない持ち物をどう扱うか」を一言書いておくと、ここで迷わない。**
+
+4. **`commentFilters` を session から外した。** 決定1（フェーズ4）で
+   Service Worker は取り込み時にフィルターを見なくなったので、
+   `monitoringState.commentFilters` は**書かれるだけで誰も読まない**状態だった
+   （`setCommentFilters` が代入し、`startXxxMonitoring` が引き継ぎ、
+   判断には一度も使われない）。根本原因A を潰す回に「同じことの正が2か所」を
+   残す理由が無いので消した。正は `storage.local` ただ1つで、読むのは popup。
+   これは #38（死にコード）と同じ形の残骸で、`no-unused-vars` では拾えない
+   （プロパティなので）。**フェーズ4 の時点で消せたはずのもの。**
+
+5. **#35 は「タブを閉じたら止める」を採った。** 節は「決めてから書く」としか
+   書いていないので、判断の根拠を残す。
+   - DOMモードのコメントはそのタブの live_chat から届く。タブが無ければ
+     以後1件も来ない。「継続」はバッジだけ ON で何も起きない状態を作る
+     （根本原因F「壊れても見えない」の典型）
+   - そもそも「継続」は成立していなかった。タブを失ったセッションは、
+     次に Service Worker が復帰した時点で `staleSessionReason` の
+     「タブ情報なし」で破棄される。つまり継続するのは SW が生きている間だけで、
+     利用者から見て挙動が説明できない
+   - APIモードだけは技術的に継続できるが、見ていない配信のために quota を
+     使い続けることになる
+   停止処理が履歴を flush するので、閉じる直前のコメントは失われない。
+
+6. **番人の DOM 側は「最後に保存した時刻」をどこから取るかが問題になった。**
+   素直にメモリへ `lastCommentAt` を持つと、**Service Worker が終了するたびに
+   リセットされる**（番人に起こされた直後は必ず「たったいま始まった」ことになり、
+   沈黙を一生検知できない）。番人を作る目的が SW の終了に耐えることなのに、
+   判断材料が SW と一緒に消えるのでは意味が無い。
+   IndexedDB の `meta.updatedAt` が append のたびに更新されているので、
+   `store.listVideos()` から引くことにした（1分に1回の読み出しなので安い）。
+   **「SW が死んでも残る場所にあるか」は、番人が見る値すべてに問うこと。**
+   あわせて、静かな配信で毎分注入し直さないよう立て直しの間隔（3分）も入れた。
+
+7. **ポーリングの二重起動を止めるには、`epoch` だけでは足りない。**
+   #5 の後半（「実行中の fetch は止められず、その `.then` がタイマーを張り直す」）は
+   epoch で止まるが、**番人が「タイマーが無いから再開」と判断する側**が新しく
+   増える。復元直後は `startPollingLoop()` を呼んだ直後でもまだタイマーが
+   張られていない（fetch の応答待ち）ので、そこへ番人が来ると2本目が走る。
+   `pollingInFlight`（fetch が飛んでいる最中）と `pollingTimer` の
+   **どちらかが立っていれば生きている**、という判定（`isPollingAlive()`）にして解いた。
+
+8. **DOMモードのバッチは、入口で1本の鎖に並べた。** #5 の表題は
+   「直列化されておらず」なので、epoch の確認だけでは半分しか直らない
+   （世代が変わったと分かっても、そのバッチのコメントはもう既読マークだけ
+   付いて捨てられる）。`enqueueDomChatMessages` が
+   `onMessage` の口で `Promise` の鎖に並べ、バッチAが `startDomMonitoring` の
+   中にいる間にバッチBが割り込めないようにした。そのうえで epoch は残してある
+   （鎖に乗らない経路 —— 番人・タブ削除・popup からの停止 —— があるため）。
+   テストは**本物の `onMessage` の口から2バッチを待たずに流す**形で書いた。
+
+9. **アバターの保持枠は `DB_VERSION` を上げずに済んだ。** 申し送り8 が
+   「上げると popup の接続が `onblocked` を引き起こす」と警告していた点。
+   `avatars` のレコードに `bucket` フィールドを足すだけで、インデックスは
+   要らない（間引きは SW のメモリ上のマップで完結し、IndexedDB 側は
+   put / delete しかしない）。**スキーマ変更はゼロ。**
+   枠を持たない古いレコードは読むときに `bulk` として補う。
+   上限は `MAX_AVATARS_PER_VIDEO = 500` を
+   `AVATAR_LIMITS = { primary: 200, bulk: 500 }` に置き換えた。
+   **bulk を 500 のまま据え置いて primary を上に足した**のは、
+   既存の利用者から見て一般視聴者のアバターが減らないようにするため
+   （500 を分け合う形にすると、いま出ているアバターが消える人が出る）。
+
+10. **アバターの「差分」は2つに分かれた。** 枠を持たせると、
+    **URLは同じだが枠が変わった**（一般だった人がスパチャを投げた）場合が
+    出てくる。保存には要るが popup には要らない（popup は枠を見ない）ので、
+    `collectAvatars` は `persist`（保存する差分）と `notify`（popup へ送る差分）を
+    別々に返す。**popup へ渡す形（`発言者名 -> URL`）は1バイトも変えていない。**
+    フェーズ5の申し送りは「popup の `this.avatarsByAuthor` と `formatComment` も
+    動く」と見ていたが、枠は*保持*のための持ち物で、保持をするのは
+    SW と store だけなので、境界で `avatarUrlsOf()` を1回通せば popup は無傷だった。
+    メッセージも太らない。
+
+11. **枠は上げるだけで下げない。** 一度スパチャを投げた人のアバターを、
+    その後の通常コメントで `bulk` に落とすと、**過去のスパチャの行のアバターが
+    一般の流量で消える**。`collectAvatars` は `primary` への昇格だけを行う。
+
+12. **完了条件のうち実ブラウザでの確認は未実施。**
+    「Service Worker を手動で終了させても DOMモードでコメントが続く」
+    「APIモードで quota エラーを踏んだあと放置しても取得が再開する」は
+    実ブラウザでしか確かめられない。代わりに
+    「alarm の発火で止まっていたポーリングが再開する」
+    「`message` を持たない例外でも次のタイマーが張られる」
+    「動いているポーリングを番人が二重に起こさない」をテストで固定した。
+    **実ブラウザでの確認は持ち主の手元でお願いしたい**
+    （`chrome://extensions` の Service Worker を Terminate してから、
+    1分以内にコメントが再開すること）。
+    残り3つ（動画切替でコメントが失われない・一般の流量で配信者のアバターが
+    消えない・既存テストが通る）はテストで確認済み。
+
+テストは 127 件 → **147 件**（状態の一本化4件・epoch 2件・番人5件・
+エラー処理2件・pageToken 1件・APIモードの持ち物1件・タブ削除3件・アバター2件を追加。
+既存の12件は `currentVideoId` → `videoId` の改名に追随させたが、
+確かめている内容は変えていない）。
+
+**詰まった箇所**: 上の3（永続化できない持ち物）と6（番人が見る値の置き場）の2つ。
+どちらも「節のとおりに書くと、目的を果たさないものが出来上がる」形だったので、
+手が止まったというより**一度書いてから気付いて書き直した**。
+**資料に書いてほしかったこと**は2つ。
+(a) 決定6 の「まるごと永続化」に、`Set` とタイマーIDは保存できないという但し書き。
+(b) 番人の表（API / DOM）に「判断材料も SW の終了に耐えること」の一言。
+表は「何をするか」だけを書いていて、**何を見て決めるか**が書かれていない。
+
+**フェーズ6b への申し送り**
+
+- **行番号**（フェーズ6a 後の実測）
+  - `service-worker.js`（全1,817行）: `emptySession` 240 / `session` の宣言 260 /
+    **`beginSession` 264 / `saveSession` 271 / `loadSession` 279 / `reconcile` 308** /
+    `carryOverFor` 318 / `collectAvatars` 349 / `evictAvatars` 377 /
+    `avatarUrlsOf` 397 / `saveAvatars` 428 / `staleSessionReason` 590 /
+    `discardSession` 612 / `restoreStateFromStorage` 620 /
+    `onMessage` の分岐 849-1019（**21本**） / `startBackgroundMonitoring` 1087 /
+    `stopBackgroundMonitoring` 1127 / `getMonitoringState` 1151 /
+    `stopPolling` 1176 / `isPollingAlive` 1184 / `scheduleNextPoll` 1188 /
+    `startPollingLoop` 1196 / `onPollSuccess` 1221 / `onPollError` 1289 /
+    `injectDomChat` 1323 / `requestInitialSweep` 1339 / `startDomMonitoring` 1344 /
+    **`enqueueDomChatMessages` 1393 / `handleDomChatMessages` 1400** /
+    `handleTabRemoved` 1514 / 番人の定数 1527-1537 / `startWatchdog` 1539 /
+    `runWatchdog` 1574 / `readCommentsForPopup` 1749 / `getCommentsHistory` 1761
+  - `popup.js`（全2,551行・フェーズ6a では1行も触っていない）:
+    `waitForServiceWorker` 326（**8回 ping。6b で消える**）/
+    `onMessage` の受け口 829 / `tryDomAutoStart` の `isStaleSession` **1175**
+    （上の1。畳むならここ）/ `sendMessageWithRetry` の呼び出しは**15箇所**
+  - `shared/store.js`（全571行）: `LIMITS` 48 / `MAX_COMMENTS_TO_POPUP` 57 /
+    **`AVATAR_LIMITS` 68** / `readInternal` 207 / `putAvatarsInternal` 404 /
+    `readAvatarsInternal` 424
+  - `shared/comment.js` は行番号が変わっていない（`filterKeyOf` 57 /
+    `isCommentEnabled` 72 / `bucketOf` 81 / `isDisplayableKind` 97）
+- **ポートのハンドラは `session` を読み書きする。** 6a で入口が
+  `beginSession` / `saveSession` / `reconcile` の3つに絞れているので、
+  ポート化で足すのは「`onConnect` で popup を覚える」「`onDisconnect` で忘れる」
+  だけにできるはず。**`session` に `port` を持たせないこと** ——
+  永続化できないうえ、popup の生存はセッションの持ち物ではない
+  （別の変数に置き、`PERSISTED_SESSION_KEYS` を増やさない）。
+- **新着の通知は2か所ある。** `onPollSuccess`（APIモード）と
+  `handleDomChatMessages`（DOMモード）が、それぞれ
+  `chrome.runtime.sendMessage` と `chrome.tabs.sendMessage` を撃っている。
+  ポート化するのは popup 向け（前者）だけで、**content script 向けは
+  `tabs.sendMessage` のまま残す**（content script は `chrome.runtime.connect`
+  の相手ではない）。
+- **DOMモードのバッチは既に直列化されている**（上の8）。ポート化で
+  「送信順が保たれる」ようになっても、`enqueueDomChatMessages` の鎖は外さないこと。
+  順序を保証するのはポート（SW→popup）で、鎖が守っているのは
+  content script→SW の側。**別の区間の話**。
+- **`waitForServiceWorker` を消したら、popup ハーネスの但し書きも直すこと**
+  （`test/helpers/popup-harness.js` の `setTimeout` が「積むだけ」なのは
+  初期化の ping 8回のため、と書いてある）。
+- **`chrome.alarms` のモックはハーネスに入れた。**
+  `chrome.__fireAlarm()` で1回発火、`calls.alarms` に create / clear が残る。
+  `chrome.__closeTab(tabId)` と `chrome.__onTabRemoved`（登録されたリスナーの配列。
+  **2本目が足されたら気付ける**）も足してある。
+- **`sw.session` と `sw.monitoringState` は同じものを指す**（ハーネスの getter）。
+  旧名を残したのは既存テストのためで、新しく書くテストは `sw.session` を使うこと。
+  世代ごと作り直したいときは `sw.beginSession(patch)`、
+  世代を変えずに差し替えたいときは `sw.setState(patch)`。
+- **popup が IndexedDB を開いている件は、まだ手当てしていない。**
+  6a ではスキーマを変えずに済んだので `onblocked` に触れずに済んだだけで、
+  次にスキーマを上げる回には残っている問題。ポート化で popup の生存期間が
+  SW から見えるようになるので、そのとき考えるのが安い（フェーズ5からの申し送りのまま）。
+
 ---
 
 ### フェーズ6b — ライフサイクル（ポート化）

@@ -129,8 +129,11 @@ ESLint と CI はフェーズ1で導入済み。devDependency は `eslint` 1つ�
   **セレクタが今のYouTubeで正しいかどうかは、実ブラウザでしか確認できない**
 - ポップアップ／オプション画面のUI
 
-`monitoringState` は `startDomMonitoring` などで丸ごと再代入されるため、
-ハーネスは getter 経由で露出している。テストから直接参照を保持しないこと。
+Service Worker の状態は `session` 1つに畳んである（フェーズ6a）。
+`beginSession()` のたびに丸ごと再代入されるため、ハーネスは getter 経由で
+露出している（`sw.session`。旧名の `sw.monitoringState` は同じものを指す別名）。
+テストから直接参照を保持しないこと。
+番人の alarm は `chrome.__fireAlarm()` で発火させ、作成・削除は `calls.alarms` に残る。
 
 **`src/shared/` のファイルを二重注入ガードで包まないこと。** `dom-chat.js` より先に
 読まれる別ファイルなので、ガードの中に入れると Service Worker と popup から見えなくなる。
@@ -213,6 +216,48 @@ Service Worker が取り込み口で見るのは `isDisplayableKind()`
 `hidden` で隠した行は `:last-child` のままなので、区切り線を消す
 「最後に見えている行」には JS が `comment-item--last` を付ける。
 
+### いま何を監視しているか（セッション状態）
+
+Service Worker の状態は `session` ただ1つが正（再設計の決定6、フェーズ6aで実現）。
+以前は SW のメモリ・`storage.local`・popup・content script の4か所に別々の正があり、
+ズレるたびに突き合わせの分岐が1本ずつ増えていた（`docs/audit-2026-09.md` 根本原因A）。
+
+- 永続化の口は `saveSession()` / `loadSession()` の2つだけ。書くのは
+  `PERSISTED_SESSION_KEYS`（`epoch` / `isMonitoring` / `chatMode` / `videoId` /
+  `tabId` / `liveChatId` / `pageToken` / `startedAt`）の**全部**で、
+  書き込み箇所ごとに形が変わることはない
+- 突き合わせは `reconcile(tabId, videoId)` 1つだけ。返すのは
+  `idle` / `same` / `changed` / `other` の4語。**`||` のチェーンは書かないこと**
+  （「明示的な false / null」を表現できず、片方に残った古い `true` が必ず勝つ）
+- `epoch` は世代番号。`beginSession()` のたびに +1 され、非同期処理の続きは
+  **自分の世代がまだ現役かを確かめてから**状態に触る
+- 既読マーク（`Set`）・アバター・ポーリングのタイマーは永続化しない。
+  復帰時に作り直せる（前2つは IndexedDB から、タイマーは番人が張り直す）
+- 表示フィルターは `session` に持たない。正は `storage.local` で、読むのは popup
+
+DOMモードのバッチは `enqueueDomChatMessages()` が1本の `Promise` の鎖に並べる。
+`onMessage` は `sendResponse` を即返して処理を切り離すので、並べないと
+バッチ同士が互いの状態更新を踏む。
+
+**タブが閉じられたら監視を止める**（`chrome.tabs.onRemoved` のリスナーは1本だけ）。
+以前は2本あり、片方は「自動停止」、もう片方は「継続」と正反対のことをしていた。
+
+### 番人（`chrome.alarms`、1分周期）
+
+MV3 の Service Worker は約30秒アイドルで終了し、`setTimeout` はSWごと消える。
+APIモードの quota リトライ（60秒待ち）はこの上限を超えるので、以前は一度 quota を
+踏むと popup を開き直すまでポーリングが再開しなかった。
+
+| モード | 番人がやること |
+| --- | --- |
+| API | 「動いているべきなのにタイマーが無い」なら再開する |
+| DOM | 3分コメントが来ていないなら dom-chat.js を注入し直して再スキャンさせる |
+
+**番人が見る値は、Service Worker の終了に耐える場所に置くこと。**
+DOMモードの「最後にコメントが来た時刻」を IndexedDB の `meta.updatedAt` から
+引いているのはそのため（メモリに持つと、起こされるたびにリセットされて
+沈黙を一生検知できない）。alarm の最小周期は**1分**で、それより短くはできない。
+
 ### コメント履歴の保存（IndexedDB）
 
 保存は `src/shared/store.js` に集約している（再設計の決定2）。
@@ -242,6 +287,15 @@ DB: ytChatFilter
 `bulk` は `sponsor`（メンバー） / `normal`。
 そのため `primary` だけをメモリに載せていても、
 **4つのバッジの件数は常に正確に出せる**（決定4はこの性質の上に成り立っている）。
+
+**アバターにも同じ保持枠がある**（フェーズ6a）。`avatars` ストアのレコードは
+`{ videoId, displayName, url, bucket }` で、上限は `AVATAR_LIMITS`
+（`primary` 200 / `bulk` 500）。枠ごとに間引くので、一般視聴者のアバターが
+いくら流れても配信者・モデレーター・スパチャの発言者のアバターは落ちない
+（1バッチの中で上限を超えても、Service Worker の復帰直後も）。
+枠は**上げるだけで下げない** — 一度スパチャを投げた人を通常コメントで `bulk` に
+落とすと、過去のスパチャの行のアバターが一般の流量で消えるため。
+popup へ渡す形は `発言者名 -> URL` のまま（枠は保持のための持ち物で、表示には要らない）。
 
 更新前に `storage.local` へ保存された履歴は、Service Worker の起動時に
 **片道で** IndexedDB へ移る。旧データを消すのは書き込みを読み直して確かめた後で、
@@ -302,7 +356,7 @@ Service Worker が渡すのは `readCommentsForPopup(videoId, 'primary')` の結
 | 3 | IndexedDB 移行 | **完了**（2026-09-07） |
 | 4 | 全件取り込み | **完了**（2026-09-07） |
 | 5 | popup の読み方と描画 | **完了**（2026-09-07） |
-| 6a | ライフサイクル: 状態の一本化（単一状態・epoch・alarms・アバターの保持枠） | 未着手 |
+| 6a | ライフサイクル: 状態の一本化（単一状態・epoch・alarms・アバターの保持枠） | **完了**（2026-09-08） |
 | 6b | ライフサイクル: ポート化（`chrome.runtime.connect`・retry の撤去） | 未着手 |
 | 7 | dom-chat 耐性 | 未着手 |
 | 8 | UI の穴（キーボード・テーマ） | 未着手 |
