@@ -39,18 +39,21 @@ function debugError(prefix, ...args) {
   console.error(prefix, ...args);
 }
 
+// 同じタブの live_chat フレームに居る dom-chat.js 宛ての action。
+// このスクリプトは宛先ではないので、横から答えない（下の理由を参照）
+const DOM_CHAT_ACTIONS = new Set(['getDomChatHealth', 'requestInitialSweep']);
+
 class YouTubeLiveChatMonitor {
   constructor() {
+    // ポーリングそのものは Service Worker がやる。ここが持つのは
+    // 「この画面はどの配信か」と「その配信のチャットIDは何か」だけ
+    // （pageToken と pollingInterval はAPIモードの残骸で、フェーズ9で消した）
     this.liveChatId = null;
-    this.pageToken = null;
-    this.pollingInterval = null;
     this.isMonitoring = false;
-    this.specialComments = [];
     this.initRetryCount = 0;
     this.maxInitRetries = 10;
     this.currentVideoId = null;
     this.serviceWorkerReady = false;
-    this.initializationDelayMs = 2000; // Service Worker初期化待機時間
     
     // デバッグモード設定を読み込み
     loadDebugMode();
@@ -205,13 +208,40 @@ class YouTubeLiveChatMonitor {
       debugLog('[YouTube Special Comments] YouTube watch page detected');
       this.extractLiveChatId();
       this.tryDomModeAutoStart();
-    } else {
-      this.waitForYouTubeLive();
+      return;
     }
 
-    // YouTube SPAの画面遷移を監視
-    this.observePageChanges();
-    this.setupVisibilityMonitoring();
+    // watch ページでなければ、ここは何もしない。
+    //
+    // 以前は setInterval で毎秒 URL を見張り（waitForYouTubeLive）、さらに
+    // MutationObserver で document.body 全体を購読していた（#24）。どちらも
+    // 「location.href という文字列が変わったか」を知るためだけの仕掛けで、
+    // YouTube の watch ページでは再生時間・視聴回数・関連動画が絶え間なく動くため、
+    // 拡張機能がやっていることの中で最も高価な処理になっていた。
+    //
+    // SPA遷移の検知は Service Worker の chrome.tabs.onUpdated に移した。
+    // ページ側の負荷はゼロで、遷移は pageNavigated で知らされる
+    debugLog('[YouTube Special Comments] Not a watch page; waiting for pageNavigated');
+  }
+
+  // Service Worker が SPA遷移を見つけたときの受け口（#24）。
+  // セッションを畳むのは SW 側（session の正はあちら）。ここは自分の控えを捨てて、
+  // 新しい動画で組み立て直すだけ
+  handlePageNavigated(videoId) {
+    debugLog('[YouTube Special Comments] Page navigation detected:', videoId);
+
+    this.liveChatId = null;
+    this.currentVideoId = null;
+    this.initRetryCount = 0;
+    this.isMonitoring = false;
+
+    if (!this.isYouTubeLivePage()) return;
+
+    // URL は既に新しい方に変わっている（onUpdated は遷移の後に来る）ので、
+    // 以前のように1秒待つ必要は無い。liveChatId の取得は videoId を鍵に
+    // Service Worker 経由で引くだけで、ページのDOMは見ない
+    this.extractLiveChatId();
+    this.tryDomModeAutoStart();
   }
   
   isYouTubeLivePage() {
@@ -262,22 +292,52 @@ class YouTubeLiveChatMonitor {
   
   setupMessageListener() {
     chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
-      debugLog('[Content Script] Received message:', request.action);
-      
+      const action = request?.action;
+      debugLog('[Content Script] Received message:', action);
+
+      // 以下は同期で応答する分岐。**応答したら true を返さないこと**（#30）。
+      // true は「あとで応答する」の宣言なので、同期で済ませたあとに返すと
+      // 応答チャネルが開いたまま残り、送信側の await が永久に解けないことがある。
+      // このスクリプトは watch ページのトップフレームに居て、
+      // dom-chat.js 宛ての tabs.sendMessage もここへ配られるので実際に起きる
+
       // Content Script生存確認用のping
-      if (request.action === 'ping') {
-        sendResponse({ 
-          success: true, 
+      if (action === 'ping') {
+        sendResponse({
+          success: true,
           timestamp: Date.now(),
           url: window.location.href,
           videoId: this.extractVideoId(),
           serviceWorkerReady: this.serviceWorkerReady,
           liveChatId: this.liveChatId
         });
-        return true;
+        return false;
       }
-      
-      if (request.action === 'startMonitoring') {
+
+      if (action === 'stopMonitoring') {
+        this.stopBackgroundMonitoring();
+        sendResponse({ success: true });
+        return false;
+      }
+
+      if (action === 'getLiveChatId') {
+        // popupからlive chat IDを要求された場合
+        if (!this.liveChatId) {
+          this.extractLiveChatId();
+        }
+        sendResponse({ liveChatId: this.liveChatId });
+        return false;
+      }
+
+      // Service Worker が SPA遷移を見つけた（#24）
+      if (action === 'pageNavigated') {
+        this.handlePageNavigated(request.videoId ?? null);
+        sendResponse({ success: true });
+        return false;
+      }
+
+      // ここから下だけが非同期に応答する。true はこの分岐のためにある
+      if (action === 'startMonitoring') {
         if (request.chatMode === 'dom') {
           chrome.runtime.sendMessage(
             { action: 'startDomMonitoring', videoId: this.currentVideoId },
@@ -289,33 +349,32 @@ class YouTubeLiveChatMonitor {
             .catch(e => sendResponse({ success: false, error: e.message }));
         }
         return true;
-      } else if (request.action === 'stopMonitoring') {
-        this.stopBackgroundMonitoring();
-        sendResponse({ success: true });
-      } else if (request.action === 'getSpecialComments') {
-        sendResponse({ 
-          comments: this.specialComments,
-          liveChatId: this.liveChatId,
-          isMonitoring: this.isMonitoring,
-          videoId: this.currentVideoId
-        });
-      } else if (request.action === 'newSpecialComments') {
-        // background scriptからの新しいコメント通知
-        this.addNewComments(request.comments);
-      } else if (request.action === 'clearSpecialComments') {
-        this.specialComments = [];
-        sendResponse({ success: true });
-      } else if (request.action === 'getLiveChatId') {
-        // popupからlive chat IDを要求された場合
-        if (!this.liveChatId) {
-          this.extractLiveChatId();
-        }
-        sendResponse({ liveChatId: this.liveChatId });
       }
-      return true;
+
+      // ここから先は「このフレーム宛てではない」もの。
+      //
+      // tabs.sendMessage はタブの**全フレーム**に配られ、応答は最初に返した1つが勝つ。
+      // watch ページでは、このスクリプト（トップフレーム）と dom-chat.js
+      // （live_chat の iframe）が同じタブに居るので、dom-chat.js 宛ての要求に
+      // ここが即答すると**本来の宛先の応答を追い越して**しまう。
+      // 実ブラウザで確認済み: 追い越されると Service Worker は
+      // 「読み取り状態は不明」を受け取り、popup の表示が消える。
+      //
+      // 応答しないまま false を返すのは #30 とは別で、害が無い。
+      // true（あとで応答する）と違って応答チャネルを開いたままにしないので、
+      // 他のフレームが答えればそれが返り、誰も答えなければ送信側は
+      // その場でエラーを受け取る（永久に待たされることはない）
+      if (DOM_CHAT_ACTIONS.has(action)) return false;
+
+      // 本当に知らない action には必ず応答する（#30）。応答しないまま
+      // return true で黙ると、送信側は待ち続けるか
+      //「The message port closed before a response was received」を受け取り、
+      // それを一時障害とみなしてリトライを空振りする
+      sendResponse({ success: false, error: `unknown action: ${action}` });
+      return false;
     });
   }
-  
+
   async startBackgroundMonitoring() {
     // APIキーの事前チェック
     try {
@@ -383,69 +442,7 @@ class YouTubeLiveChatMonitor {
     }
   }
   
-  // background scriptからのコメントを受け取る
-  addNewComments(newComments) {
-    debugLog('[Content Script] Received', newComments.length, 'new comments from background');
-    
-    this.specialComments.push(...newComments);
-
-    // background側の保持上限（MAX_COMMENTS_PER_VIDEO）に合わせる
-    if (this.specialComments.length > 2000) {
-      this.specialComments = this.specialComments.slice(-2000);
-    }
-
-    // popup へは通知しない。popup は同じバッチを Service Worker から
-    // 直接もらっている（フェーズ6b でポートになり、送った順に1回ずつ届く）。
-    // ここから送り返すと、その1回ずつを崩す echo になるだけだった
-  }
 }
-
-// 新しいメソッドを追加
-YouTubeLiveChatMonitor.prototype.waitForYouTubeLive = function() {
-  const checkInterval = setInterval(() => {
-    if (this.isYouTubeLivePage()) {
-      clearInterval(checkInterval);
-      this.extractLiveChatId();
-    }
-  }, 1000);
-  
-  // 30秒後にタイムアウト
-  setTimeout(() => {
-    clearInterval(checkInterval);
-  }, 30000);
-};
-
-YouTubeLiveChatMonitor.prototype.observePageChanges = function() {
-  // YouTubeのSPA画面遷移を監視
-  let lastUrl = window.location.href;
-  const observer = new MutationObserver(() => {
-    if (window.location.href !== lastUrl) {
-      lastUrl = window.location.href;
-      debugLog('[YouTube Special Comments] Page navigation detected');
-      
-      // 監視を停止してリセット
-      this.stopBackgroundMonitoring();
-      this.liveChatId = null;
-      this.currentVideoId = null;
-      this.initRetryCount = 0;
-      this.specialComments = [];
-      
-      // 新しいページをチェック
-      setTimeout(() => {
-        if (this.isYouTubeLivePage()) {
-          this.extractLiveChatId();
-          this.tryDomModeAutoStart();
-        }
-      }, 1000);
-    }
-  });
-  
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true
-  });
-};
-
 
 YouTubeLiveChatMonitor.prototype.extractVideoId = function() {
   const url = window.location.href;
@@ -601,24 +598,6 @@ YouTubeLiveChatMonitor.prototype.sendMessageWithRetry = async function(message, 
       await this.delay(delay);
     }
   }
-};
-
-// Page Visibility APIによる可視性監視
-YouTubeLiveChatMonitor.prototype.setupVisibilityMonitoring = function() {
-  // ページアンロード時の処理
-  window.addEventListener('beforeunload', () => {
-    if (this.isMonitoring) {
-      debugLog('[YouTube Special Comments] Page unloading, requesting auto-stop');
-      // 同期的に停止要求を送信
-      navigator.sendBeacon(
-        chrome.runtime.getURL(''), 
-        JSON.stringify({
-          action: 'requestAutoStop',
-          reason: 'ページが閉じられました'
-        })
-      );
-    }
-  });
 };
 
 // 初期化

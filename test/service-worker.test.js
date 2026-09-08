@@ -1513,12 +1513,38 @@ describe('dom-chat のヘルス', () => {
     assert.equal(response.health.state, 'no-chat');
   });
 
-  test('タブが応答しなくても、問い合わせは打ち切られる', async () => {
-    // 同じタブの content-script.js は扱わない action でも return true を返す（#30）。
-    // dom-chat.js が居ないフレーム構成では応答が永久に返らず、popup の待ちが宙に浮く
+  test('聞き返す先は dom-chat.js が居るフレーム', async () => {
+    // tabs.sendMessage はタブの全フレームに配られ、応答は最初に返した1つが勝つ。
+    // #30 を直したいま、トップフレームの content-script.js は知らない action にも
+    // 即答するので、宛先を指定しないと「unknown action」がヘルスの応答を追い越す
+    const { chrome, calls } = createChromeMock({
+      tabs: watchTab(3, 'V'),
+      onTabMessage: (tabId, message, options) =>
+        (message.action === 'getDomChatHealth' && options?.frameId === 7
+          ? { health: { state: 'reading', extracted: 1 } }
+          : { success: false, error: 'unknown action: getDomChatHealth' })
+    });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    domSession(sw);
+    const popup = chrome.__connectPopup();
+    // dom-chat.js は live_chat の iframe に居る（トップフレームではない）
+    await fromTab(chrome, { action: 'domChatHealth', health: { state: 'watching' } },
+      { ...senderFor(3, 'V'), frameId: 7 });
+
+    const response = await popup.request({ action: 'getDomChatHealth' });
+
+    assert.equal(response.health.state, 'reading');
+    const asked = calls.tabMessages.filter(m => m.message.action === 'getDomChatHealth');
+    assert.equal(asked[asked.length - 1].options?.frameId, 7, 'フレームを指定していない');
+  });
+
+  test('別のフレームが先に答えても、その応答は採らない', async () => {
+    // 宛先が分からない（Service Worker が終了して控えを失った）ときは
+    // 全フレームに配られる。content-script.js の「unknown action」が勝つことがある
     const { chrome } = createChromeMock({
       tabs: watchTab(3, 'V'),
-      onTabMessage: () => new Promise(() => {}) // いつまでも返らない
+      onTabMessage: () => ({ success: false, error: 'unknown action: getDomChatHealth' })
     });
     const sw = loadServiceWorker(chrome);
     await settle();
@@ -1527,7 +1553,7 @@ describe('dom-chat のヘルス', () => {
 
     const response = await popup.request({ action: 'getDomChatHealth' });
 
-    assert.equal(response.health, null);
+    assert.equal(response.health, null, 'ヘルスを持たない応答を状態として採っている');
   });
 
   test('APIモードと停止中は、状態を出さない', async () => {
@@ -1560,5 +1586,93 @@ describe('dom-chat のヘルス', () => {
 
     assert.equal(handled, false, 'リレーの分岐が残っている');
     assert.equal(popup.notifications().filter(m => m.action === 'newSpecialComments').length, 0);
+  });
+});
+
+describe('SPA遷移の検知（#24）', () => {
+  const domSession = sw => sw.setState({
+    isMonitoring: true, chatMode: 'dom', tabId: 3, videoId: 'V',
+    processedMessageIds: new Set(), avatarsByAuthor: {}
+  });
+
+  test('監視中のタブが別の配信へ動いたら、セッションを畳む', async () => {
+    // 以前は content script が document.body 全体を購読して気付いていた（#24）。
+    // 判定の材料（tabId と videoId）は元から SW 側にあり、突き合わせの正も
+    // reconcile ただ1つなので、こちらに移すほうが素直
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    domSession(sw);
+    const popup = chrome.__connectPopup();
+
+    await chrome.__navigateTab(3, 'https://www.youtube.com/watch?v=NEXT');
+
+    assert.equal(sw.session.isMonitoring, false, '別の配信を掴んだまま監視を続けている');
+    // 「停止しました」とは流さない。遷移は切り替えで、この直後に
+    // content script が新しい動画で開始し直す
+    assert.equal(popup.notifications().some(m => m.action === 'monitoringAutoStopped'), false);
+  });
+
+  test('同じ配信の中の遷移では畳まない', async () => {
+    // 再生位置つきのURLに書き換わるだけでも onUpdated は飛んでくる
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    domSession(sw);
+
+    await chrome.__navigateTab(3, 'https://www.youtube.com/watch?v=V&t=120');
+
+    assert.equal(sw.session.isMonitoring, true, '同じ配信なのに監視を止めている');
+  });
+
+  test('監視していないタブの遷移では畳まない', async () => {
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    domSession(sw);
+
+    await chrome.__navigateTab(9, 'https://www.youtube.com/watch?v=OTHER');
+
+    assert.equal(sw.session.isMonitoring, true);
+  });
+
+  test('content script に遷移を知らせる', async () => {
+    // content script はもう自分では気付けない。新しい動画で組み立て直させる
+    const { chrome, calls } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    domSession(sw);
+
+    await chrome.__navigateTab(3, 'https://www.youtube.com/watch?v=NEXT');
+
+    const notice = calls.tabMessages.find(m => m.message.action === 'pageNavigated');
+    assert.ok(notice, '遷移を知らせていない');
+    assert.equal(notice.tabId, 3);
+    assert.equal(notice.message.videoId, 'NEXT');
+  });
+
+  test('URL の変わらない更新（読み込み完了など）では何もしない', async () => {
+    const { chrome, calls } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    domSession(sw);
+
+    for (const fn of chrome.__onTabUpdated) fn(3, { status: 'complete' }, { id: 3 });
+    await settle();
+
+    assert.equal(calls.tabMessages.filter(m => m.message.action === 'pageNavigated').length, 0);
+    assert.equal(sw.session.isMonitoring, true);
+  });
+
+  test('新着コメントを content script へ送り返さない', async () => {
+    // 控えを持つのをやめた（フェーズ9）ので配る先が無い。popup は SW から直接もらう
+    const { chrome, calls } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    domSession(sw);
+
+    await sw.handleDomChatMessages([domComment(1)], senderFor(3, 'V'));
+
+    assert.equal(calls.tabMessages.filter(m => m.message.action === 'newSpecialComments').length, 0);
   });
 });

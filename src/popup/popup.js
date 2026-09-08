@@ -346,7 +346,9 @@ class PopupController {
             currentTab: this.currentTab ? {
                 id: this.currentTab.id,
                 url: this.currentTab.url,
-                isYouTube: this.currentTab.url.includes('youtube.com')
+                // tabs 権限を外したので（#40）、url は host_permissions が当たる
+                // タブ（= youtube.com）でしか読めない。他所のタブでは undefined になる
+                isYouTube: this.currentTab.url?.includes('youtube.com') ?? false
             } : null,
             apiKeyLoaded: !!this.elements.apiKeyInput.value,
             filterSettings: this.commentFilters
@@ -1139,10 +1141,10 @@ class PopupController {
     }
     
     async getCurrentVideoId() {
-        // Content scriptから取得を試行
+        // Content scriptから取得を試行（ping は生存確認と現在地の両方を返す）
         try {
             const response = await this.sendTabMessageWithRetry(this.currentTab.id, {
-                action: 'getSpecialComments'
+                action: 'ping'
             }, 2);
             
             if (response && response.videoId) {
@@ -1227,26 +1229,10 @@ class PopupController {
             debugLog('[YouTube Special Comments] Primary history loading failed:', error.message);
         }
         
-        // フォールバック1: Content scriptから直接コメントを取得
-        if (!historyLoaded) {
-            debugLog('[YouTube Special Comments] === Fallback 1: Getting comments from content script ===');
-            try {
-                const contentResponse = await this.sendTabMessageWithRetry(this.currentTab.id, {
-                    action: 'getSpecialComments'
-                }, 2);
-                
-                if (contentResponse?.comments && contentResponse.comments.length > 0) {
-                    const formattedComments = this.formatHistoryComments(contentResponse.comments);
-                    this.setComments(formattedComments);
-                    this.renderComments();
-                    debugLog('[YouTube Special Comments] Fallback 1 successful: loaded', formattedComments.length, 'comments from content script');
-                    historyLoaded = true;
-                }
-            } catch {
-                debugLog('[YouTube Special Comments] Fallback 1: content script not ready, continuing with empty state');
-            }
-        }
-        
+        // 以前はここに「content script が抱えている控えから読む」フォールバックが
+        // あった。その控え（specialComments）はAPIモードの残骸で、フェーズ9 で
+        // 消している。履歴の正は IndexedDB ただ1つ（決定2）
+
         // 最終フォールバック: 空の状態で表示
         if (!historyLoaded) {
             debugLog('[YouTube Special Comments] === All fallbacks failed, starting with empty comments ===');
@@ -1274,7 +1260,7 @@ class PopupController {
     async checkContentScriptStatus() {
         try {
             const response = await this.sendTabMessageWithRetry(this.currentTab.id, {
-                action: 'getSpecialComments'
+                action: 'ping'
             }, 2);
             
             if (response && response.liveChatId) {
@@ -1369,7 +1355,7 @@ class PopupController {
 
             // content scriptが応答するかテスト
             const testResponse = await this.sendTabMessageWithRetry(this.currentTab.id, {
-                action: 'getSpecialComments'
+                action: 'ping'
             }, 3);
 
             debugLog('[YouTube Special Comments] Content script test response:', testResponse);
@@ -1461,14 +1447,6 @@ class PopupController {
             });
         } catch (e) {
             debugWarn('[Popup] Failed to clear storage history:', e);
-        }
-        // content script のキャッシュもクリア
-        try {
-            await this.sendTabMessageWithRetry(this.currentTab.id, {
-                action: 'clearSpecialComments'
-            }, 1);
-        } catch {
-            // content script が存在しない場合は無視
         }
         this.setComments([]);
         this.avatarsByAuthor = {};

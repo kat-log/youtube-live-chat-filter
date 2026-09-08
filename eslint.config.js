@@ -112,6 +112,8 @@ const NODE_GLOBALS = {
   __filename: 'readonly',
   process: 'readonly',
   console: 'readonly',
+  // ハーネスが仮想時計を進めるときに使う（マイクロタスクを1周させる口）
+  setImmediate: 'readonly',
   Buffer: 'readonly',
   globalThis: 'readonly',
   structuredClone: 'readonly',
