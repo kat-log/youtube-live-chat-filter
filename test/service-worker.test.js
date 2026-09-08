@@ -139,7 +139,7 @@ describe('Service Worker 復帰時の状態復元', () => {
     await settle();
 
     assert.equal(sw.monitoringState.isMonitoring, true);
-    assert.equal(sw.monitoringState.currentVideoId, 'SAME');
+    assert.equal(sw.monitoringState.videoId, 'SAME');
     assert.deepEqual(await savedIds(sw, 'SAME'), ['dom_1']);
     // 履歴そのものはメモリに載せない。復帰後に必要なのは「どこまで取り込んだか」だけ
     assert.ok(sw.monitoringState.processedMessageIds.has('dom_1'),
@@ -177,14 +177,14 @@ describe('DOMモードのコメント取り込み', () => {
 
     // 「復元は通ったが実は動画が変わっていた」状況を作る
     sw.setState({
-      isMonitoring: true, chatMode: 'dom', tabId: 3, currentVideoId: 'VIDEO_A',
+      isMonitoring: true, chatMode: 'dom', tabId: 3, videoId: 'VIDEO_A',
       processedMessageIds: new Set()
     });
 
     await sw.handleDomChatMessages([domComment(1)], senderFor(3, 'VIDEO_B'));
     await settle();
 
-    assert.equal(sw.monitoringState.currentVideoId, 'VIDEO_B');
+    assert.equal(sw.monitoringState.videoId, 'VIDEO_B');
 
     assert.deepEqual(await savedIds(sw, 'VIDEO_B'), ['dom_1']);
     assert.deepEqual(await savedIds(sw, 'VIDEO_A'), [], '古い動画にコメントが混ざっている');
@@ -196,7 +196,7 @@ describe('DOMモードのコメント取り込み', () => {
     const sw = loadServiceWorker(chrome);
     await settle();
 
-    sw.setState({ isMonitoring: false, chatMode: 'dom', tabId: 3, currentVideoId: 'V' });
+    sw.setState({ isMonitoring: false, chatMode: 'dom', tabId: 3, videoId: 'V' });
     await sw.handleDomChatMessages([domComment(1)], senderFor(3, 'V'));
 
     assert.equal(sw.monitoringState.isMonitoring, false);
@@ -207,14 +207,16 @@ describe('DOMモードのコメント取り込み', () => {
     // フェーズ4の本体（決定1）。取り込み時に捨てていたので、あとから
     // トグルをONに戻しても過去分が戻らなかった（#4）。絞り込みは表示側の担当で、
     // 「フィルターを切ると出ない」ことは test/popup-filters.test.js が見ている
-    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const { chrome, store } = createChromeMock({ tabs: watchTab(3, 'V') });
     const sw = loadServiceWorker(chrome);
     await settle();
 
+    // フェーズ6a で、表示フィルターの写しは Service Worker から消えた。
+    // 正は storage.local ただ1つで、読むのは popup
+    store.commentFilters = { owner: true, moderator: false, sponsor: false, normal: false };
     sw.setState({
-      isMonitoring: true, chatMode: 'dom', tabId: 3, currentVideoId: 'V',
-      processedMessageIds: new Set(),
-      commentFilters: { owner: true, moderator: false, sponsor: false, normal: false }
+      isMonitoring: true, chatMode: 'dom', tabId: 3, videoId: 'V',
+      processedMessageIds: new Set()
     });
 
     await sw.handleDomChatMessages([
@@ -235,7 +237,7 @@ describe('DOMモードのコメント取り込み', () => {
     await settle();
 
     sw.setState({
-      isMonitoring: true, chatMode: 'dom', tabId: 3, currentVideoId: 'V',
+      isMonitoring: true, chatMode: 'dom', tabId: 3, videoId: 'V',
       processedMessageIds: new Set()
     });
 
@@ -256,7 +258,7 @@ describe('DOMモードのコメント取り込み', () => {
     await settle();
 
     sw.setState({
-      isMonitoring: true, chatMode: 'dom', tabId: 3, currentVideoId: 'V',
+      isMonitoring: true, chatMode: 'dom', tabId: 3, videoId: 'V',
       processedMessageIds: new Set()
     });
 
@@ -279,7 +281,7 @@ describe('DOMモードのコメント取り込み', () => {
     await settle();
 
     sw.setState({
-      isMonitoring: true, chatMode: 'dom', tabId: 3, currentVideoId: 'V',
+      isMonitoring: true, chatMode: 'dom', tabId: 3, videoId: 'V',
       processedMessageIds: new Set()
     });
 
@@ -298,7 +300,7 @@ describe('DOMモードのコメント取り込み', () => {
     await settle();
 
     sw.setState({
-      isMonitoring: true, chatMode: 'dom', tabId: 3, currentVideoId: 'V',
+      isMonitoring: true, chatMode: 'dom', tabId: 3, videoId: 'V',
       processedMessageIds: new Set(['dom_-1234567_0'])
     });
 
@@ -317,7 +319,7 @@ describe('DOMモードのコメント取り込み', () => {
     await settle();
 
     sw.setState({
-      isMonitoring: true, chatMode: 'dom', tabId: 3, currentVideoId: 'V',
+      isMonitoring: true, chatMode: 'dom', tabId: 3, videoId: 'V',
       processedMessageIds: new Set()
     });
 
@@ -409,14 +411,14 @@ describe('履歴のクリア', () => {
 
     assert.deepEqual(await savedIds(sw, 'V'), []);
     assert.deepEqual({ ...await sw.store.readAvatars('V') }, {}, 'アバターが残っている');
-    assert.deepEqual({ ...sw.monitoringState.avatarsByAuthor }, {});
+    assert.deepEqual({ ...sw.session.avatarsByAuthor }, {});
     assert.equal(sw.monitoringState.processedMessageIds.size, 0, '既読マークが残っている');
 
     // dom-chat.js が全件を送り直す（requestInitialSweep と同じ流れ）
     await sw.handleDomChatMessages(batch(), senderFor(3, 'V'));
     assert.deepEqual(await savedIds(sw, 'V'), ['dom_1', 'dom_2'],
       'クリア後に再スキャンしてもコメントが戻らない');
-    assert.equal((await sw.store.readAvatars('V'))['常連さん'], AVATAR);
+    assert.equal((await sw.store.readAvatars('V'))['常連さん'].url, AVATAR);
   });
 
   test('クリアしても、保存待ちのコメントが書き戻らない', async () => {
@@ -483,16 +485,17 @@ describe('popup へ渡すコメント', () => {
     // 「特別」プリセットで取り込んだあと「一般」をONに戻すと過去分が出る、
     // というフェーズ4の約束の受け渡し口。あとは popup が絞り込むだけで、
     // そちらは test/popup-filters.test.js が見ている
-    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const { chrome, store } = createChromeMock({ tabs: watchTab(3, 'V') });
     const sw = loadServiceWorker(chrome);
     await settle();
 
+    // 「特別」プリセット相当（メンバーと一般が非表示）。設定は storage にあり、
+    // Service Worker は取り込み時にそれを見ない
+    store.commentFilters = { owner: true, moderator: true, sponsor: false, normal: false,
+      superchat: true, membership: true };
     sw.setState({
-      isMonitoring: true, chatMode: 'dom', tabId: 3, currentVideoId: 'V',
-      processedMessageIds: new Set(),
-      // 「特別」プリセット相当（メンバーと一般が非表示）
-      commentFilters: { owner: true, moderator: true, sponsor: false, normal: false,
-        superchat: true, membership: true }
+      isMonitoring: true, chatMode: 'dom', tabId: 3, videoId: 'V',
+      processedMessageIds: new Set()
     });
 
     await sw.handleDomChatMessages([
@@ -512,10 +515,17 @@ describe('アバターの取り込み', () => {
   // 何百回も履歴に書くことになり、過去に障害を出した肥大化を再発させる。
   const AVATAR = 'https://yt3.ggpht.com/AAA=s64-c-k-c0x00ffffff-no-rj';
 
-  const startedSession = (sw, filters) => sw.setState({
-    isMonitoring: true, chatMode: 'dom', tabId: 3, currentVideoId: 'V',
-    processedMessageIds: new Set(), avatarsByAuthor: {},
-    ...(filters ? { commentFilters: filters } : {})
+  // bulk 枠を超えるだけの一般視聴者。1人1URLで、上限の判定に使う
+  const viewers = (sw, over) => Array.from(
+    { length: sw.AVATAR_LIMITS.bulk + over },
+    (_, i) => ({
+      ...domComment(i + 1), role: 'normal',
+      displayName: `視聴者${i}`, avatarUrl: `${AVATAR}#${i}`
+    }));
+
+  const startedSession = sw => sw.setState({
+    isMonitoring: true, chatMode: 'dom', tabId: 3, videoId: 'V',
+    processedMessageIds: new Set(), avatarsByAuthor: {}
   });
 
   test('アバターは発言者ごとのマップに入り、コメント本体には残らない', async () => {
@@ -531,8 +541,10 @@ describe('アバターの取り込み', () => {
       { ...domComment(3), displayName: '常連さん', avatarUrl: AVATAR }
     ], senderFor(3, 'V'));
 
-    assert.deepEqual({ ...sw.monitoringState.avatarsByAuthor }, { '常連さん': AVATAR });
-    assert.equal((await sw.store.readAvatars('V'))['常連さん'], AVATAR);
+    // マップの値は { url, bucket }。枠は間引きのための持ち物で、popup には渡さない
+    assert.deepEqual({ ...sw.session.avatarsByAuthor['常連さん'] },
+      { url: AVATAR, bucket: 'bulk' });
+    assert.equal((await sw.store.readAvatars('V'))['常連さん'].url, AVATAR);
 
     const saved = await savedComments(sw, 'V');
     assert.equal(saved.length, 3);
@@ -567,19 +579,19 @@ describe('アバターの取り込み', () => {
     const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
     const sw = loadServiceWorker(chrome);
     await settle();
-    startedSession(sw, { owner: true, moderator: true, sponsor: true, normal: false });
+    startedSession(sw);
 
     await sw.handleDomChatMessages([
       { ...domComment(1), role: 'normal', displayName: '一般人', avatarUrl: AVATAR },
       { ...domComment(2), role: 'owner', displayName: '配信者', avatarUrl: AVATAR }
     ], senderFor(3, 'V'));
 
-    assert.deepEqual(Object.keys(sw.monitoringState.avatarsByAuthor), ['一般人', '配信者']);
+    assert.deepEqual(Object.keys(sw.session.avatarsByAuthor), ['一般人', '配信者']);
   });
 
   test('発言し続けている配信者のアバターは、一般の流量で押し出されない', async () => {
-    // 全件取り込みにすると、一般視聴者のアバターだけで上限（500人）に届く。
-    // 挿入順の古い方から捨てるだけの作りだと、配信開始直後に発言している
+    // 全件取り込みにすると、一般視聴者のアバターだけで上限に届く。
+    // 枠が1つで挿入順の古い方から捨てるだけの作りだと、配信開始直後に発言している
     // 配信者やモデレーターのアバターが真っ先に落ちる
     // （決定3が保持枠を分けたのと同じ問題がアバターに出る）
     const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
@@ -591,25 +603,59 @@ describe('アバターの取り込み', () => {
       ...domComment(index), role: 'owner', displayName: '配信者', avatarUrl: AVATAR
     });
 
-    // 配信者が最初に発言し、そのあと一般視聴者が上限を超えるまで流れる。
-    // 配信者は途中でも発言する（実際の配信で必ず起きる並び）
+    // 配信者が最初に発言し、そのあと一般視聴者が上限を超えるまで流れる
     await sw.handleDomChatMessages([owner(0)], senderFor(3, 'V'));
+    await sw.handleDomChatMessages(viewers(sw, 10), senderFor(3, 'V'));
 
-    const viewers = Array.from({ length: sw.MAX_AVATARS_PER_VIDEO + 10 }, (_, i) => ({
-      ...domComment(i + 1), role: 'normal',
-      displayName: `視聴者${i}`, avatarUrl: `${AVATAR}#${i}`
-    }));
-    for (let at = 0; at < viewers.length; at += 50) {
-      await sw.handleDomChatMessages(viewers.slice(at, at + 50), senderFor(3, 'V'));
-      await sw.handleDomChatMessages([owner(9000 + at)], senderFor(3, 'V'));
-    }
-
-    const names = Object.keys(sw.monitoringState.avatarsByAuthor);
-    assert.equal(names.length, sw.MAX_AVATARS_PER_VIDEO);
+    const names = Object.keys(sw.session.avatarsByAuthor);
+    assert.equal(names.length, sw.AVATAR_LIMITS.bulk + 1, '枠ごとに数えていない');
     assert.ok(names.includes('配信者'), '配信者のアバターが押し出されている');
-    assert.equal((await sw.store.readAvatars('V'))['配信者'], AVATAR);
+    assert.equal((await sw.store.readAvatars('V'))['配信者'].url, AVATAR);
     // 押し出されるのは、古くて以後発言していない一般視聴者の方
     assert.ok(!names.includes('視聴者0'), '一般視聴者の古い方が残っている');
+  });
+
+  test('1バッチで上限を超えても、配信者のアバターは落ちない', async () => {
+    // フェーズ4の緩和（発言のたびに末尾へ入れ直す）では守れなかったケース。
+    // 1回のバッチの中で一般視聴者が上限を超えると、配信者が発言し直す機会が無い
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    startedSession(sw);
+
+    await sw.handleDomChatMessages([
+      { ...domComment(0), role: 'owner', displayName: '配信者', avatarUrl: AVATAR },
+      ...viewers(sw, 50)
+    ], senderFor(3, 'V'));
+
+    assert.ok(Object.keys(sw.session.avatarsByAuthor).includes('配信者'),
+      '1バッチの中で配信者のアバターが押し出されている');
+  });
+
+  test('Service Worker の復帰直後でも、配信者のアバターは落ちない', async () => {
+    // 保存済みのアバターが枠を持つようになったので、メモリが空の状態から
+    // 復元しても「この人は primary」が分かる。
+    // 枠を持たない頃は、復帰後の最初の流入で真っ先に落ちていた
+    const { chrome, store } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const first = loadServiceWorker(chrome);
+    await settle();
+    await first.startDomMonitoring(3, 'V');
+    await first.handleDomChatMessages([
+      { ...domComment(0), role: 'owner', displayName: '配信者', avatarUrl: AVATAR }
+    ], senderFor(3, 'V'));
+    await first.flushCommentsHistory();
+
+    // Service Worker が終了して復帰した状況（メモリは空、storage と IndexedDB は残る）
+    assert.equal(store.monitoringState.isMonitoring, true);
+    const sw = loadServiceWorker(chrome, chrome.__idb);
+    await settle();
+    assert.equal(sw.session.avatarsByAuthor['配信者'].bucket, 'primary',
+      '保存済みアバターの枠が復元されていない');
+
+    await sw.handleDomChatMessages(viewers(sw, 50), senderFor(3, 'V'));
+
+    assert.ok(Object.keys(sw.session.avatarsByAuthor).includes('配信者'),
+      '復帰直後に配信者のアバターが押し出されている');
   });
 
   test('同じアバターを送り直しても、追加分としては通知しない', async () => {
@@ -637,16 +683,13 @@ describe('アバターの取り込み', () => {
     await settle();
     startedSession(sw);
 
-    const over = sw.MAX_AVATARS_PER_VIDEO + 10;
-    await sw.handleDomChatMessages(
-      Array.from({ length: over }, (_, i) =>
-        ({ ...domComment(i), displayName: `視聴者${i}`, avatarUrl: `${AVATAR}#${i}` })),
-      senderFor(3, 'V'));
+    const batch = viewers(sw, 10);
+    await sw.handleDomChatMessages(batch, senderFor(3, 'V'));
 
-    const names = Object.keys(sw.monitoringState.avatarsByAuthor);
-    assert.equal(names.length, sw.MAX_AVATARS_PER_VIDEO);
+    const names = Object.keys(sw.session.avatarsByAuthor);
+    assert.equal(names.length, sw.AVATAR_LIMITS.bulk);
     assert.ok(!names.includes('視聴者0'), '古いアバターが残っている');
-    assert.ok(names.includes(`視聴者${over - 1}`), '最新のアバターが消えている');
+    assert.ok(names.includes(`視聴者${batch.length - 1}`), '最新のアバターが消えている');
   });
 
   test('履歴のクリーンアップでアバターも一緒に消える', async () => {
@@ -681,7 +724,7 @@ describe('アバターの取り込み', () => {
     await settle();
     await sw.startDomMonitoring(3, 'V');
 
-    assert.equal(sw.monitoringState.avatarsByAuthor['常連さん'], AVATAR);
+    assert.equal(sw.session.avatarsByAuthor['常連さん'].url, AVATAR);
 
     const result = await sw.getCommentsHistory('V');
     assert.equal(result.avatars['常連さん'], AVATAR, 'ポップアップにアバターが渡っていない');
@@ -873,5 +916,385 @@ describe('APIモードの取り込み', () => {
 
     assert.deepEqual([...response.comments.map(c => c.bucket)],
       ['bulk', 'bulk', 'primary', 'primary', 'primary']);
+  });
+});
+
+describe('セッション状態の一本化', () => {
+  // 「いま何を監視しているか」の正は session ただ1つ（決定6 = 根本原因A）。
+  // 以前はメモリと storage.local で形が違い（3キー版と5キー版）、
+  // 突き合わせの分岐が場所ごとに足されていた
+
+  test('保存された状態は、復元してそのまま同じ形に戻る', async () => {
+    const { chrome, store } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    await sw.startDomMonitoring(3, 'V');
+
+    // 部分集合ではなく、永続化するキーが全部そろっていること
+    assert.deepEqual(Object.keys(store.monitoringState).sort(),
+      ['chatMode', 'epoch', 'isMonitoring', 'liveChatId', 'pageToken', 'startedAt',
+        'tabId', 'videoId'].sort());
+
+    const restored = sw.loadSession(store.monitoringState);
+    for (const key of ['isMonitoring', 'chatMode', 'videoId', 'tabId', 'liveChatId', 'pageToken']) {
+      assert.deepEqual(restored[key], sw.session[key], `${key} が往復で変わっている`);
+    }
+  });
+
+  test('停止するとメモリと storage の両方が「監視していない」になる', async () => {
+    // 以前はメモリ側に古い tabId / videoId / chatMode が残り、
+    // 停止のたびに両者がずれていた（#35 の関連）
+    const { chrome, store } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    await sw.startDomMonitoring(3, 'V');
+    await sw.stopBackgroundMonitoring();
+
+    assert.equal(sw.session.isMonitoring, false);
+    assert.equal(sw.session.tabId, null, 'メモリに古いタブが残っている');
+    assert.equal(sw.session.videoId, null, 'メモリに古い動画が残っている');
+    assert.equal(sw.session.chatMode, null);
+    assert.equal(store.monitoringState.isMonitoring, false);
+
+    const state = await sendMessage(chrome, { action: 'getMonitoringState' });
+    assert.equal(state.isMonitoring, false, '古い true が勝っている');
+    assert.equal(state.currentVideoId, null);
+  });
+
+  test('突き合わせは reconcile 1つ', async () => {
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    assert.equal(sw.reconcile(3, 'V'), 'idle', '監視していないのに idle 以外');
+
+    await sw.startDomMonitoring(3, 'V');
+    assert.equal(sw.reconcile(3, 'V'), 'same');
+    assert.equal(sw.reconcile(3, 'OTHER'), 'changed');
+    assert.equal(sw.reconcile(9, 'V'), 'other');
+    // URLが読めないときは判断を保留する（継続）
+    assert.equal(sw.reconcile(3, null), 'same');
+    // 送り主が分からないメッセージは、いまのセッションのものとして扱う
+    assert.equal(sw.reconcile(null, 'V'), 'same');
+  });
+
+  test('別のタブのライブチャットからのコメントは混ざらない', async () => {
+    // 監視していないタブにも manifest の自動注入で dom-chat.js は乗る。
+    // 突き合わせが「監視中か」しか見ていないと、別配信のコメントが
+    // いま見ている配信の履歴に積まれる
+    const { chrome } = createChromeMock({
+      tabs: { ...watchTab(3, 'V'), ...watchTab(4, 'OTHER') }
+    });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    await sw.startDomMonitoring(3, 'V');
+
+    await sw.handleDomChatMessages([domComment(1)], senderFor(4, 'OTHER'));
+
+    assert.deepEqual(await savedIds(sw, 'V'), [], '別タブのコメントが混ざっている');
+    assert.deepEqual(await savedIds(sw, 'OTHER'), []);
+    assert.equal(sw.session.videoId, 'V', '別タブのメッセージでセッションが動いた');
+  });
+});
+
+describe('世代（epoch）', () => {
+  test('動画が切り替わっても、切替中のコメントが失われない', async () => {
+    // onMessage は sendResponse を即返して処理を切り離すので、バッチは
+    // 放っておくと直列化されない。バッチAが startDomMonitoring の中にいる間に
+    // バッチBが入ると、Bは古いセッションに書き込み、そのあとAが状態を
+    // 作り直して消えていた（#5）
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'VIDEO_B') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    await sw.startDomMonitoring(3, 'VIDEO_A');
+
+    // 本物と同じ入口（onMessage）から、待たずに2バッチ続けて流す
+    const sender = senderFor(3, 'VIDEO_B');
+    chrome.__onMessage({ action: 'domChatMessages', messages: [domComment(1)] }, sender, () => {});
+    chrome.__onMessage({ action: 'domChatMessages', messages: [domComment(2)] }, sender, () => {});
+    await sw.enqueueDomChatMessages([], sender);
+    await settle();
+
+    assert.equal(sw.session.videoId, 'VIDEO_B');
+    assert.deepEqual(await savedIds(sw, 'VIDEO_B'), ['dom_1', 'dom_2'],
+      '切替中のバッチが消えている');
+    assert.deepEqual(await savedIds(sw, 'VIDEO_A'), [], '古い動画に混ざっている');
+  });
+
+  test('古い世代のポーリング結果は、状態に触らない', async () => {
+    // 停止しても実行中の fetch は止められない。その続きが状態を書き戻すと、
+    // 止めたはずのループが生き返り、ポーリングが二重に走る（#5）
+    const { chrome, store } = createChromeMock({ tabs: watchTab(3, 'V') });
+    store.youtubeApiKey = 'KEY';
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    let release;
+    const inFlight = new Promise(resolve => { release = resolve; });
+    sw.setFetch(async () => {
+      await inFlight;
+      return { ok: true, json: async () => ({ items: [], nextPageToken: 'TOKEN_OLD' }) };
+    });
+
+    await sw.startBackgroundMonitoring('LIVE_CHAT_ID', 3, 'V');
+    const oldEpoch = sw.session.epoch;
+
+    // fetch が飛んでいる最中に停止する
+    await sw.stopBackgroundMonitoring();
+    assert.notEqual(sw.session.epoch, oldEpoch, '世代が進んでいない');
+
+    release();
+    await settle();
+
+    assert.equal(sw.session.isMonitoring, false, '止めたセッションが生き返っている');
+    assert.equal(sw.session.pageToken, null, '古い世代が pageToken を書いている');
+    assert.equal(sw.isPollingAlive(), false, 'タイマーが張り直されている');
+  });
+});
+
+describe('番人（chrome.alarms）', () => {
+  const okResponse = (items = [], extra = {}) =>
+    ({ ok: true, json: async () => ({ items, pollingIntervalMillis: 5000, ...extra }) });
+
+  test('監視を始めると1分周期の alarm が作られ、止めると消える', async () => {
+    // setTimeout は Service Worker ごと消える。外から起こす仕組みが要る（#37）
+    const { chrome, calls } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    await sw.startDomMonitoring(3, 'V');
+    const created = calls.alarms.filter(a => a.op === 'create');
+    assert.equal(created.length, 1);
+    assert.equal(created[0].info.periodInMinutes, 1, 'alarm の最小周期は1分');
+
+    await sw.stopBackgroundMonitoring();
+    assert.ok(calls.alarms.some(a => a.op === 'clear'), '止めても alarm が残っている');
+  });
+
+  test('alarm の発火で、止まっていたポーリングが再開する', async () => {
+    // quota エラーの60秒待ちは Service Worker のアイドル上限を超えるので、
+    // タイマーごと消える。番人が起こさないと、popup を開き直すまで再開しない（#37）
+    const { chrome, store } = createChromeMock({ tabs: watchTab(3, 'V') });
+    store.youtubeApiKey = 'KEY';
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    sw.setFetch(async () => okResponse());
+
+    await sw.startBackgroundMonitoring('LIVE_CHAT_ID', 3, 'V');
+    await settle();
+
+    // Service Worker の終了でタイマーだけが消えた状態を作る
+    sw.setState({ pollingTimer: null, pollingInFlight: false });
+    assert.equal(sw.isPollingAlive(), false);
+
+    await chrome.__fireAlarm();
+    await settle();
+
+    assert.equal(sw.isPollingAlive(), true, '番人がポーリングを再開していない');
+    await sw.stopBackgroundMonitoring();
+  });
+
+  test('動いているポーリングは、番人が二重に起こさない', async () => {
+    const { chrome, store } = createChromeMock({ tabs: watchTab(3, 'V') });
+    store.youtubeApiKey = 'KEY';
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    let fetches = 0;
+    sw.setFetch(async () => { fetches += 1; return okResponse(); });
+
+    await sw.startBackgroundMonitoring('LIVE_CHAT_ID', 3, 'V');
+    await settle();
+    const before = fetches;
+
+    await chrome.__fireAlarm();
+    await settle();
+
+    assert.equal(fetches, before, 'ポーリングループが二重に走っている');
+    await sw.stopBackgroundMonitoring();
+  });
+
+  test('監視していないときは、番人が自分で止まる', async () => {
+    const { chrome, calls } = createChromeMock();
+    loadServiceWorker(chrome);
+    await settle();
+    calls.alarms.length = 0;
+
+    await chrome.__fireAlarm();
+
+    assert.deepEqual(calls.alarms.map(a => a.op), ['clear']);
+  });
+
+  test('DOMモードでコメントが途絶えたら、dom-chat.js を注入し直す', async () => {
+    // YouTube が #items を作り直すと MutationObserver が外れ、無言で止まる（#2）
+    const { chrome, calls } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    await sw.startDomMonitoring(3, 'V');
+    await sw.handleDomChatMessages([domComment(1)], senderFor(3, 'V'));
+    await sw.flushCommentsHistory();
+
+    calls.executeScript.length = 0;
+    calls.tabMessages.length = 0;
+
+    // 直前までコメントが来ているので、まだ何もしない
+    await chrome.__fireAlarm();
+    assert.equal(calls.executeScript.length, 0, '静かなだけの配信で再注入している');
+
+    // まだ1件も保存していない配信で、開始から十分に時間が経った状態にする
+    // （沈黙の測り方は「最後に保存した時刻、無ければセッションの開始時刻」）
+    sw.setState({ videoId: 'QUIET', startedAt: Date.now() - 10 * 60 * 1000 });
+
+    await chrome.__fireAlarm();
+    await settle();
+
+    assert.ok(calls.executeScript.some(o => o.files?.includes('content/dom-chat.js')),
+      '沈黙しても再注入していない');
+    assert.ok(calls.tabMessages.some(m => m.message.action === 'requestInitialSweep'),
+      '再スキャンを要求していない');
+
+    // 沈黙は続くので、間隔を空けないと1分ごとに注入し直すことになる
+    const injections = calls.executeScript.length;
+    await chrome.__fireAlarm();
+    await settle();
+    assert.equal(calls.executeScript.length, injections, '毎分注入し直している');
+  });
+});
+
+describe('APIモードのエラー処理', () => {
+  test('message を持たない例外でも、次のポーリングが張られる', async () => {
+    // catch の中で error.message.includes(...) が落ちると、再スケジュールに
+    // 到達せずポーリングが恒久停止する。ログも出ないので気付けない（#8）
+    const { chrome, store } = createChromeMock({ tabs: watchTab(3, 'V') });
+    store.youtubeApiKey = 'KEY';
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    // message を持たない値を投げる（fetch の内部で起きうる）
+    sw.setFetch(async () => { throw { code: 500 }; });
+
+    await sw.startBackgroundMonitoring('LIVE_CHAT_ID', 3, 'V');
+    await settle();
+
+    assert.equal(sw.isPollingAlive(), true, '次のポーリングが張られていない');
+    await sw.stopBackgroundMonitoring();
+  });
+
+  test('文字列を投げても、次のポーリングが張られる', async () => {
+    const { chrome, store } = createChromeMock({ tabs: watchTab(3, 'V') });
+    store.youtubeApiKey = 'KEY';
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    sw.setFetch(async () => { throw 'quota exceeded'; });
+
+    await sw.startBackgroundMonitoring('LIVE_CHAT_ID', 3, 'V');
+    await settle();
+
+    assert.equal(sw.isPollingAlive(), true);
+    await sw.stopBackgroundMonitoring();
+  });
+});
+
+describe('APIモードの pageToken', () => {
+  test('保存され、Service Worker の復帰後も続きから読む', async () => {
+    // 永続化していないと、復帰のたびにAPIの既定ウィンドウを取り直す（#36）
+    const { chrome, store } = createChromeMock({ tabs: watchTab(3, 'V') });
+    store.youtubeApiKey = 'KEY';
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    const tokens = [];
+    sw.setFetch(async url => {
+      tokens.push(new URL(url).searchParams.get('pageToken'));
+      return { ok: true, json: async () => ({ items: [], nextPageToken: 'TOKEN_2' }) };
+    });
+
+    await sw.startBackgroundMonitoring('LIVE_CHAT_ID', 3, 'V');
+    await settle();
+
+    assert.equal(sw.session.pageToken, 'TOKEN_2');
+    assert.equal(store.monitoringState.pageToken, 'TOKEN_2', '保存されていない');
+    await sw.stopBackgroundMonitoring();
+
+    // Service Worker が終了して復帰した状況
+    store.monitoringState = {
+      isMonitoring: true, chatMode: 'api', videoId: 'V', tabId: 3,
+      liveChatId: 'LIVE_CHAT_ID', pageToken: 'TOKEN_2', epoch: 4, startedAt: Date.now()
+    };
+    const revived = loadServiceWorker(chrome, chrome.__idb);
+    revived.setFetch(async url => {
+      tokens.push(new URL(url).searchParams.get('pageToken'));
+      return { ok: true, json: async () => ({ items: [] }) };
+    });
+    await settle();
+
+    assert.equal(tokens.at(-1), 'TOKEN_2', '復帰後に取り直している');
+    // nextPageToken を返さないレスポンスで undefined を焼き付けない
+    assert.equal(revived.session.pageToken, 'TOKEN_2');
+    await revived.stopBackgroundMonitoring();
+  });
+});
+
+describe('APIモードの状態', () => {
+  test('DOMモードと同じ持ち物になっている', async () => {
+    // 以前はAPIモードの状態にだけ avatarsByAuthor が無く、
+    // 両モードの経路を統合した瞬間に undefined[...] で落ちる時限式だった（#10）
+    const { chrome, store } = createChromeMock({ tabs: watchTab(3, 'V') });
+    store.youtubeApiKey = 'KEY';
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    sw.setFetch(async () => ({ ok: true, json: async () => ({ items: [] }) }));
+
+    await sw.startBackgroundMonitoring('LIVE_CHAT_ID', 3, 'V');
+    const api = Object.keys(sw.session).sort();
+    await sw.stopBackgroundMonitoring();
+
+    await sw.startDomMonitoring(3, 'V');
+    assert.deepEqual(api, Object.keys(sw.session).sort(), 'モードで持ち物が違う');
+    assert.deepEqual({ ...sw.session.avatarsByAuthor }, {});
+  });
+});
+
+describe('タブが閉じられたとき', () => {
+  test('リスナーは1本だけ', async () => {
+    // 以前は2本あり、片方は「自動停止」、もう片方は「継続」と正反対だった（#35）
+    const { chrome } = createChromeMock();
+    loadServiceWorker(chrome);
+    await settle();
+
+    assert.equal(chrome.__onTabRemoved.length, 1);
+  });
+
+  test('監視中のタブが閉じられたら停止し、履歴は書き切る', async () => {
+    const { chrome, store, calls } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    await sw.startDomMonitoring(3, 'V');
+    await sw.handleDomChatMessages([domComment(1)], senderFor(3, 'V'));
+
+    await chrome.__closeTab(3);
+    await settle();
+
+    assert.equal(sw.session.isMonitoring, false);
+    assert.equal(store.monitoringState.isMonitoring, false);
+    assert.deepEqual([...(await sw.store.read('V')).map(c => c.id)], ['dom_1'],
+      '保存待ちのコメントが失われている');
+    assert.ok(calls.runtimeMessages.some(m => m.action === 'monitoringAutoStopped'),
+      'popup へ通知していない');
+  });
+
+  test('別のタブが閉じられても止まらない', async () => {
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    await sw.startDomMonitoring(3, 'V');
+
+    await chrome.__closeTab(9);
+    await settle();
+
+    assert.equal(sw.session.isMonitoring, true);
   });
 });

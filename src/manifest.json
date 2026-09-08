@@ -4,7 +4,7 @@
   "version": "1.12.5",
   "description": "APIキー不要。YouTubeライブチャットの配信者・モデレーター・メンバーのコメントとスーパーチャット・メンバー加入だけを抽出して表示。キーワード検索や発言者での絞り込みにも対応。",
 
-  "permissions": ["storage", "unlimitedStorage", "activeTab", "scripting", "tabs"],
+  "permissions": ["storage", "unlimitedStorage", "activeTab", "scripting", "tabs", "alarms"],
 
   "host_permissions": ["*://*.youtube.com/*", "*://*.googleapis.com/*"],
 

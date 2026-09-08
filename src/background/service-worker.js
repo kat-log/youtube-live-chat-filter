@@ -7,7 +7,6 @@ importScripts('../shared/comment.js', '../shared/store.js');
 // isCommentEnabled はここには無い。取り込みは全件で、役割・種別の絞り込みは
 // 表示側（popup）の担当になった（再設計の決定1）
 const {
-  DEFAULT_COMMENT_FILTERS,
   normalizeCommentFilters,
   isDisplayableKind,
   bucketOf,
@@ -18,7 +17,7 @@ const {
 
 // コメント履歴の唯一の保存先（IndexedDB）。上限も枠の分け方もこの中にある
 const store = self.YTFStore;
-const { MAX_HISTORY_VIDEOS, MAX_AVATARS_PER_VIDEO } = store;
+const { MAX_HISTORY_VIDEOS, AVATAR_LIMITS } = store;
 
 // デバッグモードによる統一ログ関数
 let debugMode = false;
@@ -168,7 +167,10 @@ function improveErrorMessage(originalMessage) {
 
 // エラー分析と解決策提案機能
 function analyzeError(error) {
-  const rawErrorMessage = error.message || error.toString();
+  // message を持たない値（文字列・null・prototype無しのオブジェクト）が
+  // 投げられても、ここで例外を出さないこと。catch の中で落ちると
+  // 呼び出し元の再スケジュールに到達せず、ポーリングが恒久停止する（#8）
+  const rawErrorMessage = error?.message ?? String(error);
   const cleanErrorMessage = improveErrorMessage(rawErrorMessage);
   
   debugLog('[Background] Analyzing error:', rawErrorMessage);
@@ -213,21 +215,113 @@ function commentPreview(comment) {
   return text.substring(0, 30);
 }
 
-// グローバル状態管理
-let monitoringState = {
-  isMonitoring: false,
-  liveChatId: null,
-  pageToken: null,
-  tabId: null,
-  pollingInterval: null,
-  processedMessageIds: new Set(),
-  commentFilters: { ...DEFAULT_COMMENT_FILTERS },
-  // コメント履歴はここに持たない。正は IndexedDB（shared/store.js）で、
-  // メモリとストレージの二重持ちをやめた（#33 の食い違いはここから生えていた）
-  avatarsByAuthor: {},  // { [displayName]: アバターURL } DOMモード用
-  currentVideoId: null,
-  chatMode: null // 'api' | 'dom' — ストレージから復元するまで不定
-};
+// === セッション状態 ========================================================
+// 「いま何を監視しているか」の正は、この session ただ1つ（決定6 = 根本原因A）。
+// 以前は SW のメモリ・storage.local・popup・content script の4か所に別々の正があり、
+// ズレるたびに突き合わせの分岐が1本ずつ増えていた（それが最大のバグ駆動力だった）。
+//
+// この節の約束ごと:
+//  - 永続化の口は saveSession() / loadSession() の2つだけ。書くのは
+//    PERSISTED_SESSION_KEYS の全部で、書き込み箇所ごとに形が変わることは無い
+//    （以前は3キー版と5キー版が混在していた）
+//  - 突き合わせは reconcile() 1つだけ。`||` のチェーンは書かない。
+//    `||` は「明示的な false / null」を表現できず、片方に残った古い true が必ず勝つ
+//  - 非同期処理の続きは、自分の epoch がまだ現役かを確かめてから状態に触る（#5）
+//  - コメント履歴はここに持たない。正は IndexedDB（shared/store.js）
+//  - 表示フィルターもここに持たない。正は storage.local で、読むのは popup（決定1）
+
+// 永続化するキー。Set やタイマーIDは保存できないので、runtime だけの持ち物は
+// ここに入れない。どれも復帰時に作り直せる（既読マークとアバターは IndexedDB から、
+// ポーリングのタイマーは番人が張り直す）
+const PERSISTED_SESSION_KEYS = [
+  'epoch', 'isMonitoring', 'chatMode', 'videoId', 'tabId', 'liveChatId', 'pageToken', 'startedAt'
+];
+
+function emptySession() {
+  return {
+    epoch: 0,            // 世代番号。beginSession のたびに +1
+    isMonitoring: false,
+    chatMode: null,      // 'dom' | 'api'
+    videoId: null,
+    tabId: null,
+    liveChatId: null,    // APIモードのみ
+    pageToken: null,     // APIモードのみ。永続化する（#36）
+    startedAt: 0,
+    // --- ここから下は永続化しない ---
+    pollingTimer: null,     // 次回ポーリングの setTimeout ID
+    pollingInFlight: false, // fetch が飛んでいる最中か（二重起動の判定に使う）
+    processedMessageIds: new Set(),
+    // { 発言者名: { url, bucket } }。枠を持たせているので、一般視聴者の
+    // アバターがいくら流れても配信者やモデレーターのぶんは落ちない
+    avatarsByAuthor: {}
+  };
+}
+
+let session = emptySession();
+
+// 新しい世代を始める。epoch を進めるのはここだけで、走っている非同期処理は
+// これを見て「自分はもう古い」と分かる（#5）
+function beginSession(next = {}) {
+  stopPolling();
+  session = { ...emptySession(), ...next, epoch: session.epoch + 1, startedAt: Date.now() };
+  return session.epoch;
+}
+
+// 永続化。部分集合は書かない（書き込み箇所ごとに形が違うのをやめる）
+async function saveSession() {
+  const snapshot = {};
+  for (const key of PERSISTED_SESSION_KEYS) snapshot[key] = session[key];
+  return safeStorageSet({ monitoringState: snapshot });
+}
+
+// storage から読んだ状態を、いまの形に揃える。
+// 旧バージョンが書いた部分集合（3キー版・5キー版）もここで吸収する
+function loadSession(saved) {
+  const base = emptySession();
+  if (!saved || !saved.isMonitoring) return base;
+  return {
+    ...base,
+    epoch: typeof saved.epoch === 'number' ? saved.epoch : 0,
+    isMonitoring: true,
+    // 旧バージョンの保存には chatMode が無いため、liveChatId の有無で推定する
+    chatMode: saved.chatMode || (saved.liveChatId ? 'api' : 'dom'),
+    videoId: saved.videoId || null,
+    tabId: saved.tabId ?? null,
+    liveChatId: saved.liveChatId || null,
+    pageToken: saved.pageToken || null,
+    // 旧バージョンの保存には開始時刻が無い。復元した時点を開始とみなす
+    // （番人が「何分コメントが来ていないか」を測るのに使う）
+    startedAt: saved.startedAt || Date.now()
+  };
+}
+
+// (tabId, videoId) が指す配信と、いまのセッションの関係を1語で返す。
+// 突き合わせはここだけ。以前は5か所に別々の分岐があった（根本原因A）
+//   'idle'    監視していない
+//   'same'    同じタブの同じ動画。そのまま続けてよい
+//   'changed' 同じタブで動画が変わった。張り直す
+//   'other'   別のタブの話。このセッションとは関係が無い
+//
+// videoId が null（URLが読めない等）のときは判断を保留して 'same' を返す。
+// 逆に、セッション側の videoId が無く観測側が分かっているときは 'changed' —
+// 動画IDの無いセッションにコメントを積んでも保存先が無く、黙って捨てられるため
+function reconcile(tabId, videoId) {
+  if (!session.isMonitoring) return 'idle';
+  if (tabId !== null && session.tabId !== null && session.tabId !== tabId) return 'other';
+  if (videoId && session.videoId !== videoId) return 'changed';
+  return 'same';
+}
+
+// 同じ動画なら、いま持っている既読マークとアバターをそのまま引き継ぐ。
+// 違う動画なら、その動画の保存済みぶんから読み直す。
+// beginSession は中身を作り直すので、必ずその前に呼ぶこと
+async function carryOverFor(videoId) {
+  const sameVideo = Boolean(videoId) && videoId === session.videoId;
+  return {
+    processedMessageIds: sameVideo ? session.processedMessageIds : await loadProcessedIds(videoId),
+    avatarsByAuthor: sameVideo ? session.avatarsByAuthor : await loadAvatars(videoId)
+  };
+}
 
 // === コメント履歴の保存 ====================================================
 // 実体は shared/store.js（IndexedDB）にある（再設計の決定2）。
@@ -242,48 +336,68 @@ let monitoringState = {
 const MAX_RESTORED_PROCESSED_IDS = 500;
 
 // 新着コメントからアバターURLを取り出してマップへ入れる。
-// 追加分（delta）と、上限超過で落とした名前（evicted）を返す。
+// 保存に要る差分（persist）と、popup へ送る差分（notify）、
+// 上限超過で落とした名前（evicted）を返す。
 // URLはコメント側から落とすので、履歴の1件あたりのサイズは変わらない。
+//
+// マップの値は { url, bucket } で、コメントと同じ保持枠を持たせている（決定3）。
+// 全件取り込み（決定1）にすると一般視聴者のアバターだけで上限に届くため、
+// 枠が1つだと配信者やモデレーターのアバターが挿入順の古い方から落ちていた。
+// 枠を分けたので、bulk がいくら入れ替わっても primary は1件も落ちない —
+// 1バッチの中だけで上限を超えた場合も、Service Worker の復帰直後
+// （保存済みレコードが枠を持つようになった）も守れる
 function collectAvatars(messages) {
-  const delta = {};
+  const persist = {};
+  const notify = {};
   for (const msg of messages) {
     const url = msg.avatarUrl;
     delete msg.avatarUrl;
     if (!url || !msg.displayName) continue;
 
-    const known = monitoringState.avatarsByAuthor[msg.displayName];
-    // 上限に当たったとき捨てるのは挿入順の古い方。特別枠（配信者・モデレーター・
-    // スパチャ・メンバーシップ）の発言者だけは、発言のたびに末尾へ入れ直して
-    // 一般コメントの流量に押し出されないようにする。
-    // 全件取り込み（決定1）にすると、一般視聴者のアバターだけで上限に届き、
-    // 配信者のアバターが古い順に落ちる — 決定3が保持枠を分けたのと同じ問題が
-    // アバターにも出る。
-    // これで守れるのは「発言し続けているかぎり」まで。1バッチの中だけで
-    // 上限を超えるほど流れた場合と、Service Worker の復帰直後（保存済みの
-    // アバターに枠の情報が無い）は守れない。アバターにも保持枠を持たせるには
-    // 保存の形（発言者名 -> URL）を変える必要があり、それは popup の読み方を
-    // 作り直すフェーズ5 に譲る
-    if (known !== undefined && msg.bucket === 'primary') {
-      delete monitoringState.avatarsByAuthor[msg.displayName];
-    }
-    monitoringState.avatarsByAuthor[msg.displayName] = url;
-    // 変わっていないURLは送り直さない（delta は「増えたぶん」だけ）
-    if (known === url) continue;
-    delta[msg.displayName] = url;
+    const known = session.avatarsByAuthor[msg.displayName];
+    // 枠は上げるだけで下げない。一度スパチャを投げた人のアバターは、
+    // その後の通常コメントで bulk に落とさない（過去のスパチャの行に出るため）
+    const bucket = msg.bucket === 'primary' || known?.bucket === 'primary' ? 'primary' : 'bulk';
+    // 同じ枠の中では、発言のたびに末尾へ入れ直して古い順の間引きから遠ざける
+    if (known !== undefined) delete session.avatarsByAuthor[msg.displayName];
+    session.avatarsByAuthor[msg.displayName] = { url, bucket };
+
+    if (known?.url === url && known?.bucket === bucket) continue;
+    persist[msg.displayName] = { url, bucket };
+    // popup へ送るのは「表示に要るもの」＝URLが変わったぶんだけ。
+    // 枠だけが変わった場合は送らない（popup は枠を見ない）
+    if (known?.url !== url) notify[msg.displayName] = url;
   }
 
-  // 上限超過分は古い方（挿入順が先）から捨てる
+  return { persist, notify, evicted: evictAvatars(persist, notify) };
+}
+
+// 保持枠ごとの上限を超えたぶんを、古い方（挿入順が先）から落とす。
+// 枠ごとに数えるので、bulk の流量で primary が押し出されることは無い
+function evictAvatars(persist, notify) {
   const evicted = [];
-  const names = Object.keys(monitoringState.avatarsByAuthor);
-  if (names.length > MAX_AVATARS_PER_VIDEO) {
-    for (const name of names.slice(0, names.length - MAX_AVATARS_PER_VIDEO)) {
-      delete monitoringState.avatarsByAuthor[name];
-      delete delta[name];
-      evicted.push(name);
-    }
+  const counts = { primary: 0, bulk: 0 };
+  const names = Object.keys(session.avatarsByAuthor);
+  // 新しい方から数え、枠の上限を超えた古い方を捨てる
+  for (let i = names.length - 1; i >= 0; i--) {
+    const name = names[i];
+    const bucket = session.avatarsByAuthor[name].bucket === 'primary' ? 'primary' : 'bulk';
+    counts[bucket] += 1;
+    if (counts[bucket] <= AVATAR_LIMITS[bucket]) continue;
+    delete session.avatarsByAuthor[name];
+    delete persist[name];
+    delete notify[name];
+    evicted.push(name);
   }
+  return evicted;
+}
 
-  return { delta, evicted };
+// popup へ渡すのは「発言者名 -> URL」のまま。枠は保存と間引きのための持ち物で、
+// 表示には要らない（メッセージを太らせない）
+function avatarUrlsOf(map) {
+  const urls = {};
+  for (const [displayName, entry] of Object.entries(map)) urls[displayName] = entry.url;
+  return urls;
 }
 
 // 保存済み履歴の直近のIDを重複判定用に読む。履歴そのものはメモリに載せない
@@ -311,11 +425,11 @@ async function loadAvatars(videoId) {
 
 // アバターの追加分と、上限で落ちた分を保存へ反映する。
 // コメントと違い件数が少ないので、まとめずにそのつど書く
-async function saveAvatars(videoId, delta, evicted) {
+async function saveAvatars(videoId, persist, evicted) {
   if (!videoId) return;
-  if (Object.keys(delta).length === 0 && evicted.length === 0) return;
+  if (Object.keys(persist).length === 0 && evicted.length === 0) return;
   try {
-    await store.putAvatars(videoId, delta, evicted);
+    await store.putAvatars(videoId, persist, evicted);
   } catch (error) {
     debugError('[Background] Failed to save avatars:', error);
   }
@@ -457,7 +571,7 @@ function flushCommentsHistory() {
 }
 
 // === Service Worker 復帰時の状態復元 =========================================
-// MV3のService Workerは約30秒のアイドルで終了し、メモリ上のmonitoringStateが失われる。
+// MV3のService Workerは約30秒のアイドルで終了し、メモリ上の session が失われる。
 // 復帰後の最初のイベントでstorageから復元しないと、DOMモードでは
 // handleDomChatMessagesのガードに阻まれて以降のコメントが永久に捨てられる。
 let stateRestorePromise = null;
@@ -469,40 +583,38 @@ function ensureStateRestored() {
   return stateRestorePromise;
 }
 
-// 保存済みセッションがもう有効でない理由を返す（有効ならnull）。
-// ブラウザ終了などでisMonitoring:trueのまま残った状態を引きずると、
+// 復元したセッションがもう有効でない理由を返す（有効ならnull）。
+// ブラウザ終了などで isMonitoring:true のまま残った状態を引きずると、
 // 別配信のコメントを古い動画の履歴に積んでしまう。
-async function getStaleSessionReason(saved) {
-  if (saved.tabId === null || saved.tabId === undefined) return 'タブ情報なし';
+// 突き合わせそのものは reconcile が持つ。ここはタブを見に行くぶんだけ
+async function staleSessionReason() {
+  if (session.tabId === null) return 'タブ情報なし';
 
   let tab;
   try {
-    tab = await chrome.tabs.get(saved.tabId);
+    tab = await chrome.tabs.get(session.tabId);
   } catch {
     return 'タブが存在しない';
   }
 
-  if (!tab?.url) return null; // URLが読めないときは判断を保留して継続
-
-  if (saved.videoId) {
-    const currentVideoId = extractVideoIdFromUrl(tab.url);
-    if (currentVideoId && currentVideoId !== saved.videoId) {
-      return `動画が変わっている (${saved.videoId} -> ${currentVideoId})`;
-    }
+  // URLが読めないときは videoId が null になり、reconcile は判断を保留する
+  const tabVideoId = extractVideoIdFromUrl(tab?.url);
+  if (reconcile(session.tabId, tabVideoId) === 'changed') {
+    return `動画が変わっている (${session.videoId} -> ${tabVideoId})`;
   }
 
   return null;
 }
 
-async function discardStaleSession(reason) {
-  debugLog('[Background] 🧹 Discarding stale monitoring session:', reason);
-  monitoringState.isMonitoring = false;
-  monitoringState.liveChatId = null;
-  monitoringState.tabId = null;
+// セッションを畳む。メモリと storage.local を同時に「監視していない」へ揃える。
+// 以前はメモリ側を消さないまま storage にだけ null を書いていたので、
+// 停止のたびに両者がずれ、次の突き合わせで古い true が勝っていた（#35 の関連）
+async function discardSession(reason) {
+  debugLog('[Background] 🧹 Discarding monitoring session:', reason);
+  beginSession();
   updateBadge(false);
-  await safeStorageSet({
-    monitoringState: { isMonitoring: false, liveChatId: null, tabId: null }
-  });
+  await stopWatchdog();
+  await saveSession();
 }
 
 async function restoreStateFromStorage() {
@@ -510,48 +622,45 @@ async function restoreStateFromStorage() {
     // 旧形式の履歴を読み落とさないよう、移行を待ってから状態を組み立てる
     // （migrateFromLocal は一度しか走らないので、2度目以降はただの待ち合わせ）
     await store.migrateFromLocal();
-    const result = await chrome.storage.local.get(['monitoringState', 'commentFilters']);
-    const saved = result.monitoringState;
+    const result = await chrome.storage.local.get(['monitoringState']);
+    const saved = loadSession(result.monitoringState);
 
-    if (result.commentFilters) {
-      monitoringState.commentFilters = normalizeCommentFilters(result.commentFilters);
-    }
-
-    if (!saved || !saved.isMonitoring) {
+    if (!saved.isMonitoring) {
       debugLog('[Background] No active monitoring state to restore');
       return;
     }
 
-    const staleReason = await getStaleSessionReason(saved);
+    // 突き合わせは reconcile が見るので、まず復元してから判定する
+    session = saved;
+
+    const staleReason = await staleSessionReason();
     if (staleReason) {
-      await discardStaleSession(staleReason);
+      await discardSession(staleReason);
       return;
     }
 
-    monitoringState.isMonitoring = true;
-    monitoringState.liveChatId = saved.liveChatId || null;
-    monitoringState.tabId = saved.tabId ?? null;
-    monitoringState.currentVideoId = saved.videoId || null;
-    // 旧バージョンが保存した状態にはchatModeが無いため、liveChatIdの有無で推定する
-    monitoringState.chatMode = saved.chatMode || (saved.liveChatId ? 'api' : 'dom');
-
-    if (monitoringState.currentVideoId) {
-      monitoringState.avatarsByAuthor = await loadAvatars(monitoringState.currentVideoId);
+    if (session.videoId) {
+      // 保存済みのアバターは枠を持っている。復帰直後でも
+      // 配信者やモデレーターのぶんが一般視聴者に押し出されない
+      session.avatarsByAuthor = await loadAvatars(session.videoId);
       // 保存済みのIDを重複判定に反映（復帰直後の再送を弾く）。
       // 履歴そのものは読まない。必要なのは直近のIDだけ
-      monitoringState.processedMessageIds = await loadProcessedIds(monitoringState.currentVideoId);
+      session.processedMessageIds = await loadProcessedIds(session.videoId);
     }
 
     debugLog('[Background] ♻️ Restored monitoring state after service worker wake-up:', {
-      chatMode: monitoringState.chatMode,
-      videoId: monitoringState.currentVideoId,
-      tabId: monitoringState.tabId
+      chatMode: session.chatMode,
+      videoId: session.videoId,
+      tabId: session.tabId,
+      epoch: session.epoch
     });
 
     updateBadge(true);
+    // 番人は Service Worker の外にいるので、終了して復帰したここでも張り直す
+    startWatchdog();
 
     // APIモードはポーリングも止まっているので再開する
-    if (monitoringState.chatMode === 'api' && monitoringState.liveChatId) {
+    if (session.chatMode === 'api' && session.liveChatId) {
       startPollingLoop();
     }
   } catch (error) {
@@ -583,34 +692,16 @@ initializeServiceWorker();
 // Service Workerが終了から復帰した直後に監視状態を復元する
 ensureStateRestored();
 
-// タブ監視機能を設定
-setupTabMonitoring();
-
 chrome.runtime.onInstalled.addListener(async (details) => {
   debugLog('[Background] YouTube Special Comments Filter installed/updated, reason:', details.reason);
   
   // 自動Content Script再注入を実行
   await reinjectContentScripts(details.reason);
   
-  // インストール時に監視状態をリセット（履歴は保持）
-  // 起動直後のensureStateRestored()が古い状態を復元している可能性があるため、
-  // メモリ側も併せてリセットする
-  monitoringState.isMonitoring = false;
-  monitoringState.liveChatId = null;
-  monitoringState.tabId = null;
-  monitoringState.avatarsByAuthor = {};
-  // currentVideoIdも消しておかないと、空になった履歴が保存され
-  // ストレージ上の履歴を上書きしてしまう
-  monitoringState.currentVideoId = null;
-  updateBadge(false);
-
-  await safeStorageSet({
-    monitoringState: {
-      isMonitoring: false,
-      liveChatId: null,
-      tabId: null
-    }
-  });
+  // インストール時に監視状態をリセット（履歴は保持）。
+  // 起動直後の ensureStateRestored() が古い状態を復元している可能性があるため、
+  // メモリと storage を1回で揃える
+  await discardSession('拡張機能のインストール／更新');
 
   // 旧バージョンで肥大化したストレージを更新時に整理する
   await cleanupOldCommentHistories();
@@ -891,7 +982,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   
   if (request.action === 'clearCommentsHistory') {
     (async () => {
-      const videoId = request.videoId || monitoringState.currentVideoId;
+      const videoId = request.videoId || session.videoId;
       if (videoId) {
         // 保存待ちを先に捨てる。残したままだと、クリアの直後に
         // 「消したはずのコメント」が書き戻される
@@ -899,12 +990,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         // コメントとアバターは store.clear が対で消す（#6 の消し忘れ1つ目）
         await store.clear(videoId);
       }
-      if (!request.videoId || request.videoId === monitoringState.currentVideoId) {
+      if (!request.videoId || request.videoId === session.videoId) {
         // 既読マークを消さないと、クリア後に再スキャンさせても全件が
         // 「重複」で弾かれ、コメントが1件も戻らない（#6 の本体）。
         // アバターも一緒に落とす（残っていると、消えた発言者のURLが居座る）
-        monitoringState.processedMessageIds = new Set();
-        monitoringState.avatarsByAuthor = {};
+        session.processedMessageIds = new Set();
+        session.avatarsByAuthor = {};
       }
       sendResponse({ success: true });
     })().catch(error => sendResponse({ success: false, error: error.message }));
@@ -919,8 +1010,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === 'domChatMessages') {
-    handleDomChatMessages(request.messages, sender)
-      .catch(error => debugError('[Background] Error handling DOM chat messages:', error));
+    // 1本の鎖に並べる。onMessage は sendResponse を即返して処理を切り離すので、
+    // ここで直列化しないとバッチ同士が互いの状態更新を踏む（#5）
+    enqueueDomChatMessages(request.messages, sender);
     sendResponse({ success: true });
     return true;
   }
@@ -991,58 +1083,41 @@ function updateBadge(isMonitoring) {
   }
 }
 
-// Backgroundでの監視開始
+// Backgroundでの監視開始（APIモード）
 async function startBackgroundMonitoring(liveChatId, tabId, videoId) {
   debugLog('[Background] Starting background monitoring for liveChatId:', liveChatId, 'videoId:', videoId);
 
   await ensureStateRestored();
 
-  if (monitoringState.isMonitoring) {
+  // 履歴は動画ごとに IndexedDB にあるので、開始時に読み込み直す必要は無い。
+  // 引き継ぐのは「どこまで取り込んだか」と、発言者ごとのアバターだけ。
+  // セッションを畳む前に確保しておく
+  const carried = await carryOverFor(videoId);
+
+  if (session.isMonitoring) {
     debugLog('[Background] Already monitoring, stopping previous session');
     await stopBackgroundMonitoring();
   }
-  
-  // 履歴は動画ごとに IndexedDB にあるので、開始時に読み込み直す必要は無い。
-  // 引き継ぐのは「どこまで取り込んだか」と、発言者ごとのアバターだけ
-  const sameVideo = Boolean(videoId) && videoId === monitoringState.currentVideoId;
-  const processedMessageIds = sameVideo
-    ? monitoringState.processedMessageIds
-    : await loadProcessedIds(videoId);
-  const existingAvatars = sameVideo
-    ? (monitoringState.avatarsByAuthor || {})
-    : await loadAvatars(videoId);
 
-  // 現在のフィルター設定を保持
-  const currentFilters = normalizeCommentFilters(monitoringState.commentFilters);
-  
-  monitoringState = {
+  // 状態は1つ（決定6）。DOMモードと同じ形で作るので、
+  // APIモードにだけ avatarsByAuthor が無い（#10）ような片肺は起こりようがない
+  beginSession({
     isMonitoring: true,
-    liveChatId: liveChatId,
-    pageToken: null,
-    tabId: tabId,
-    pollingInterval: null,
-    processedMessageIds,
-    commentFilters: currentFilters,
-    avatarsByAuthor: existingAvatars,
-    currentVideoId: videoId,
-    chatMode: 'api'
-  };
+    chatMode: 'api',
+    videoId,
+    tabId,
+    liveChatId,
+    ...carried
+  });
 
-  debugLog('[Background] Monitoring state reset for video:', videoId);
+  debugLog('[Background] Monitoring state reset for video:', videoId, 'epoch:', session.epoch);
 
   // 状態を永続化（Service Worker終了後の復元に必要な情報をすべて含める）
-  await safeStorageSet({
-    monitoringState: {
-      isMonitoring: true,
-      liveChatId: liveChatId,
-      tabId: tabId,
-      videoId: videoId,
-      chatMode: 'api'
-    }
-  });
+  await saveSession();
 
   // 監視開始
   updateBadge(true);
+  startWatchdog();
   startPollingLoop();
 
   return { success: true };
@@ -1054,143 +1129,215 @@ async function stopBackgroundMonitoring() {
 
   await ensureStateRestored();
 
-  monitoringState.isMonitoring = false;
-
-  if (monitoringState.pollingInterval) {
-    clearTimeout(monitoringState.pollingInterval);
-    monitoringState.pollingInterval = null;
-  }
+  session.isMonitoring = false;
+  stopPolling();
 
   // 履歴を保存
   await flushCommentsHistory();
 
-  // 状態を永続化
-  await safeStorageSet({
-    monitoringState: {
-      isMonitoring: false,
-      liveChatId: null,
-      tabId: null
-    }
-  });
+  // メモリも storage も「監視していない」で揃える。
+  // 以前はメモリ側に古い tabId / videoId / chatMode が残り続けていた
+  beginSession();
+  await saveSession();
+  await stopWatchdog();
 
   updateBadge(false);
 
   return { success: true };
 }
 
-// 監視状態を取得
+// 監視状態を取得。正は session ただ1つなので、storage と突き合わせる
+// `||` チェーン（片方に残った古い true が必ず勝つ）はもう無い
 async function getMonitoringState() {
   await ensureStateRestored();
 
-  const result = await chrome.storage.local.get(['monitoringState']);
-  const savedState = result.monitoringState || { isMonitoring: false };
-  
-  debugLog('[Background] getMonitoringState - Memory:', {
-    isMonitoring: monitoringState.isMonitoring,
-    currentVideoId: monitoringState.currentVideoId,
-    liveChatId: monitoringState.liveChatId
+  debugLog('[Background] getMonitoringState:', {
+    isMonitoring: session.isMonitoring,
+    videoId: session.videoId,
+    chatMode: session.chatMode,
+    epoch: session.epoch
   });
-  debugLog('[Background] getMonitoringState - Storage:', savedState);
-  
+
   return {
     success: true,
-    isMonitoring: monitoringState.isMonitoring || savedState.isMonitoring,
-    liveChatId: monitoringState.liveChatId || savedState.liveChatId,
-    tabId: monitoringState.tabId || savedState.tabId,
-    currentVideoId: monitoringState.currentVideoId,
-    chatMode: monitoringState.chatMode || savedState.chatMode || null
+    isMonitoring: session.isMonitoring,
+    liveChatId: session.liveChatId,
+    tabId: session.tabId,
+    // popup が読むキー名は currentVideoId のまま（通信の作り替えはフェーズ6b）
+    currentVideoId: session.videoId,
+    chatMode: session.chatMode
   };
 }
 
-// ポーリングループ
+// === APIモードのポーリング ==================================================
+// タイマーは session が持つ。走っている fetch の続きは、自分の epoch が
+// まだ現役かを確かめてから状態に触る（#5）
+
+function stopPolling() {
+  if (session.pollingTimer) {
+    clearTimeout(session.pollingTimer);
+    session.pollingTimer = null;
+  }
+}
+
+// 「動いているべきなのに動いていない」を番人が判断するための目印
+function isPollingAlive() {
+  return session.pollingInFlight || session.pollingTimer !== null;
+}
+
+function scheduleNextPoll(delayMs) {
+  stopPolling();
+  session.pollingTimer = setTimeout(() => {
+    session.pollingTimer = null;
+    startPollingLoop();
+  }, delayMs);
+}
+
 function startPollingLoop() {
-  if (!monitoringState.isMonitoring || !monitoringState.liveChatId) {
+  if (!session.isMonitoring || !session.liveChatId) {
     return;
   }
-  
+  // 走っている fetch があるのに重ねて呼ぶと、ループが二重になって quota も倍になる。
+  // 停止と再開が競合したときに実際に起きていた（#5）
+  if (session.pollingInFlight) {
+    debugLog('[Background] Polling already in flight, skipping duplicate start');
+    return;
+  }
+  stopPolling();
+
   debugLog('[Background] Polling for new messages...');
-  
-  fetchLiveChatMessages(monitoringState.liveChatId, monitoringState.pageToken)
-    .then(response => {
-      if (!monitoringState.isMonitoring) {
-        return; // 監視が停止された場合
+
+  // この世代の仕事であることを、続きの中で確かめる。
+  // videoId も先に控える（続きが走る頃には別の動画になっているかもしれない）
+  const epoch = session.epoch;
+  const videoId = session.videoId;
+  session.pollingInFlight = true;
+
+  fetchLiveChatMessages(session.liveChatId, session.pageToken)
+    .then(response => onPollSuccess(epoch, videoId, response))
+    .catch(error => onPollError(epoch, error));
+}
+
+async function onPollSuccess(epoch, videoId, response) {
+  // 自分の世代がもう現役でないなら、状態には一切触らない（#5）。
+  // pollingInFlight も新しい世代のものなので戻さない
+  if (epoch !== session.epoch) {
+    debugLog('[Background] Dropping poll result from old epoch', epoch, '->', session.epoch);
+    return;
+  }
+  session.pollingInFlight = false;
+  if (!session.isMonitoring) return;
+
+  if (response.comments && response.comments.length > 0) {
+    // 重複をフィルタリング
+    const newComments = response.comments.filter(comment => {
+      const messageId = comment.id;
+      if (session.processedMessageIds.has(messageId)) {
+        debugLog('[Background] Duplicate comment filtered:', messageId);
+        return false;
       }
-      
-      if (response.comments && response.comments.length > 0) {
-        // 重複をフィルタリング
-        const newComments = response.comments.filter(comment => {
-          const messageId = comment.id;
-          if (monitoringState.processedMessageIds.has(messageId)) {
-            debugLog('[Background] Duplicate comment filtered:', messageId);
-            return false;
-          }
-          monitoringState.processedMessageIds.add(messageId);
-          debugLog('[Background] New comment added:', messageId, commentPreview(comment));
-          return true;
-        });
-        
-        if (newComments.length > 0) {
-          debugLog('[Background] Found', newComments.length, 'new special comments');
-          
-          // 履歴へ追記（保存の実体は IndexedDB。上限は保持枠ごとに store が見る）
-          appendComments(monitoringState.currentVideoId, newComments);
-          
-          // popupに新しいコメントを通知
-          chrome.runtime.sendMessage({
-            action: 'newSpecialComments',
-            comments: newComments
-          }).catch(error => {
-            debugLog('[Background] No popup to notify:', error.message);
-          });
-          
-          // content scriptにも通知（あれば）
-          if (monitoringState.tabId) {
-            chrome.tabs.sendMessage(monitoringState.tabId, {
-              action: 'newSpecialComments',
-              comments: newComments
-            }).catch(error => {
-              debugLog('[Background] Content script not available:', error.message);
-            });
-          }
-        }
-      }
-      
-      monitoringState.pageToken = response.nextPageToken;
-      
-      // Setのサイズ制限（メモリ使用量制限）
-      if (monitoringState.processedMessageIds.size > 1000) {
-        const idsArray = Array.from(monitoringState.processedMessageIds);
-        monitoringState.processedMessageIds = new Set(idsArray.slice(-500));
-      }
-      
-      // 次のポーリングをスケジュール
-      const pollingDelay = response.pollingIntervalMillis || 5000;
-      monitoringState.pollingInterval = setTimeout(() => {
-        startPollingLoop();
-      }, pollingDelay);
-      
-    })
-    .catch(error => {
-      debugError('[Background] Error in polling loop:', error);
-      
-      // エラー分析と解決策提案
-      const errorAnalysis = analyzeError(error);
-      debugLog('[Background] Error analysis:', errorAnalysis);
-      
-      // リアルタイムでポップアップにエラー通知
-      notifyPopupOfError(errorAnalysis);
-      
-      // API制限エラーの場合は長めの間隔でリトライ
-      const retryDelay = error.message.includes('quota') || error.message.includes('limit') ? 60000 : 15000;
-      
-      // 監視中の場合のみリトライ
-      if (monitoringState.isMonitoring) {
-        debugLog(`[Background] Retrying in ${retryDelay/1000} seconds...`);
-        monitoringState.pollingInterval = setTimeout(() => {
-          startPollingLoop();
-        }, retryDelay);
-      }
+      session.processedMessageIds.add(messageId);
+      debugLog('[Background] New comment added:', messageId, commentPreview(comment));
+      return true;
     });
+
+    if (newComments.length > 0) {
+      debugLog('[Background] Found', newComments.length, 'new special comments');
+
+      // 履歴へ追記（保存の実体は IndexedDB。上限は保持枠ごとに store が見る）
+      appendComments(videoId, newComments);
+
+      // popupに新しいコメントを通知
+      chrome.runtime.sendMessage({
+        action: 'newSpecialComments',
+        comments: newComments
+      }).catch(error => {
+        debugLog('[Background] No popup to notify:', error?.message);
+      });
+
+      // content scriptにも通知（あれば）
+      if (session.tabId) {
+        chrome.tabs.sendMessage(session.tabId, {
+          action: 'newSpecialComments',
+          comments: newComments
+        }).catch(error => {
+          debugLog('[Background] Content script not available:', error?.message);
+        });
+      }
+    }
+  }
+
+  // pageToken は永続化する（#36）。Service Worker が終了しても続きから読める。
+  // nextPageToken を返さないレスポンスで undefined を焼き付けると、
+  // 次の起動でAPIの既定ウィンドウを取り直すことになるので、そのときは据え置く
+  if (response.nextPageToken && response.nextPageToken !== session.pageToken) {
+    session.pageToken = response.nextPageToken;
+    await saveSession();
+    if (epoch !== session.epoch || !session.isMonitoring) return;
+  }
+
+  // Setのサイズ制限（メモリ使用量制限）
+  if (session.processedMessageIds.size > 1000) {
+    const idsArray = Array.from(session.processedMessageIds);
+    session.processedMessageIds = new Set(idsArray.slice(-500));
+  }
+
+  // 次のポーリングをスケジュール
+  scheduleNextPoll(response.pollingIntervalMillis || 5000);
+}
+
+function onPollError(epoch, error) {
+  if (epoch !== session.epoch) return;
+  session.pollingInFlight = false;
+
+  debugError('[Background] Error in polling loop:', error);
+
+  // catch の中で例外を出すと、この下の再スケジュールに到達せず、
+  // ポーリングが恒久的に止まる（#8）。message を持たない値が投げられても
+  // 落ちないよう、ここから先は素の文字列として扱う
+  const message = (error?.message ?? String(error)).toLowerCase();
+
+  // エラー分析と解決策提案（analyzeError も message 無しに耐える）
+  const errorAnalysis = analyzeError(error);
+  debugLog('[Background] Error analysis:', errorAnalysis);
+
+  // リアルタイムでポップアップにエラー通知
+  notifyPopupOfError(errorAnalysis);
+
+  // API制限エラーの場合は長めの間隔でリトライ。
+  // 60秒待ちは Service Worker のアイドル上限（約30秒）を超えるので、
+  // このタイマーは消えることがある。消えても番人が1分周期で拾い直す（#37）
+  const retryDelay = message.includes('quota') || message.includes('limit') ? 60000 : 15000;
+
+  // 監視中の場合のみリトライ
+  if (!session.isMonitoring) return;
+  debugLog(`[Background] Retrying in ${retryDelay / 1000} seconds...`);
+  scheduleNextPoll(retryDelay);
+}
+
+// SPA遷移後はmanifestの自動注入が走らないため、明示的に注入する。
+// チャットはiframeの中なので allFrames が要るが、そのぶんチャットと無関係な
+// フレームにも届く。どのフレームで動くかの判断は dom-chat.js 側の
+// location.pathname のガードに任せている（#1）。
+// window.__domChatInitialized ガードにより二重注入は無害
+async function injectDomChat(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tabId, allFrames: true },
+      // shared/comment.js が先。dom-chat.js は self.YTF を読み込み時に参照する
+      files: ['shared/comment.js', 'content/dom-chat.js']
+    });
+    debugLog('[Background] dom-chat.js injected into tab:', tabId);
+  } catch (e) {
+    debugLog('[Background] dom-chat.js injection skipped:', e?.message);
+  }
+}
+
+// 注入済みガードで再実行がスキップされた場合でも初期スキャンを確実に実行。
+// force を付けるのは、開始前に流れたコメントを dom-chat.js が送信済み扱いで
+// 抱えているため。全件送り直させ、既出分は processedMessageIds で弾く
+function requestInitialSweep(tabId) {
+  chrome.tabs.sendMessage(tabId, { action: 'requestInitialSweep', force: true }).catch(() => {});
 }
 
 // DOM モードでの監視開始
@@ -1201,129 +1348,106 @@ async function startDomMonitoring(tabId, videoId) {
 
   // 同じ動画を同じタブで既にDOM監視中なら、状態とバッファを壊さずに継続する
   // （content script と popup の自動開始が競合しても取りこぼさないため）
-  if (monitoringState.isMonitoring &&
-      monitoringState.chatMode === 'dom' &&
-      monitoringState.currentVideoId === videoId &&
-      monitoringState.tabId === tabId) {
+  if (session.chatMode === 'dom' && reconcile(tabId, videoId) === 'same') {
     debugLog('[Background] DOM monitoring already active for this video, reusing session');
-    chrome.tabs.sendMessage(tabId, { action: 'requestInitialSweep', force: true }).catch(() => {});
+    requestInitialSweep(tabId);
     return { success: true };
   }
 
-  if (monitoringState.isMonitoring) {
+  // 引き継ぐものは、セッションを畳む前に確保しておく
+  const carried = await carryOverFor(videoId);
+
+  if (session.isMonitoring) {
     debugLog('[Background] Already monitoring, stopping previous session');
     await stopBackgroundMonitoring();
   }
 
-  // Video ID が同じなら、いま持っている既読マークとアバターをそのまま使う。
-  // 違う動画なら、その動画の保存済みぶんから読み直す
-  const sameVideo = Boolean(videoId) && videoId === monitoringState.currentVideoId;
-  const existingAvatars = sameVideo
-    ? (monitoringState.avatarsByAuthor || {})
-    : await loadAvatars(videoId);
-
-  const currentFilters = normalizeCommentFilters(monitoringState.commentFilters);
-
-  // 開始直後の全件スキャンには既に保存済みのコメントも含まれるため、
-  // 保存済みのIDを既読として引き継ぐ（restoreStateと同じ扱い）
-  const processedMessageIds = sameVideo
-    ? monitoringState.processedMessageIds
-    : await loadProcessedIds(videoId);
-
-  monitoringState = {
+  beginSession({
     isMonitoring: true,
-    liveChatId: null,
-    pageToken: null,
-    tabId: tabId,
-    pollingInterval: null,
-    processedMessageIds,
-    commentFilters: currentFilters,
-    avatarsByAuthor: existingAvatars,
-    currentVideoId: videoId,
-    chatMode: 'dom'
-  };
+    chatMode: 'dom',
+    videoId,
+    tabId,
+    ...carried
+  });
 
   // 書き込みに失敗しても、以降のバッジ更新とdom-chat.js注入は必ず実行する
   // （ここで例外を投げると監視が始まらず「コメントが1件も来ない」状態になる）
-  await safeStorageSet({
-    monitoringState: {
-      isMonitoring: true,
-      liveChatId: null,
-      tabId: tabId,
-      videoId: videoId,
-      chatMode: 'dom'
-    }
-  });
+  await saveSession();
 
   updateBadge(true);
+  startWatchdog();
 
-  // SPA遷移後はmanifestの自動注入が走らないため、明示的に注入する。
-  // チャットはiframeの中なので allFrames が要るが、そのぶんチャットと無関係な
-  // フレームにも届く。どのフレームで動くかの判断は dom-chat.js 側の
-  // location.pathname のガードに任せている（#1）
-  // window.__domChatInitialized ガードにより二重注入は無害
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId: tabId, allFrames: true },
-      // shared/comment.js が先。dom-chat.js は self.YTF を読み込み時に参照する
-      files: ['shared/comment.js', 'content/dom-chat.js']
-    });
-    debugLog('[Background] dom-chat.js injected into tab:', tabId);
-  } catch (e) {
-    debugLog('[Background] dom-chat.js injection skipped:', e.message);
-  }
-
-  // 注入済みガードで再実行がスキップされた場合でも初期スキャンを確実に実行。
-  // force を付けるのは、開始前に流れたコメントを dom-chat.js が送信済み扱いで
-  // 抱えているため。全件送り直させ、既出分はここの processedMessageIds で弾く
-  chrome.tabs.sendMessage(tabId, { action: 'requestInitialSweep', force: true }).catch(() => {});
+  await injectDomChat(tabId);
+  requestInitialSweep(tabId);
 
   return { success: true };
 }
 
-// DOM モードのメッセージ処理
+// DOM モードのメッセージ処理。
+// onMessage は sendResponse を即返して処理を切り離すので、バッチは放っておくと
+// 直列化されない。バッチAが startDomMonitoring の中にいる間にバッチBが入ると、
+// Bは古いセッションに書き込み、そのあとAが状態を作り直して消える（#5）。
+// 入口で1本の鎖に並べ、さらに epoch で世代を確かめる
+let domBatchChain = Promise.resolve();
+
+function enqueueDomChatMessages(messages, sender) {
+  domBatchChain = domBatchChain
+    .then(() => handleDomChatMessages(messages, sender))
+    .catch(error => debugError('[Background] Error handling DOM chat messages:', error));
+  return domBatchChain;
+}
+
 async function handleDomChatMessages(messages, sender = null) {
-  // Service Worker終了から復帰した直後はmonitoringStateが初期値に戻っているため、
+  // Service Worker終了から復帰した直後はセッションが初期値に戻っているため、
   // ガード判定の前に必ずstorageからの復元を待つ
   await ensureStateRestored();
 
-  // 同じタブなのに監視対象の動画IDが食い違う場合は、復元した状態が古い。
-  // そのまま処理すると別動画の履歴にコメントを積んでしまうのでセッションを張り直す
   const senderTabId = sender?.tab?.id ?? null;
   const senderVideoId = extractVideoIdFromUrl(sender?.url) ||
                         extractVideoIdFromUrl(sender?.tab?.url);
 
-  if (monitoringState.isMonitoring &&
-      monitoringState.chatMode === 'dom' &&
-      senderVideoId && senderTabId !== null &&
-      monitoringState.tabId === senderTabId &&
-      monitoringState.currentVideoId !== senderVideoId) {
+  // 同じタブなのに監視対象の動画IDが食い違う場合は、復元した状態が古い。
+  // そのまま処理すると別動画の履歴にコメントを積んでしまうのでセッションを張り直す
+  if (session.chatMode === 'dom' && reconcile(senderTabId, senderVideoId) === 'changed') {
     debugLog('[Background] ♻️ Video changed under active DOM session:',
-      monitoringState.currentVideoId, '->', senderVideoId);
+      session.videoId, '->', senderVideoId);
     await startDomMonitoring(senderTabId, senderVideoId);
   }
 
-  if (!monitoringState.isMonitoring || monitoringState.chatMode !== 'dom') {
+  if (!session.isMonitoring || session.chatMode !== 'dom') {
     debugLog('[Background] Dropping DOM messages - not monitoring in DOM mode', {
-      isMonitoring: monitoringState.isMonitoring,
-      chatMode: monitoringState.chatMode
+      isMonitoring: session.isMonitoring,
+      chatMode: session.chatMode
     });
     return;
   }
+
+  // 張り直したあとで、もう一度だけ突き合わせる。
+  // ここで 'same' でないのは「別のタブのライブチャット」で、
+  // 監視中の動画の履歴に混ぜてはいけない
+  const verdict = reconcile(senderTabId, senderVideoId);
+  if (verdict !== 'same') {
+    debugLog('[Background] Dropping DOM messages from', verdict, 'tab:', senderTabId);
+    return;
+  }
+
+  // ここから先はこの世代の仕事。await をまたいでも、控えた videoId に積む
+  const epoch = session.epoch;
+  const videoId = session.videoId;
 
   const newMessages = messages.filter(msg => {
     // 更新前に保存された履歴のIDは旧形式。dom-chat.js が両方を載せてくるので、
     // どちらかで既出なら取り込まない（更新直後の全件スキャンで二重に積まないため）
     const legacyId = msg.legacyId;
     delete msg.legacyId; // 保存はしない。突き合わせにしか使わない
-    if (monitoringState.processedMessageIds.has(msg.id)) return false;
-    if (legacyId && monitoringState.processedMessageIds.has(legacyId)) return false;
+    if (session.processedMessageIds.has(msg.id)) return false;
+    if (legacyId && session.processedMessageIds.has(legacyId)) return false;
     // 落とすのは表示できない種別だけ。役割・種別の絞り込みは popup が持つ（決定1）
     if (!isDisplayableKind(msg.kind)) return false;
     // 既読にするのは「保存すると決めたあと」（#4）。捨てるコメントまで既読に
     // していたので、あとからトグルをONにして全件スキャンし直しても、
     // ここで弾かれて二度と拾えなかった
-    monitoringState.processedMessageIds.add(msg.id);
+    session.processedMessageIds.add(msg.id);
     // 保持枠を焼き付けてから渡す（決定3）。判定は bucketOf が正
     msg.bucket = bucketOf(msg);
     return true;
@@ -1332,26 +1456,33 @@ async function handleDomChatMessages(messages, sender = null) {
   if (!newMessages.length) return;
 
   // コメント本体に載せず、発言者ごとのマップへ移す
-  const { delta: avatarDelta, evicted } = collectAvatars(newMessages);
-  await saveAvatars(monitoringState.currentVideoId, avatarDelta, evicted);
+  const { persist, notify, evicted } = collectAvatars(newMessages);
+  await saveAvatars(videoId, persist, evicted);
 
-  if (monitoringState.processedMessageIds.size > 1000) {
-    const arr = Array.from(monitoringState.processedMessageIds);
-    monitoringState.processedMessageIds = new Set(arr.slice(-500));
+  if (session.processedMessageIds.size > 1000) {
+    const arr = Array.from(session.processedMessageIds);
+    session.processedMessageIds = new Set(arr.slice(-500));
   }
 
-  await appendComments(monitoringState.currentVideoId, newMessages);
+  await appendComments(videoId, newMessages);
+
+  // 世代が変わっていたら、この先の通知はもう別の配信の画面に混ざる。
+  // 保存だけは（控えた videoId に対して）済ませてある
+  if (epoch !== session.epoch) {
+    debugLog('[Background] Session changed while saving; skipping notify for epoch', epoch);
+    return;
+  }
 
   chrome.runtime.sendMessage({
     action: 'newSpecialComments',
     comments: newMessages,
-    avatars: avatarDelta
+    avatars: notify
   }).catch(() => {});
-  if (monitoringState.tabId) {
-    chrome.tabs.sendMessage(monitoringState.tabId, {
+  if (session.tabId) {
+    chrome.tabs.sendMessage(session.tabId, {
       action: 'newSpecialComments',
       comments: newMessages,
-      avatars: avatarDelta
+      avatars: notify
     }).catch(() => {});
   }
 }
@@ -1363,16 +1494,113 @@ chrome.runtime.onStartup.addListener(async () => {
   await ensureStateRestored();
 });
 
-// タブが閉じられたときの処理
-chrome.tabs.onRemoved.addListener((tabId) => {
-  if (monitoringState.tabId === tabId) {
-    debugLog('[Background] Tab closed, but continuing monitoring');
-    // タブが閉じられても監視は継続
-    monitoringState.tabId = null;
-    // 履歴を保存
-    flushCommentsHistory();
-  }
+// タブが閉じられたときの処理。
+//
+// 以前はリスナーが2本あり、片方は「監視を自動停止する」、もう片方は
+// 「タブが閉じられても監視は継続」と正反対のことをしていた（#35）。
+// **止める**方を採った。理由は3つ:
+//  - DOMモードのコメントはそのタブの live_chat から届く。タブが無ければ
+//    以後1件も来ない。「継続」はバッジだけ ON のまま何も起きない状態を作る
+//  - タブを失ったセッションは、次に Service Worker が復帰した時点で
+//    staleSessionReason の「タブ情報なし」で破棄される。「継続」は
+//    Service Worker が生きている間しか続かず、挙動が説明できない
+//  - APIモードは続けられるが、見ていない配信のために quota を使い続ける
+// 履歴は停止処理の中で flush されるので、閉じる直前のコメントは失われない
+chrome.tabs.onRemoved.addListener(tabId => {
+  handleTabRemoved(tabId).catch(error =>
+    debugError('[Background] Error handling tab removal:', error));
 });
+
+async function handleTabRemoved(tabId) {
+  await ensureStateRestored();
+  if (!session.isMonitoring || session.tabId !== tabId) return;
+  debugLog('[Background] YouTube tab was closed, auto-stopping monitoring');
+  await autoStopMonitoring('YouTubeタブが閉じられました');
+}
+
+// === 番人（chrome.alarms、1分周期） =========================================
+// MV3 の Service Worker は約30秒アイドルで終了し、setTimeout はSWごと消える（#37）。
+// APIモードの quota リトライ（60秒待ち）はこの上限を超えるため、一度 quota を
+// 踏むと popup を開き直すまでポーリングが再開しなかった。
+// alarms は Service Worker の外にあるので、終了していても起こしてくれる。
+// リリース済みの拡張機能では alarm の最小周期は1分。これより短くはできない
+const WATCHDOG_ALARM = 'monitoring-watchdog';
+const WATCHDOG_PERIOD_MINUTES = 1;
+
+// DOMモードで「コメントが来ていない」と判断するまでの時間。
+// 静かな配信で無駄に再注入しない程度に長く、YouTube が #items を作り直して
+// MutationObserver が外れた（#2）ことに気付ける程度に短く
+const DOM_SILENCE_LIMIT_MS = 3 * 60 * 1000;
+
+// 立て直しの間隔。静かな配信では沈黙が続くので、これが無いと
+// 1分ごとに注入し直すことになる
+let lastDomRecoveryAt = 0;
+
+function startWatchdog() {
+  try {
+    chrome.alarms.create(WATCHDOG_ALARM, { periodInMinutes: WATCHDOG_PERIOD_MINUTES });
+  } catch (error) {
+    debugError('[Background] Failed to create watchdog alarm:', error);
+  }
+}
+
+async function stopWatchdog() {
+  try {
+    await chrome.alarms.clear(WATCHDOG_ALARM);
+  } catch (error) {
+    debugError('[Background] Failed to clear watchdog alarm:', error);
+  }
+}
+
+chrome.alarms.onAlarm.addListener(alarm => {
+  if (alarm?.name !== WATCHDOG_ALARM) return;
+  runWatchdog().catch(error => debugError('[Background] Watchdog failed:', error));
+});
+
+// 最後にコメントを保存した時刻。IndexedDB の meta が持っているので、
+// Service Worker が終了しても残る（メモリに持つと、番人に起こされるたびに
+// 「たったいま始まった」ことになって沈黙を測れない）
+async function lastCommentAt() {
+  try {
+    const videos = await store.listVideos();
+    const meta = videos.find(video => video.videoId === session.videoId);
+    if (meta?.updatedAt) return meta.updatedAt;
+  } catch (error) {
+    debugError('[Background] Watchdog could not read last comment time:', error);
+  }
+  return session.startedAt || Date.now();
+}
+
+async function runWatchdog() {
+  // 終了から復帰した直後ならここで状態が戻り、APIモードのポーリングも再開する
+  await ensureStateRestored();
+
+  if (!session.isMonitoring) {
+    await stopWatchdog();
+    return;
+  }
+
+  if (session.chatMode === 'api') {
+    // 「動いているべきなのにタイマーが無い」なら再開する（#8 #37）
+    if (isPollingAlive()) return;
+    debugLog('[Background] 🐕 Polling timer is gone - restarting');
+    startPollingLoop();
+    return;
+  }
+
+  if (session.chatMode === 'dom') {
+    // DOMモードは dom-chat.js が送ってくる。届かなくなったら注入し直して
+    // 全件スキャンさせる（MutationObserver が外れたケース = #2）
+    const silentFor = Date.now() - await lastCommentAt();
+    if (silentFor < DOM_SILENCE_LIMIT_MS || session.tabId === null) return;
+    if (Date.now() - lastDomRecoveryAt < DOM_SILENCE_LIMIT_MS) return;
+    lastDomRecoveryAt = Date.now();
+    debugLog('[Background] 🐕 No comments for', Math.round(silentFor / 1000),
+      's - re-injecting dom-chat.js');
+    await injectDomChat(session.tabId);
+    requestInitialSweep(session.tabId);
+  }
+}
 
 // Video IDからLive Chat IDを取得
 async function getLiveChatIdFromVideo(videoId) {
@@ -1382,7 +1610,7 @@ async function getLiveChatIdFromVideo(videoId) {
 
     // DOMモードではAPIキー不要なのでスキップ
     if (!apiKey) {
-      if (result.chatMode === 'dom' || monitoringState.chatMode === 'dom') {
+      if (result.chatMode === 'dom' || session.chatMode === 'dom') {
         debugLog('[Background] DOM mode: skipping API key check for getLiveChatIdFromVideo');
         return { liveChatId: null };
       }
@@ -1453,8 +1681,9 @@ async function setCommentFilters(filters) {
   debugLog('[Background] Setting comment filters:', filters);
   
   const normalized = normalizeCommentFilters(filters);
+  // 正は storage.local ただ1つ。読むのは popup（決定1で SW 側の読み手が消えた）。
+  // セッションに写しを持つと、また「同じことの正が2か所」に戻る
   await chrome.storage.local.set({ commentFilters: normalized });
-  monitoringState.commentFilters = normalized;
 
   return { success: true, filters: normalized };
 }
@@ -1480,7 +1709,7 @@ async function cleanupOldCommentHistories() {
     debugLog('[Background] Found', videos.length, 'comment histories');
 
     // 監視中の動画は更新時刻に関わらず必ず保護する
-    const protectedVideoId = monitoringState.currentVideoId;
+    const protectedVideoId = session.videoId;
     const ordered = videos.slice().sort((a, b) => {
       if (a.videoId === protectedVideoId) return -1;
       if (b.videoId === protectedVideoId) return 1;
@@ -1534,7 +1763,7 @@ async function getCommentsHistory(videoId = null, bucket = null) {
   // デバウンス中の未保存分を反映してから読み出す
   await flushCommentsHistory();
 
-  const targetVideoId = videoId || monitoringState.currentVideoId;
+  const targetVideoId = videoId || session.videoId;
   debugLog('[Background] getCommentsHistory for', targetVideoId);
 
   if (!targetVideoId) {
@@ -1545,9 +1774,11 @@ async function getCommentsHistory(videoId = null, bucket = null) {
   try {
     const comments = await readCommentsForPopup(targetVideoId, bucket);
     // 監視中の動画のアバターはメモリのマップが最新（保存待ちを含む）
-    const avatars = targetVideoId === monitoringState.currentVideoId
-      ? { ...monitoringState.avatarsByAuthor }
-      : await store.readAvatars(targetVideoId);
+    // 監視中の動画のアバターはメモリのマップが最新（保存待ちを含む）。
+    // popup へ渡すのは URL だけで、保持枠は SW と IndexedDB の中の持ち物
+    const avatars = avatarUrlsOf(targetVideoId === session.videoId
+      ? session.avatarsByAuthor
+      : await store.readAvatars(targetVideoId));
 
     debugLog('[Background] Retrieved', comments.length, 'comments for video', targetVideoId);
     return { success: true, comments, avatars };
@@ -1555,19 +1786,6 @@ async function getCommentsHistory(videoId = null, bucket = null) {
     debugError('[Background] Error getting comments history:', error);
     return { success: true, comments: [], avatars: {} };
   }
-}
-
-// タブ監視機能の設定
-function setupTabMonitoring() {
-  debugLog('[Background] Setting up tab monitoring for auto-stop');
-  
-  // タブが閉じられた時
-  chrome.tabs.onRemoved.addListener(async (tabId) => {
-    if (monitoringState.isMonitoring && monitoringState.tabId === tabId) {
-      debugLog('[Background] YouTube tab was closed, auto-stopping monitoring');
-      await autoStopMonitoring('YouTubeタブが閉じられました');
-    }
-  });
 }
 
 // 自動監視停止機能

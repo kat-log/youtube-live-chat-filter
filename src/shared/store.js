@@ -57,8 +57,15 @@
   const MAX_COMMENTS_TO_POPUP = 10000;
 
   // アバターURLは発言者ごとに1つだけ持つ。コメント件数に比例させると
-  // 同じURLを何百回も保存することになる
-  const MAX_AVATARS_PER_VIDEO = 500;
+  // 同じURLを何百回も保存することになる。
+  //
+  // 上限はコメントと同じく保持枠ごとに分ける（決定3をアバターにも広げた）。
+  // 全件取り込み（決定1）にすると一般視聴者のアバターだけで上限に届き、
+  // 枠が1つだと配信者やモデレーターのアバターが挿入順の古い方から落ちる。
+  // 枠を分ければ、bulk がいくら入れ替わっても primary は1つも落ちない。
+  // bulk 側は従来の 500 のままにして、primary のぶんを上に足している
+  // （既存の利用者から見て、一般視聴者のアバターが減ることはない）
+  const AVATAR_LIMITS = { primary: 200, bulk: 500 };
 
   // storage.local 時代のキー。移行が終われば読むところは無くなる
   const LEGACY_HISTORY_PREFIX = 'commentsHistory_';
@@ -361,10 +368,13 @@
       }
     }
 
-    const names = Object.keys(avatars).slice(-MAX_AVATARS_PER_VIDEO);
+    // 旧形式のアバターは「発言者名 -> URL」で、保持枠の情報を持っていない。
+    // 役割が分からないので bulk として入れる（その人が次に発言した時点で、
+    // primary なら collectAvatars が枠ごと上書きする）
+    const names = Object.keys(avatars).slice(-AVATAR_LIMITS.bulk);
     if (names.length > 0) {
       const delta = {};
-      for (const name of names) delta[name] = avatars[name];
+      for (const name of names) delta[name] = { url: avatars[name], bucket: 'bulk' };
       await putAvatarsInternal(videoId, delta, []);
       const restored = await readAvatarsInternal(videoId);
       if (Object.keys(restored).length < names.length) {
@@ -399,7 +409,11 @@
     const tx = db.transaction([AVATARS], 'readwrite');
     const store = tx.objectStore(AVATARS);
     for (const displayName of names) {
-      store.put({ videoId, displayName, url: added[displayName] });
+      const entry = added[displayName];
+      // 枠はレコードのフィールドとして持つ。インデックスは要らないので
+      // DB_VERSION は上げない（上げると、開いている popup の接続が
+      // onblocked を引き起こす）。枠を持たない古いレコードは bulk 扱い
+      store.put({ videoId, displayName, url: entry.url, bucket: entry.bucket || 'bulk' });
     }
     for (const displayName of evicted || []) {
       store.delete([videoId, displayName]);
@@ -413,7 +427,10 @@
     const tx = db.transaction([AVATARS], 'readonly');
     const records = await requestResult(tx.objectStore(AVATARS).getAll(avatarRange(videoId)));
     const map = {};
-    for (const record of records) map[record.displayName] = record.url;
+    // 更新前に保存されたレコードには bucket が無い。読むときに補う
+    for (const record of records) {
+      map[record.displayName] = { url: record.url, bucket: record.bucket === 'primary' ? 'primary' : 'bulk' };
+    }
     return map;
   }
 
@@ -514,12 +531,18 @@
       .sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
-  /** 発言者ごとのアバター。added を足し、evicted を消す */
+  /**
+   * 発言者ごとのアバター。added を足し、evicted を消す。
+   * added は { 発言者名: { url, bucket } }。枠を持たせているのは、
+   * 一般視聴者のアバターで上限が埋まっても配信者やモデレーターのアバターが
+   * 落ちないようにするため（決定3をアバターへ広げた。呼び出し側が枠ごとに間引く）
+   */
   async function putAvatars(videoId, added, evicted) {
     await ready();
     return putAvatarsInternal(videoId, added, evicted);
   }
 
+  /** 発言者ごとのアバター { 発言者名: { url, bucket } } */
   async function readAvatars(videoId) {
     await ready();
     return readAvatarsInternal(videoId);
@@ -531,7 +554,7 @@
     LIMITS,
     MAX_HISTORY_VIDEOS,
     MAX_COMMENTS_TO_POPUP,
-    MAX_AVATARS_PER_VIDEO,
+    AVATAR_LIMITS,
     append,
     read,
     count,
