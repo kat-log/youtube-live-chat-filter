@@ -846,177 +846,222 @@ async function reinjectContentScripts(reason, targetTabId = null) {
   }
 }
 
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  debugLog('[Background] Received message:', request.action);
-  
-  // Service Worker生存確認用のping
-  if (request.action === 'ping') {
-    sendResponse({ success: true, timestamp: Date.now() });
-    return true;
+// === popup との通信（ポート） ==============================================
+// popup ↔ Service Worker は chrome.runtime.connect のポートで話す（フェーズ6b）。
+// sendMessage との違いは4つあり、どれも「届いたかどうか分からない」前提で
+// 足されていた仕掛けを不要にする。
+//  - popup が開いているかどうかが onConnect / onDisconnect で分かる
+//  - 送った順に届く（popup の差分描画はこれを前提にしている。フェーズ5）
+//  - 「Receiving end does not exist」を握りつぶす必要が無い
+//  - popup が開いている間は Service Worker が終了しない
+//    （popup 側の ping 8回の待ち＝旧 waitForServiceWorker も要らなくなった）
+//
+// ポートは session に持たせない。永続化できないうえ、popup が開いているかは
+// セッションの持ち物ではない（PERSISTED_SESSION_KEYS を増やさないこと）。
+// content script との通信は sendMessage / tabs.sendMessage のまま。
+// content script は connect の相手ではなく、区間も別（フェーズ7以降の話）
+const POPUP_PORT_NAME = 'popup';
+const popupPorts = new Set();
+
+chrome.runtime.onConnect.addListener(port => {
+  if (port.name !== POPUP_PORT_NAME) return;
+  popupPorts.add(port);
+  debugLog('[Background] Popup connected. open popups:', popupPorts.size);
+
+  port.onMessage.addListener(message => {
+    const requestId = message?.requestId;
+    const respond = payload => postToPort(port, { requestId, payload });
+    // 知らない action でも必ず返す。返さないと popup の待ちが宙に浮く
+    if (!dispatchRequest(message?.payload, port.sender, respond)) respond(undefined);
+  });
+
+  port.onDisconnect.addListener(() => {
+    popupPorts.delete(port);
+    debugLog('[Background] Popup disconnected. open popups:', popupPorts.size);
+  });
+});
+
+/** popup が開いているか。ポートがあるかどうかがそのまま答えになる */
+function isPopupOpen() {
+  return popupPorts.size > 0;
+}
+
+// 送る直前に閉じられることはある（利用者が popup を閉じた瞬間）。
+// そのときだけは黙って外す ——「開いていないかもしれない」を握りつぶすのとは違う
+function postToPort(port, message) {
+  try {
+    port.postMessage(message);
+  } catch (error) {
+    debugLog('[Background] Popup port closed while posting:', error?.message ?? String(error));
+    popupPorts.delete(port);
   }
-  
+}
+
+/** 開いている popup へ片道で流す。開いていなければ何も起きない */
+function notifyPopup(message) {
+  for (const port of popupPorts) postToPort(port, message);
+}
+
+// popup（ポート）と content script（sendMessage）の両方から来る要求を1か所で捌く。
+// 応答は必ず Promise で返し、扱わない action には undefined を返す
+function handleRequest(request, sender) {
+  const action = request?.action;
+  debugLog('[Background] Received message:', action);
+
+  // Service Worker生存確認用のping（content script が使う。
+  // popup はポートが繋がること自体が生存確認なので、もう投げない）
+  if (action === 'ping') {
+    return Promise.resolve({ success: true, timestamp: Date.now() });
+  }
+
   // 手動Content Script再注入
-  if (request.action === 'reinjectContentScripts') {
-    reinjectContentScripts('manual', request.tabId ?? null)
-      .then(() => sendResponse({ success: true }))
-      .catch(error => sendResponse({ success: false, error: error.message }));
-    return true;
+  if (action === 'reinjectContentScripts') {
+    return reinjectContentScripts('manual', request.tabId ?? null).then(() => ({ success: true }));
   }
-  
+
   // 最後の注入結果を取得
-  if (request.action === 'getLastInjectionResult') {
-    chrome.storage.local.get(['lastInjectionResult'], (result) => {
-      sendResponse(result.lastInjectionResult || null);
-    });
-    return true;
+  if (action === 'getLastInjectionResult') {
+    return chrome.storage.local.get(['lastInjectionResult'])
+      .then(result => result.lastInjectionResult || null);
   }
-  
-  if (request.action === 'getApiKey') {
-    chrome.storage.local.get(['youtubeApiKey'], (result) => {
-      sendResponse({ apiKey: result.youtubeApiKey });
-    });
-    return true;
+
+  if (action === 'getApiKey') {
+    return chrome.storage.local.get(['youtubeApiKey'])
+      .then(result => ({ apiKey: result.youtubeApiKey }));
   }
-  
-  if (request.action === 'saveApiKey') {
-    chrome.storage.local.set({ youtubeApiKey: request.apiKey }, () => {
-      sendResponse({ success: true });
-    });
-    return true;
+
+  if (action === 'saveApiKey') {
+    return chrome.storage.local.set({ youtubeApiKey: request.apiKey })
+      .then(() => ({ success: true }));
   }
-  
-  if (request.action === 'getDebugMode') {
-    chrome.storage.local.get(['debugMode'], (result) => {
-      sendResponse({ debugMode: result.debugMode || false });
-    });
-    return true;
+
+  if (action === 'getDebugMode') {
+    return chrome.storage.local.get(['debugMode'])
+      .then(result => ({ debugMode: result.debugMode || false }));
   }
-  
-  if (request.action === 'saveDebugMode') {
-    chrome.storage.local.set({ debugMode: request.debugMode }, () => {
+
+  if (action === 'saveDebugMode') {
+    return chrome.storage.local.set({ debugMode: request.debugMode }).then(() => {
       debugMode = request.debugMode; // グローバル変数も更新
-      sendResponse({ success: true });
+      return { success: true };
     });
-    return true;
-  }
-  
-  if (request.action === 'getChatMode') {
-    chrome.storage.local.get(['chatMode'], (result) => {
-      sendResponse({ chatMode: result.chatMode || 'dom' });
-    });
-    return true;
   }
 
-  if (request.action === 'getAutoStart') {
-    chrome.storage.local.get(['autoStart'], (result) => {
-      sendResponse({ autoStart: result.autoStart ?? true });
-    });
-    return true;
+  if (action === 'getChatMode') {
+    return chrome.storage.local.get(['chatMode'])
+      .then(result => ({ chatMode: result.chatMode || 'dom' }));
   }
 
-  if (request.action === 'saveAutoStart') {
-    chrome.storage.local.set({ autoStart: request.autoStart }, () => {
-      sendResponse({ success: true });
-    });
-    return true;
+  if (action === 'getAutoStart') {
+    return chrome.storage.local.get(['autoStart'])
+      .then(result => ({ autoStart: result.autoStart ?? true }));
   }
 
-  // 新しいアクションを追加
-  if (request.action === 'startBackgroundMonitoring') {
-    startBackgroundMonitoring(request.liveChatId, sender.tab.id, request.videoId)
-      .then(response => sendResponse(response))
-      .catch(error => sendResponse({ success: false, error: error.message }));
-    return true;
-  }
-  
-  if (request.action === 'stopBackgroundMonitoring') {
-    stopBackgroundMonitoring()
-      .then(response => sendResponse(response))
-      .catch(error => sendResponse({ success: false, error: error.message }));
-    return true;
-  }
-  
-  if (request.action === 'getMonitoringState') {
-    getMonitoringState()
-      .then(response => sendResponse(response))
-      .catch(error => sendResponse({ success: false, error: error.message }));
-    return true;
-  }
-  
-  // popupからの新しいコメント通知をリレー
-  if (request.action === 'newSpecialComments') {
-    // すべてのpopupに通知を送信
-    chrome.runtime.sendMessage(request).catch(() => {
-      // popupが開いていない場合はエラーを無視
-    });
-    return true;
-  }
-  
-  if (request.action === 'getLiveChatIdFromVideo') {
-    getLiveChatIdFromVideo(request.videoId)
-      .then(response => sendResponse(response))
-      .catch(error => sendResponse({ error: error.message }));
-    return true;
-  }
-  
-  if (request.action === 'setCommentFilters') {
-    setCommentFilters(request.filters)
-      .then(response => sendResponse(response))
-      .catch(error => sendResponse({ success: false, error: error.message }));
-    return true;
-  }
-  
-  if (request.action === 'getCommentFilters') {
-    getCommentFilters()
-      .then(response => sendResponse(response))
-      .catch(error => sendResponse({ success: false, error: error.message }));
-    return true;
-  }
-  
-  if (request.action === 'getCommentsHistory') {
-    getCommentsHistory(request.videoId, request.bucket)
-      .then(response => sendResponse(response))
-      .catch(error => sendResponse({ success: false, error: error.message }));
-    return true;
-  }
-  
-  if (request.action === 'clearCommentsHistory') {
-    (async () => {
-      const videoId = request.videoId || session.videoId;
-      if (videoId) {
-        // 保存待ちを先に捨てる。残したままだと、クリアの直後に
-        // 「消したはずのコメント」が書き戻される
-        if (pendingSave.videoId === videoId) pendingSave.comments = [];
-        // コメントとアバターは store.clear が対で消す（#6 の消し忘れ1つ目）
-        await store.clear(videoId);
-      }
-      if (!request.videoId || request.videoId === session.videoId) {
-        // 既読マークを消さないと、クリア後に再スキャンさせても全件が
-        // 「重複」で弾かれ、コメントが1件も戻らない（#6 の本体）。
-        // アバターも一緒に落とす（残っていると、消えた発言者のURLが居座る）
-        session.processedMessageIds = new Set();
-        session.avatarsByAuthor = {};
-      }
-      sendResponse({ success: true });
-    })().catch(error => sendResponse({ success: false, error: error.message }));
-    return true;
+  if (action === 'saveAutoStart') {
+    return chrome.storage.local.set({ autoStart: request.autoStart })
+      .then(() => ({ success: true }));
   }
 
-  if (request.action === 'startDomMonitoring') {
-    startDomMonitoring(sender.tab?.id || request.tabId, request.videoId)
-      .then(r => sendResponse(r))
-      .catch(e => sendResponse({ success: false, error: e.message }));
-    return true;
+  if (action === 'startBackgroundMonitoring') {
+    return startBackgroundMonitoring(
+      request.liveChatId, sender?.tab?.id ?? request.tabId ?? null, request.videoId);
   }
 
-  if (request.action === 'domChatMessages') {
-    // 1本の鎖に並べる。onMessage は sendResponse を即返して処理を切り離すので、
+  if (action === 'stopBackgroundMonitoring') {
+    return stopBackgroundMonitoring();
+  }
+
+  if (action === 'getMonitoringState') {
+    return getMonitoringState();
+  }
+
+  // (tabId, videoId) といまのセッションの関係を1語で返す。突き合わせの正は
+  // reconcile ただ1つで、popup も自前で比べずにこれを聞く（根本原因A）
+  if (action === 'reconcileSession') {
+    return ensureStateRestored().then(() => ({
+      success: true,
+      state: reconcile(request.tabId ?? null, request.videoId ?? null)
+    }));
+  }
+
+  // content script からの新着コメント通知を popup へリレー
+  if (action === 'newSpecialComments') {
+    notifyPopup(request);
+    return Promise.resolve({ success: true });
+  }
+
+  if (action === 'getLiveChatIdFromVideo') {
+    return getLiveChatIdFromVideo(request.videoId);
+  }
+
+  if (action === 'setCommentFilters') {
+    return setCommentFilters(request.filters);
+  }
+
+  if (action === 'getCommentFilters') {
+    return getCommentFilters();
+  }
+
+  if (action === 'getCommentsHistory') {
+    return getCommentsHistory(request.videoId, request.bucket);
+  }
+
+  if (action === 'clearCommentsHistory') {
+    return clearCommentsHistory(request.videoId);
+  }
+
+  if (action === 'startDomMonitoring') {
+    return startDomMonitoring(sender?.tab?.id || request.tabId, request.videoId);
+  }
+
+  if (action === 'domChatMessages') {
+    // 1本の鎖に並べる。応答は即返して処理を切り離すので、
     // ここで直列化しないとバッチ同士が互いの状態更新を踏む（#5）
     enqueueDomChatMessages(request.messages, sender);
-    sendResponse({ success: true });
+    return Promise.resolve({ success: true });
+  }
+
+  return undefined;
+}
+
+// handleRequest の応答を呼び出し側へ渡す。扱ったなら true。
+// 失敗は例外にせず { success: false, error } に畳む（呼び出し側は
+// 「応答が来ない」と「処理が失敗した」を区別しなくてよい）
+function dispatchRequest(request, sender, respond) {
+  let result;
+  try {
+    result = handleRequest(request, sender);
+  } catch (error) {
+    respond({ success: false, error: error?.message ?? String(error) });
     return true;
   }
-});
+  if (result === undefined) return false;
+  result.then(respond, error => respond({ success: false, error: error?.message ?? String(error) }));
+  return true;
+}
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) =>
+  dispatchRequest(request, sender, sendResponse));
+
+// 履歴の消去。保存待ちと既読マークを対で落とす（#6）
+async function clearCommentsHistory(requestedVideoId) {
+  const videoId = requestedVideoId || session.videoId;
+  if (videoId) {
+    // 保存待ちを先に捨てる。残したままだと、クリアの直後に
+    // 「消したはずのコメント」が書き戻される
+    if (pendingSave.videoId === videoId) pendingSave.comments = [];
+    // コメントとアバターは store.clear が対で消す（#6 の消し忘れ1つ目）
+    await store.clear(videoId);
+  }
+  if (!requestedVideoId || requestedVideoId === session.videoId) {
+    // 既読マークを消さないと、クリア後に再スキャンさせても全件が
+    // 「重複」で弾かれ、コメントが1件も戻らない（#6 の本体）。
+    // アバターも一緒に落とす（残っていると、消えた発言者のURLが居座る）
+    session.processedMessageIds = new Set();
+    session.avatarsByAuthor = {};
+  }
+  return { success: true };
+}
 
 async function fetchLiveChatMessages(liveChatId, pageToken = null) {
   try {
@@ -1163,8 +1208,7 @@ async function getMonitoringState() {
     isMonitoring: session.isMonitoring,
     liveChatId: session.liveChatId,
     tabId: session.tabId,
-    // popup が読むキー名は currentVideoId のまま（通信の作り替えはフェーズ6b）
-    currentVideoId: session.videoId,
+    videoId: session.videoId,
     chatMode: session.chatMode
   };
 }
@@ -1247,12 +1291,10 @@ async function onPollSuccess(epoch, videoId, response) {
       // 履歴へ追記（保存の実体は IndexedDB。上限は保持枠ごとに store が見る）
       appendComments(videoId, newComments);
 
-      // popupに新しいコメントを通知
-      chrome.runtime.sendMessage({
+      // popupに新しいコメントを通知（ポート。開いていなければ何も起きない）
+      notifyPopup({
         action: 'newSpecialComments',
         comments: newComments
-      }).catch(error => {
-        debugLog('[Background] No popup to notify:', error?.message);
       });
 
       // content scriptにも通知（あれば）
@@ -1473,11 +1515,11 @@ async function handleDomChatMessages(messages, sender = null) {
     return;
   }
 
-  chrome.runtime.sendMessage({
+  notifyPopup({
     action: 'newSpecialComments',
     comments: newMessages,
     avatars: notify
-  }).catch(() => {});
+  });
   if (session.tabId) {
     chrome.tabs.sendMessage(session.tabId, {
       action: 'newSpecialComments',
@@ -1663,17 +1705,18 @@ async function getLiveChatIdFromVideo(videoId) {
   }
 }
 
-// ポップアップにエラー詳細を通知する機能
-async function notifyPopupOfError(errorAnalysis) {
-  try {
-    await chrome.runtime.sendMessage({
-      action: 'showDetailedError',
-      errorInfo: errorAnalysis
-    });
-    debugLog('[Background] Error details sent to popup');
-  } catch {
-    debugLog('[Background] Could not notify popup of error (popup not open)');
+// ポップアップにエラー詳細を通知する機能。
+// ポートなので「開いていない」は例外ではなく、送り先が0本というだけ
+function notifyPopupOfError(errorAnalysis) {
+  if (!isPopupOpen()) {
+    debugLog('[Background] No popup open; error details not shown');
+    return;
   }
+  notifyPopup({
+    action: 'showDetailedError',
+    errorInfo: errorAnalysis
+  });
+  debugLog('[Background] Error details sent to popup');
 }
 
 // コメントフィルターを設定
@@ -1799,15 +1842,11 @@ async function autoStopMonitoring(reason) {
     // 自動停止の理由をログに記録
     debugLog('[Background] Monitoring auto-stopped:', reason);
     
-    // ポップアップが開いている場合に通知
-    try {
-      await chrome.runtime.sendMessage({
-        action: 'monitoringAutoStopped',
-        reason: reason
-      });
-    } catch {
-      // ポップアップが開いていない場合はエラーを無視
-    }
+    // ポップアップが開いている場合に通知（開いていなければ送り先が無いだけ）
+    notifyPopup({
+      action: 'monitoringAutoStopped',
+      reason: reason
+    });
     
     return { success: true, reason: reason };
   } catch (error) {

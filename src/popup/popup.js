@@ -151,8 +151,12 @@ class PopupController {
         this.avatarsByAuthor = {};
         this.currentTab = null;
         this.currentVideoId = null;
-        this.monitoringVideoId = null; // バックグラウンドが実際に監視中の動画ID
-        this.serviceWorkerReady = false;
+        // Service Worker との唯一の通信路（フェーズ6b）。requestBackground の
+        // 応答待ちは requestId をキーに pendingRequests が持つ
+        this.port = null;
+        this.pendingRequests = new Map();
+        this.lastRequestId = 0;
+        this.reconnecting = false;
         this.initializationComplete = false;
         
         // 個別フィルターの状態
@@ -181,44 +185,38 @@ class PopupController {
         debugLog('[YouTube Special Comments] Popup controller starting...');
         this.initializeElements();
         this.attachEventListeners();
-        
-        // Service Worker準備確認後に初期化を開始
-        this.initializeWithServiceWorkerCheck();
+
+        // Service Worker へのポートは、他の何よりも先に張る（フェーズ6b）。
+        // 繋がった時点から新着が届くので、以前あった「ping を8回投げて
+        // Service Worker の起床を待つ」段取り（旧 waitForServiceWorker）は要らない
+        this.connectToBackground();
+
+        this.runInitialization();
     }
-    
-    // Service Worker確認後の初期化プロセス
-    async initializeWithServiceWorkerCheck() {
+
+    // 初期化プロセス
+    async runInitialization() {
         try {
             debugLog('[YouTube Special Comments] 🚀 Starting comprehensive initialization process...');
-            
-            // Step 1: Service Worker準備確認
-            this.showInitializationStatus('Step 1/3: Service Workerを確認中...');
-            const workerReady = await this.waitForServiceWorker();
-            
-            if (workerReady) {
-                debugLog('[YouTube Special Comments] ✅ Step 1 Complete: Service Worker ready');
-            } else {
-                debugWarn('[YouTube Special Comments] ⚠️ Step 1 Warning: Service Worker timeout, but continuing');
-            }
-            
-            // Step 2: 基本設定の初期化
-            this.showInitializationStatus('Step 2/3: 設定を読み込み中...');
+
+            // Step 1: 基本設定の初期化
+            this.showInitializationStatus('Step 1/2: 設定を読み込み中...');
             await this.completeBasicInitialization();
-            debugLog('[YouTube Special Comments] ✅ Step 2 Complete: Basic initialization done');
-            
-            // Step 3: Content Script状態確認と通信テスト
-            this.showInitializationStatus('Step 3/3: Content Script通信テスト...');
+            debugLog('[YouTube Special Comments] ✅ Step 1 Complete: Basic initialization done');
+
+            // Step 2: Content Script状態確認と通信テスト
+            this.showInitializationStatus('Step 2/2: Content Script通信テスト...');
             const contentScriptReady = await this.checkContentScriptInjection();
             
             if (contentScriptReady) {
-                debugLog('[YouTube Special Comments] ✅ Step 3 Complete: Content Script communication established');
-                // Step 2で表示されていたエラーパネルをクリア
+                debugLog('[YouTube Special Comments] ✅ Step 2 Complete: Content Script communication established');
+                // Step 1で表示されていたエラーパネルをクリア
                 this.hideDetailedError();
                 this.elements.fixExtensionContainer.style.display = 'none';
                 this.showInitializationStatus('初期化完了！');
                 await this.delay(500); // 成功メッセージを少し表示
             } else {
-                debugWarn('[YouTube Special Comments] ⚠️ Step 3 Warning: Content Script issues detected');
+                debugWarn('[YouTube Special Comments] ⚠️ Step 2 Warning: Content Script issues detected');
             }
             
             debugLog('[YouTube Special Comments] 🎉 Full initialization process completed');
@@ -277,9 +275,6 @@ class PopupController {
             this.checkCurrentTab()
         ]);
         
-        // メッセージリスナーを設定
-        this.setupMessageListener();
-
         // DOMモード自動取得
         await this.tryDomAutoStart();
     }
@@ -291,8 +286,12 @@ class PopupController {
         try {
             this.updateMonitoringButtons(false);
             this.updateMonitoringButtonStates();
-            this.setupMessageListener();
-            
+            // 受け口はコンストラクタで張ったポート1本だけ。以前はここと
+            // completeBasicInitialization の2か所で onMessage を登録していて、
+            // 後者の途中で例外が出るとリスナーが2つになった（#32）。
+            // connectToBackground は張り済みなら何もしないので、二重には成り得ない
+            this.connectToBackground();
+
             // 最低限のタブ情報を設定
             const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
             this.currentTab = tab;
@@ -308,7 +307,7 @@ class PopupController {
     logInitializationSummary() {
         const summary = {
             timestamp: new Date().toISOString(),
-            serviceWorkerReady: this.serviceWorkerReady,
+            backgroundConnected: this.port !== null,
             initializationComplete: this.initializationComplete,
             currentTab: this.currentTab ? {
                 id: this.currentTab.id,
@@ -322,54 +321,140 @@ class PopupController {
         debugLog('[YouTube Special Comments] 📋 Initialization Summary:', summary);
     }
     
-    // Service Worker準備状態確認
-    async waitForServiceWorker(maxAttempts = 8, delayMs = 300) {
-        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-            try {
-                debugLog(`[YouTube Special Comments] Service worker check attempt ${attempt}/${maxAttempts}`);
-                
-                const response = await this.sendMessageWithTimeout({
-                    action: 'ping'
-                }, 2000);
-                
-                if (response && response.success) {
-                    debugLog('[YouTube Special Comments] ✅ Service worker ping successful');
-                    this.serviceWorkerReady = true;
-                    return true;
-                }
-            } catch (error) {
-                debugLog(`[YouTube Special Comments] Service worker ping failed (attempt ${attempt}):`, error.message);
-                
-                if (attempt < maxAttempts) {
-                    // 短い間隔で再試行
-                    await this.delay(delayMs);
-                }
-            }
-        }
-        
-        debugWarn('[YouTube Special Comments] Service worker readiness check timeout');
-        return false;
+    // === Service Worker との通信（ポート） ==================================
+    // chrome.runtime.connect のポート1本で話す（フェーズ6b）。sendMessage と違い、
+    //  - 繋がっている間は Service Worker が終了しない（起床を待つ ping が要らない）
+    //  - 送った順に届く（新着の差分描画はこれを前提にしている。フェーズ5）
+    //  - 切れたら onDisconnect で分かる（「届いたか分からない」が無くなる）
+    // ので、以前あった waitForServiceWorker の8回 ping と、
+    // タイムアウト＋指数バックオフの retry ヘルパーは丸ごと消えた。
+
+    /**
+     * ポートを張る。張り済みなら何もしない。
+     * 二重に登録され得ないことが #32（リスナーの二重登録）の答えでもある
+     */
+    connectToBackground() {
+        if (this.port) return this.port;
+
+        const port = chrome.runtime.connect({ name: 'popup' });
+        this.port = port;
+        port.onMessage.addListener(message => this.handleBackgroundMessage(message));
+        port.onDisconnect.addListener(() => this.handleBackgroundDisconnect(port));
+        debugLog('[Popup] Connected to service worker');
+        return port;
     }
-    
-    // タイムアウト付きメッセージ送信
-    async sendMessageWithTimeout(message, timeoutMs = 5000) {
+
+    /**
+     * Service Worker へ要求を送り、応答を待つ。
+     * 処理側の失敗は { success: false, error } として返ってくる（投げない）。
+     * 投げるのは「そもそも繋がらなかった」ときだけ
+     */
+    requestBackground(message) {
+        let port;
+        try {
+            port = this.connectToBackground();
+        } catch (error) {
+            return Promise.reject(new Error(`拡張機能に接続できません: ${error.message}`));
+        }
+
+        const requestId = ++this.lastRequestId;
         return new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => {
-                reject(new Error(`Message timeout after ${timeoutMs}ms`));
-            }, timeoutMs);
-            
-            chrome.runtime.sendMessage(message, (response) => {
-                clearTimeout(timeout);
-                
-                if (chrome.runtime.lastError) {
-                    reject(new Error(chrome.runtime.lastError.message));
-                } else {
-                    resolve(response);
-                }
-            });
+            this.pendingRequests.set(requestId, { resolve, reject });
+            try {
+                port.postMessage({ requestId, payload: message });
+            } catch (error) {
+                this.pendingRequests.delete(requestId);
+                reject(error);
+            }
         });
     }
-    
+
+    /** ポートから来たものを、要求への応答と片道の通知に振り分ける */
+    handleBackgroundMessage(message) {
+        if (message && typeof message.requestId === 'number') {
+            const pending = this.pendingRequests.get(message.requestId);
+            if (!pending) return; // 切断で既に落とした応答が遅れて来た
+            this.pendingRequests.delete(message.requestId);
+            pending.resolve(message.payload);
+            return;
+        }
+
+        const request = message || {};
+        debugLog('[Popup] Received message:', request.action, 'with', request.comments?.length || 0, 'comments');
+        if (request.action === 'newSpecialComments') {
+            // formatComment がアバターを引けるよう、コメントより先に取り込む
+            Object.assign(this.avatarsByAuthor, request.avatars || {});
+            this.addNewComments(request.comments);
+        } else if (request.action === 'monitoringAutoStopped') {
+            this.handleAutoStop(request.reason);
+        } else if (request.action === 'showDetailedError') {
+            // DOMモードではAPIキー関連エラーを表示しない
+            if (this.chatMode === 'dom' && request.errorInfo?.action === 'setApiKey') {
+                return;
+            }
+            this.showDetailedError(request.errorInfo);
+        }
+    }
+
+    /**
+     * ポートが切れた（拡張機能の再読み込みなど）。
+     * 待っている要求はもう応答が来ないので握りつぶさずに落とし、張り直す
+     */
+    handleBackgroundDisconnect(port) {
+        if (this.port !== port) return;
+        this.port = null;
+        debugWarn('[Popup] Service worker port disconnected');
+
+        const pending = Array.from(this.pendingRequests.values());
+        this.pendingRequests.clear();
+        const error = new Error('Service Worker との接続が切れました');
+        for (const entry of pending) entry.reject(error);
+
+        // 張り直しは1回だけ。connect の中で同期的に切られる作りでも回り続けないよう、
+        // 再入は弾く（次の要求のときにもう一度 connect される）
+        if (this.reconnecting) return;
+        this.reconnecting = true;
+        try {
+            this.connectToBackground();
+        } catch (reconnectError) {
+            debugWarn('[Popup] Failed to reconnect:', reconnectError.message);
+            this.showError('拡張機能の接続が失われました。ポップアップを開き直してください。');
+            return;
+        } finally {
+            this.reconnecting = false;
+        }
+
+        // 切れていた間に届かなかったぶんを取りに行く（取りこぼしを残さない）
+        this.resyncAfterReconnect().catch(resyncError =>
+            debugError('[Popup] Failed to resync after reconnect:', resyncError));
+    }
+
+    /**
+     * 再接続の直後に、保存済みの履歴から差分を取り込む。
+     * 既知の id は addNewComments の Set で落ちるので、
+     * 足されるのは切れていた間に来たぶんだけ（描き方は新着と同じ差分追加）
+     */
+    async resyncAfterReconnect() {
+        if (!this.currentVideoId) return;
+
+        const response = await this.requestBackground({
+            action: 'getCommentsHistory',
+            videoId: this.currentVideoId,
+            bucket: 'primary'
+        });
+        if (response?.success && response.comments?.length) {
+            Object.assign(this.avatarsByAuthor, response.avatars || {});
+            this.addNewComments(response.comments);
+        }
+
+        // bulk を載せていたなら、そちらも取り直す（載せていないなら要らない。決定4）
+        if (!this.bulkLoaded) return;
+        const room = MAX_COMMENTS_IN_MEMORY - this.comments.length;
+        if (room <= 0) return;
+        const bulk = await store.read(this.currentVideoId, { bucket: 'bulk', limit: room });
+        if (this.mergeBulkComments(bulk) > 0) this.renderComments();
+    }
+
     // 遅延ユーティリティ
     delay(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
@@ -422,9 +507,9 @@ class PopupController {
         
         try {
             // 1. Service Workerから最後の注入結果を確認
-            const injectionResult = await this.sendMessageWithRetry({
+            const injectionResult = await this.requestBackground({
                 action: 'getLastInjectionResult'
-            }, 2);
+            });
             
             debugLog('[YouTube Special Comments] Last injection result:', injectionResult);
             
@@ -432,10 +517,10 @@ class PopupController {
             // 対象は現在のタブのみ。全タブに注入すると、正常に動いている
             // 他のYouTubeタブにまで不要な注入を行うことになる
             debugLog('[YouTube Special Comments] Requesting manual content script re-injection...');
-            const reinjectResponse = await this.sendMessageWithRetry({
+            const reinjectResponse = await this.requestBackground({
                 action: 'reinjectContentScripts',
                 tabId: this.currentTab?.id
-            }, 2);
+            });
             
             if (reinjectResponse && reinjectResponse.success) {
                 debugLog('[YouTube Special Comments] ✅ Content script re-injection requested successfully');
@@ -523,10 +608,10 @@ class PopupController {
             debugLog('[YouTube Special Comments] Step 1: Requesting content script re-injection');
             this.showInitializationStatus('Content Scriptを再注入中...');
             
-            const reinjectResponse = await this.sendMessageWithRetry({
+            const reinjectResponse = await this.requestBackground({
                 action: 'reinjectContentScripts',
                 tabId: this.currentTab?.id
-            }, 3);
+            });
             
             if (!reinjectResponse || !reinjectResponse.success) {
                 throw new Error('Content script re-injection failed');
@@ -825,25 +910,6 @@ class PopupController {
         }
     }
     
-    setupMessageListener() {
-        chrome.runtime.onMessage.addListener((request, _sender, _sendResponse) => {
-            debugLog('[Popup] Received message:', request.action, 'with', request.comments?.length || 0, 'comments');
-            if (request.action === 'newSpecialComments') {
-                // formatComment がアバターを引けるよう、コメントより先に取り込む
-                Object.assign(this.avatarsByAuthor, request.avatars || {});
-                this.addNewComments(request.comments);
-            } else if (request.action === 'monitoringAutoStopped') {
-                this.handleAutoStop(request.reason);
-            } else if (request.action === 'showDetailedError') {
-                // DOMモードではAPIキー関連エラーを表示しない
-                if (this.chatMode === 'dom' && request.errorInfo?.action === 'setApiKey') {
-                    return;
-                }
-                this.showDetailedError(request.errorInfo);
-            }
-        });
-    }
-    
     async loadChatMode() {
         try {
             const result = await chrome.storage.local.get(['chatMode', 'domModeNeedsReload']);
@@ -904,7 +970,7 @@ class PopupController {
 
     async loadSavedApiKey() {
         try {
-            const response = await this.sendMessageWithRetry({ action: 'getApiKey' }, 3);
+            const response = await this.requestBackground({ action: 'getApiKey' });
             if (response && response.apiKey) {
                 this.elements.apiKeyInput.value = response.apiKey;
                 this.updateMonitoringButtons(true);
@@ -982,8 +1048,6 @@ class PopupController {
             // Step 3: 監視状態を更新
             if (monitoringState.success) {
                 this.isMonitoring = monitoringState.isMonitoring;
-                // バックグラウンドが実際に監視している動画ID（現在のタブと一致しない場合がある）
-                this.monitoringVideoId = monitoringState.currentVideoId || null;
                 // chatMode は監視中の場合のみバックグラウンドと同期する
                 // （非監視時は chrome.storage.local の値を優先する）
                 if (monitoringState.isMonitoring && monitoringState.chatMode) {
@@ -1054,9 +1118,9 @@ class PopupController {
     
     async getBackgroundMonitoringState() {
         try {
-            const response = await this.sendMessageWithRetry({
+            const response = await this.requestBackground({
                 action: 'getMonitoringState'
-            }, 2);
+            });
             
             return response || { success: false };
         } catch (error) {
@@ -1083,11 +1147,11 @@ class PopupController {
         // メンバー・一般（bulk）は必要になってから popup が直接 IndexedDB から引く（決定4）
         let historyLoaded = false;
         try {
-            const historyResponse = await this.sendMessageWithRetry({
+            const historyResponse = await this.requestBackground({
                 action: 'getCommentsHistory',
                 videoId: targetVideoId,
                 bucket: 'primary'
-            }, 2);
+            });
             
             debugLog('[YouTube Special Comments] History response for', targetVideoId + ':', {
                 success: historyResponse?.success,
@@ -1170,13 +1234,23 @@ class PopupController {
     }
     
     async tryDomAutoStart() {
-        // 「取得中」なのにバックグラウンドが別の動画（または不明な動画）を掴んだままだと
-        // 現在のタブのコメントが永久に届かないため、その場合は開始し直す
-        const isStaleSession = this.isMonitoring && this.monitoringVideoId !== this.currentVideoId;
-        if (isStaleSession) {
-            debugLog('[YouTube Special Comments] Stale monitoring session detected:',
-                this.monitoringVideoId, '->', this.currentVideoId);
-            this.isMonitoring = false;
+        // 「取得中」なのにバックグラウンドが別の動画（や別のタブ）を掴んだままだと、
+        // 現在のタブのコメントが永久に届かないため、その場合は開始し直す。
+        //
+        // 突き合わせは Service Worker の reconcile ただ1つに任せる（根本原因A）。
+        // 以前はここだけ popup のローカル状態（監視中の動画IDの控え）で判断していて、
+        // 突き合わせ分岐の5本目として残っていた。ポートで SW に聞けるようになったので、
+        // 控えごと消した（別タブの配信を掴んでいる場合も、これで拾える）
+        if (this.isMonitoring) {
+            const verdict = await this.requestBackground({
+                action: 'reconcileSession',
+                tabId: this.currentTab?.id ?? null,
+                videoId: this.currentVideoId
+            });
+            if (verdict?.state && verdict.state !== 'same') {
+                debugLog('[YouTube Special Comments] Stale monitoring session detected:', verdict.state);
+                this.isMonitoring = false;
+            }
         }
         if (this.isMonitoring) return;
         if (this.chatMode !== 'dom') return;
@@ -1185,7 +1259,7 @@ class PopupController {
         if (!isYouTubePage) return;
 
         try {
-            const response = await this.sendMessageWithRetry({ action: 'getAutoStart' }, 2);
+            const response = await this.requestBackground({ action: 'getAutoStart' });
             if (!response?.autoStart) return;
 
             debugLog('[YouTube Special Comments] DOM mode auto-start: starting monitoring');
@@ -1219,7 +1293,6 @@ class PopupController {
 
                 if (response && response.success) {
                     this.isMonitoring = true;
-                    this.monitoringVideoId = this.currentVideoId;
                     this.updateMonitoringButtonStates();
                     this.updateStatus('取得中（DOMモード）');
                     this.showError('');
@@ -1232,7 +1305,7 @@ class PopupController {
             }
 
             // APIキーの存在確認
-            const apiKeyResponse = await this.sendMessageWithRetry({ action: 'getApiKey' }, 2);
+            const apiKeyResponse = await this.requestBackground({ action: 'getApiKey' });
             if (!apiKeyResponse || !apiKeyResponse.apiKey) {
                 this.showError('YouTube Data APIキーが設定されていません。オプション画面で設定してください。');
                 return;
@@ -1253,7 +1326,6 @@ class PopupController {
             
             if (response && response.success) {
                 this.isMonitoring = true;
-                this.monitoringVideoId = this.currentVideoId;
                 this.updateMonitoringButtonStates();
                 this.updateStatus('取得中');
                 this.showError('');
@@ -1325,10 +1397,10 @@ class PopupController {
     
     async clearComments() {
         try {
-            await this.sendMessageWithRetry({
+            await this.requestBackground({
                 action: 'clearCommentsHistory',
                 videoId: this.currentVideoId
-            }, 2);
+            });
         } catch (e) {
             debugWarn('[Popup] Failed to clear storage history:', e);
         }
@@ -1970,7 +2042,7 @@ class PopupController {
                 this.updateMonitoringButtons(true);
             } else {
                 // まずAPIキーを確認
-                this.sendMessageWithRetry({ action: 'getApiKey' }, 1).then(response => {
+                this.requestBackground({ action: 'getApiKey' }).then(response => {
                     const hasApiKey = response && response.apiKey;
                     this.updateMonitoringButtons(hasApiKey);
                 }).catch(() => {
@@ -2036,7 +2108,7 @@ class PopupController {
     
     async loadCommentFilters() {
         try {
-            const response = await this.sendMessageWithRetry({ action: 'getCommentFilters' }, 2);
+            const response = await this.requestBackground({ action: 'getCommentFilters' });
             if (response && response.success) {
                 this.commentFilters = response.filters;
                 this.updateFilterUI();
@@ -2082,10 +2154,10 @@ class PopupController {
         debugLog('[YouTube Special Comments] Filter changed:', filterType, '=', this.commentFilters[filterType]);
         
         try {
-            await this.sendMessageWithRetry({
+            await this.requestBackground({
                 action: 'setCommentFilters',
                 filters: this.commentFilters
-            }, 2);
+            });
             
             this.updatePresetButtons();
             await this.renderWithBulk(false, true);
@@ -2112,10 +2184,10 @@ class PopupController {
         }
 
         try {
-            await this.sendMessageWithRetry({
+            await this.requestBackground({
                 action: 'setCommentFilters',
                 filters: this.commentFilters
-            }, 2);
+            });
             
             this.updateFilterUI();
             
@@ -2131,10 +2203,10 @@ class PopupController {
         this.commentFilters = { ...FILTER_PRESETS[presetType] };
         
         try {
-            await this.sendMessageWithRetry({
+            await this.requestBackground({
                 action: 'setCommentFilters',
                 filters: this.commentFilters
-            }, 2);
+            });
             
             this.updateFilterUI();
             
@@ -2281,67 +2353,6 @@ class PopupController {
     openOptionsPage() {
         debugLog('[Popup] Opening options page');
         chrome.runtime.openOptionsPage();
-    }
-    
-    // リトライ機能付きメッセージ送信（Popupバージョン）
-    async sendMessageWithRetry(message, maxRetries = 3, baseDelay = 1000) {
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-            try {
-                debugLog(`[YouTube Special Comments] [Popup] Sending message attempt ${attempt}/${maxRetries}:`, message.action);
-                
-                const response = await this.sendMessageWithTimeout(message, 5000);
-                debugLog(`[YouTube Special Comments] [Popup] ✅ Message successful on attempt ${attempt}`);
-                return response;
-                
-            } catch (error) {
-                debugWarn(`[YouTube Special Comments] [Popup] Message failed on attempt ${attempt}:`, error.message);
-                
-                // Extension context invalidated の場合は特別処理
-                if (error.message.includes('Extension context invalidated')) {
-                    debugError('[YouTube Special Comments] [Popup] 🔄 Extension context invalidated - attempting recovery');
-                    
-                    // Service Worker再接続を試行
-                    await this.delay(1000);
-                    const recovered = await this.waitForServiceWorker(5);
-                    
-                    if (!recovered && attempt === maxRetries) {
-                        this.showError('拡張機能の接続が失われました。ページを再読み込みしてください。');
-                        throw new Error('Extension context invalidated and recovery failed. Please reload the page.');
-                    }
-                    continue;
-                }
-                
-                // "Could not establish connection" の場合も再接続試行
-                if (error.message.includes('Could not establish connection')) {
-                    debugWarn('[YouTube Special Comments] [Popup] 🔄 Connection lost - attempting recovery');
-                    
-                    if (attempt === 1) {
-                        this.showInitializationStatus('拡張機能に再接続中...');
-                    }
-                    
-                    await this.delay(1000);
-                    const recovered = await this.waitForServiceWorker(3);
-                    
-                    if (recovered) {
-                        debugLog('[YouTube Special Comments] [Popup] ✅ Connection recovered');
-                        this.hideInitializationStatus();
-                    }
-                }
-                
-                if (attempt === maxRetries) {
-                    // 最終的にエラーになった場合、ユーザーフレンドリーなメッセージを表示
-                    if (error.message.includes('Could not establish connection')) {
-                        this.showError('ページを再読み込みしてから再試行してください。');
-                    }
-                    throw error;
-                }
-                
-                // 指数バックオフで待機
-                const delay = baseDelay * Math.pow(2, attempt - 1);
-                debugLog(`[YouTube Special Comments] [Popup] Waiting ${delay}ms before retry...`);
-                await this.delay(delay);
-            }
-        }
     }
     
     // ユーザーフィルタリング機能

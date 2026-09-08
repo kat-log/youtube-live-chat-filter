@@ -100,7 +100,13 @@ ESLint と CI はフェーズ1で導入済み。devDependency は `eslint` 1つ�
   `popup.js` を読み込む。偽 document が引ける id の正は `popup.html` の実物で、
   そこに無い id を引かれたら例外にする。
   `setTimeout` は dom-chat ハーネスと同じく**積むだけ**で、テストから進める
-  （実時間で回すと初期化の再試行だけで1本十数秒かかる）。
+  （検索のデバウンスやメッセージの自動消去を実時間で待たないため）。
+  `chrome.runtime.connect` は偽ポートを返し、**既定では応答を返さない**
+  （本物の Service Worker が居ない状態）。そのため初期化は最初の要求
+  （`getCommentFilters`）で止まったままになり、テストは組み立てられた DOM だけを
+  見られる。応答が要るときは `loadPopup({ onRequest })` で作る。
+  SW からの通知は `chrome.__deliver(message)`、切断は `chrome.__disconnect()`、
+  張られたポートの本数は `chrome.__portCount()`。
   `PopupController` と唯一のインスタンスは `context.__popup` から触れる。
   出来上がった DOM は `readCommentRows()` / `visibleUsernames()` でほどく
   （`test/popup-filters.test.js` がフィルターの2軸を、
@@ -236,11 +242,44 @@ Service Worker の状態は `session` ただ1つが正（再設計の決定6、�
 - 表示フィルターは `session` に持たない。正は `storage.local` で、読むのは popup
 
 DOMモードのバッチは `enqueueDomChatMessages()` が1本の `Promise` の鎖に並べる。
-`onMessage` は `sendResponse` を即返して処理を切り離すので、並べないと
-バッチ同士が互いの状態更新を踏む。
+要求の受け口は応答を即返して処理を切り離すので、並べないと
+バッチ同士が互いの状態更新を踏む。**この鎖は content script → SW の区間を
+守っている**（SW → popup の順序を守るのはポート。区間が別なので、
+ポート化しても鎖は外さない）。
 
 **タブが閉じられたら監視を止める**（`chrome.tabs.onRemoved` のリスナーは1本だけ）。
 以前は2本あり、片方は「自動停止」、もう片方は「継続」と正反対のことをしていた。
+
+### popup と Service Worker の通信（ポート）
+
+popup ↔ SW は `chrome.runtime.connect` のポート1本で話す（フェーズ6b）。
+`sendMessage` は「届いたかどうか分からない」ので、popup 側に
+ping 8回の起床待ち（`waitForServiceWorker`）とタイムアウト付きの retry が
+足されていた。ポートにするとそれが要らなくなる。
+
+- SW は開いているポートを `popupPorts`（`Set`）で持つ。**`session` には持たせない**
+  （永続化できないうえ、popup が開いているかはセッションの持ち物ではない。
+  `PERSISTED_SESSION_KEYS` を増やさないこと）
+- popup へ片道で流すのは `notifyPopup()` だけ。新着・`showDetailedError`・
+  `monitoringAutoStopped` の3つが通る。開いていなければ何も起きない
+- **content script との通信は `tabs.sendMessage` / `onMessage` のまま。**
+  content script は `connect` の相手ではない。要求の処理は
+  `handleRequest(request, sender)` 1つに畳んであり、ポートと `onMessage` は
+  その応答を配るだけ（同じ `action` の処理を2か所に書かないため）
+- ポートに「応答」という仕組みは無いので、**要求ごとに `requestId` を振って**
+  `{ requestId, payload }` で送り、応答に同じ ID を載せて返す。
+  片道の通知は `requestId` を持たない。**知らない `action` にも必ず応答を返すこと**
+  （返さないと popup の待ちが永久に解けない）
+- popup 側の口は `requestBackground(message)` 1つ。処理の失敗は
+  `{ success: false, error }` として返り、投げるのは繋がらなかったときだけ
+- 切れたら（拡張機能の再読み込みなど）待っている要求を全部落として張り直し、
+  **保存済みの履歴から差分を取り込み直す**（`resyncAfterReconnect`）。
+  既読の id で落ちるので、増えるのは取りこぼしぶんだけ
+- popup の受け口はコンストラクタで張るポート1本だけ。`connectToBackground()` は
+  張り済みなら何もしないので、二重登録は起こり得ない（#32）
+
+**「いま監視しているのは同じ配信か」を popup が自前で比べないこと。**
+`reconcileSession` を SW に聞き、返ってきた4語で決める（正は `reconcile` 1つ）。
 
 ### 番人（`chrome.alarms`、1分周期）
 
@@ -357,7 +396,7 @@ Service Worker が渡すのは `readCommentsForPopup(videoId, 'primary')` の結
 | 4 | 全件取り込み | **完了**（2026-09-07） |
 | 5 | popup の読み方と描画 | **完了**（2026-09-07） |
 | 6a | ライフサイクル: 状態の一本化（単一状態・epoch・alarms・アバターの保持枠） | **完了**（2026-09-08） |
-| 6b | ライフサイクル: ポート化（`chrome.runtime.connect`・retry の撤去） | 未着手 |
+| 6b | ライフサイクル: ポート化（`chrome.runtime.connect`・retry の撤去） | **完了**（2026-09-08） |
 | 7 | dom-chat 耐性 | 未着手 |
 | 8 | UI の穴（キーボード・テーマ） | 未着手 |
 | 9 | 掃除（権限・docs） | 未着手 |

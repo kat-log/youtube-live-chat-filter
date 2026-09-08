@@ -346,6 +346,32 @@ MV3 の Service Worker は約30秒アイドルで終了する。
 - **`waitForServiceWorker` の8回 ping (`popup:328`) と、
   3か所に重複している retry ヘルパーが不要になる**
 
+**ポートにするのは popup ↔ SW だけ。** content script は `runtime.connect` の
+相手ではない（SW から見て content script は「タブの中のスクリプト」で、
+話しかける口は `tabs.sendMessage`）。つまり拡張機能の中には
+**通信路が2本ある**状態が残る。SW 側で分岐を2組持たないよう、
+要求の処理は1つの関数（`handleRequest`）に畳み、
+ポートと `onMessage` はその応答を配るだけの薄い口にする。
+
+**ポートは「要求と応答」ではなく「双方向に流れる管」である。**
+`sendMessage` はコールバックが応答と1対1で結び付くが、ポートの `postMessage` は
+ただ流すだけで、返事という概念が無い。**要求ごとの ID を自分で振り、
+応答にそれを載せて返す**こと（`{ requestId, payload }`）。
+「届いた順に対応づける」形にすると、処理時間の違う要求
+（`getCommentsHistory` と `getApiKey` を並べる、など）で入れ替わる。
+SW からの片道の通知（新着コメント等）は `requestId` を持たない形にして、
+popup 側の受け口で区別する。
+
+**知らない `action` にも必ず応答を返すこと。** `sendMessage` なら
+応答が無ければ呼び出し側は「チャネルが閉じた」で終わるが、ポートでは
+待ち行列に入ったまま**永久に解けない**（拡張機能を更新して popup と SW の
+版がずれた瞬間に起きる）。
+
+**ポートが切れたときの後始末も決めておくこと。** 待っている要求は
+もう応答が来ないので、握りつぶさずに落とす。張り直したあとは、
+切れていた間に流れた片道の通知が失われているので、**保存済みの履歴から
+差分を取り込み直す**（既読の id で落ちるので、増えるのは取りこぼしぶんだけ）。
+
 ---
 
 ## フェーズ
@@ -1621,6 +1647,164 @@ SW の `onMessage` 分岐21本に触る。1本にすると差分がレビュー�
 - **popup が IndexedDB を開くようになっている**（フェーズ5）。将来スキーマを上げるとき、
   popup の接続が `onblocked` を引き起こす。ポート化で popup の生存期間が
   SW から見えるようになるので、手当てを考えるならこのフェーズが安い
+
+**実施記録（2026-09-08 完了）**
+
+4つとも実装できた。地雷は踏んでいない（`'use strict'` を足していない、
+`sourceType` は `script` のまま、`shared/` はガードで包まず `self` へ代入、
+生の U+0000 も書いていない、実行時の依存はゼロのまま、見た目は1ピクセルも
+変えていない、`enqueueDomChatMessages` の鎖は外していない、
+content script の通信には触っていない、フェーズ7以降には手を出していない）。
+フェーズ6a からの申し送り8点はどれも正確で、行番号も全部当たっていた。
+判断が要った点と、節の指示だけでは決まらなかったことを残す。
+
+1. **`onMessage` の21分岐は、ポートと共用にした**（`reconcileSession` を足して22本）。 ポート化の素直な書き方は
+   「popup 用のハンドラをもう1組書く」だが、それだと同じ `action` の処理が
+   2か所になる —— 根本原因A（同じことの正が複数ある）を潰す最中に、
+   通信の側で同じ形を作ることになる。採ったのは
+   **`handleRequest(request, sender)` が応答の `Promise` を返し、
+   ポートと `onMessage` はそれを配るだけ**という形。
+   `sendResponse` の呼び分け（`.then(sendResponse).catch(...)` が
+   分岐ごとに書かれていた）も `dispatchRequest` 1か所に寄ったので、
+   分岐の中身は「何を返すか」だけになった。差分は増えたが、
+   **足したのは口であって処理ではない**。
+
+2. **ポートには「応答」という概念が無い。** ここが `sendMessage` からの
+   いちばん大きな段差で、節の「送信順が保たれる」だけを読むと見落とす。
+   `port.postMessage` はただ流すだけなので、要求ごとに `requestId` を振って
+   `{ requestId, payload }` で送り、応答に同じ ID を載せて返す形を自分で作った。
+   届いた順で対応づけると、処理時間の違う要求（`getCommentsHistory` と
+   `getApiKey` を並べたときなど）で入れ替わる。テストを1本足してある。
+   **指針側の節に書き足した。**
+
+3. **知らない `action` にも応答を返す必要がある。** `sendMessage` は
+   応答が無ければチャネルが閉じて呼び出し側の待ちが解けるが、ポートでは
+   待ち行列に入ったまま永久に解けない。拡張機能を更新して popup と SW の
+   版がずれた瞬間に、popup が無言で固まる形になる。
+   `handleRequest` が `undefined` を返したら空の応答を返す、とした。
+   **これも指針側に書き足した。**
+
+4. **「retry ヘルパー3つ」のうち、消えたのは2つ。** 節は3つと書いているが、
+   popup にあるもう1本（`sendTabMessageWithRetry`）は **popup → content script** の
+   区間で、ポートの相手ではない（`sendTabMessageWithTimeout` も同じ）。
+   3本目は content script の `sendMessageWithRetry`（`cs:568`、9箇所から呼ばれる）で、
+   これも区間が別。**このフェーズで消えたのは popup → SW の
+   `waitForServiceWorker` / `sendMessageWithTimeout` / `sendMessageWithRetry` の3つ**
+   （数としては3つだが、節が数えていたものとは中身が違う）。
+   残る2本は content script をどうするかの話で、フェーズ7以降。
+
+5. **突き合わせ分岐の5本目は畳めた**（6a の申し送り4）。
+   popup の `isStaleSession` は、SW に `reconcileSession` を聞いて
+   `same` 以外なら開始し直す、という形になった。
+   これで popup 側から「監視中の動画IDの控え」（`monitoringVideoId`）が消え、
+   **突き合わせの正は `reconcile` ただ1つ**になった。
+   ついでに、以前は拾えていなかった「**別のタブ**の配信を掴んでいる」も拾える
+   （`reconcile` は `other` を返すため）。
+   なお `videoId` が読めない（`null`）ときの結論だけは変わっている ——
+   以前は「一致しない」で開始し直していたが、`reconcile` は
+   判断を保留して `same` を返すので、開始し直さない。
+   URLが読めないときに監視を切るのは誤動作なので、こちらが正しい。
+
+6. **`getMonitoringState` のキー名を `currentVideoId` → `videoId` に揃えた。**
+   6a が「通信の作り替えはフェーズ6b」とコメントを残していた箇所。
+   読み手は popup の1か所だけだった。
+
+7. **popup の初期化から Step が1つ消えた。** 「Service Worker を確認中」は
+   ping 8回の待ちそのものだったので、ポートを張った時点で意味が無い
+   （繋がること自体が生存確認で、繋がらなければ `connect` が投げる）。
+   3ステップ表示は2ステップになった。**画面に出る文言は変わるが、
+   これは「見た目の変更」ではなく消えた工程の反映**（フェーズ8の対象外）。
+
+8. **ハーネスの偽ポートは、既定で応答を返さない形にした。**
+   ポート化の前は「初期化が ping 8回の待ちで止まる」ことが、
+   テストから見て「初期化が邪魔をしない」保証になっていた。
+   応答を自動で返す偽ポートにすると初期化が最後まで走り、
+   テスト本体と競って `setComments([])` を踏む。
+   既定は無応答（＝本物の SW が居ない状態）にして、
+   応答が要るテストだけ `loadPopup({ onRequest })` で作る。
+   **止まる位置は1つ後ろにずれた**（`waitForServiceWorker` →
+   `loadCommentFilters` の `getCommentFilters`）。ハーネスの但し書きは
+   その旨に書き換えた（CLAUDE.md も同じ）。
+
+9. **popup の IndexedDB / `onblocked` には手を付けていない**（節も「必須ではない」）。
+   ポートで popup の生存が見えるようになったので、道具は揃った。
+   やるなら「SW がスキーマを上げる前に、開いている popup へ
+   `closeDb` を流す → popup が接続を閉じて応答 → SW が版を上げる」で足りるが、
+   `shared/store.js` に接続を閉じる口（と `onversionchange` の手当て）を
+   足す必要があり、それは `DB_VERSION` を上げる回に一緒にやる方が安い。
+   **フェーズ7への申し送りに具体案として残した。**
+
+10. **content script が popup へ新着をリレーする経路は残っている。**
+    SW → `tabs.sendMessage` → content script の `addNewComments` →
+    `runtime.sendMessage` → SW のリレー分岐 → popup、という往復があり、
+    popup は同じバッチを2回受け取る（id の `Set` で落ちるので実害は無い）。
+    ポート化で「送った順に1回ずつ」が本物になったので、
+    **この echo だけが1回ずつを崩している**。消すのは content script 側の
+    2行だが、区間が違ううえ影響範囲が読み切れないので触らなかった。
+    **フェーズ7への申し送りに書いた。**
+
+テストは 147 件 → **167 件**（SW 側のポート9件・popup 側のポート11件を追加。
+既存の4件は、通知の宛先が `runtimeMessages` から popup のポートへ移ったのと
+`currentVideoId` → `videoId` の改名に追随させた。確かめている内容は変えていない）。
+
+**詰まった箇所**: 上の2（応答という概念が無い）と8（偽ポートの既定）の2つ。
+2 は書き始めてすぐ気付いたが、3（知らない action）は
+**テストを書いていて初めて気付いた**（popup が永久に固まる形なので、
+気付かないまま出すと厄介だった）。8 は一度自動応答で書いてから、
+既存の popup テストが不規則に落ちるのを見て書き直した。
+**資料に書いてほしかったこと**は3つで、どれも
+「ポートは sendMessage の置き換えではなく、別の道具である」の系:
+(a) 要求と応答の対応づけは自分で作る、(b) 知らない action にも返す、
+(c) 切れたときの後始末（待ちを落とす・張り直す・取りこぼしを取り込み直す）。
+**3つとも「popup と SW の通信」の節の本文に書き足した**
+（実施記録ではなく指針側に置かないと、次に読む人は同じところで手を止める）。
+
+**フェーズ7への申し送り**
+
+- **行番号**（フェーズ6b 後の実測）
+  - `service-worker.js`（全1,856行）: `emptySession` 240 / `beginSession` 264 /
+    `saveSession` 271 / `loadSession` 279 / `reconcile` 308 /
+    `restoreStateFromStorage` 620 / **ポートの節 849-1064**
+    （`onConnect` 866 / `isPopupOpen` 885 / `postToPort` 891 /
+    `notifyPopup` 901 / **`handleRequest` 907**（22分岐）/
+    `dispatchRequest` 1030 / `onMessage` 1043 / `clearCommentsHistory` 1047）/
+    `getMonitoringState` 1196 / `onPollSuccess` 1265 / `injectDomChat` 1365 /
+    `startDomMonitoring` 1386 / `enqueueDomChatMessages` 1435 /
+    `handleDomChatMessages` 1442 / `handleTabRemoved` 1556 /
+    `startWatchdog` 1581 / `runWatchdog` 1616 / `notifyPopupOfError` 1710
+  - `popup.js`（全2,562行）: `runInitialization` 198 /
+    `completeBasicInitialization` 257 / `emergencyFallbackInitialization` 283 /
+    **`connectToBackground` 336 / `requestBackground` 352 /
+    `handleBackgroundMessage` 373 / `handleBackgroundDisconnect` 403 /
+    `resyncAfterReconnect` 437** / `sendTabMessageWithTimeout` 697 /
+    `loadExistingComments` 1035 / `restoreCommentHistory` 1132 /
+    `tryDomAutoStart` 1236 / `startMonitoring` 1272 /
+    `sendTabMessageWithRetry` 2464（**8箇所から呼ばれる。ここは popup →
+    content script で、ポートの相手ではない**）
+  - `content/content-script.js` は1行も触っていない（全641行）。
+    `onMessage` 264 / `notifyPopupOfNewComments` 401 /
+    `sendMessageWithRetry` 568（9箇所から呼ばれる）
+- **content script の新着リレーは消してよい**（上の10）。
+  `notifyPopupOfNewComments`（`cs:401`）は SW から受け取ったバッチを
+  そのまま `runtime.sendMessage` で送り返しているだけで、popup は同じものを
+  SW から直接もらっている。SW 側のリレー分岐（`handleRequest` の
+  `newSpecialComments`）と対で消せる。**dom-chat 耐性の回に、
+  content script を触るついでが一番安い。**
+- **popup の IndexedDB / `onblocked`**（上の9）。ポートがあるので、
+  SW から「接続を閉じてくれ」と頼めるようになった。必要になるのは
+  `DB_VERSION` を上げる回で、要るのは
+  `shared/store.js` の閉じる口（`close()`）と `onversionchange` の手当て、
+  popup 側の `closeDb` の受け口、SW 側の「上げる前に流して待つ」の3つ。
+- **`onSuspend`（`SW:1478` にあったもの）は 6a で消えている。**
+  #38 の死にコードのうち、まだ残っているものがあれば
+  `no-unused-vars` では拾えない（トップレベルの関数宣言とクラスのメソッド）ので、
+  人手で探すこと。
+- **テストの現在値は 167 件。**
+- ハーネスに増えた口: popup 側は `chrome.__port()` / `__portCount()` /
+  `__deliver(message)` / `__disconnect()` と `loadPopup({ onRequest })`、
+  SW 側は `chrome.__connectPopup()`（返り値の `request()` / `notifications()` /
+  `disconnect()`）と `calls.portMessages`。
+  `sw.isPopupOpen()` / `sw.notifyPopup()` も露出している。
 
 ### フェーズ7 — dom-chat 耐性
 
