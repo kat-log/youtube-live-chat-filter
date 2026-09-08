@@ -12,6 +12,12 @@
         <div class="top-bar">
             <div class="top-bar-left">
                 <span id="status-indicator" class="status-indicator status-offline">オフライン</span>
+                <!-- DOMモードで「チャットを読み取れているか」（フェーズ7）。
+                     読めているときは点だけ、読めていないときだけ文言も出す -->
+                <span id="chat-health" class="chat-health" role="status" style="display:none">
+                    <span class="chat-health-dot" aria-hidden="true"></span>
+                    <span id="chat-health-text" class="chat-health-text"></span>
+                </span>
                 <span class="video-id-chip" id="current-video-id">---</span>
             </div>
             <div class="top-bar-right">

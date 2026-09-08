@@ -21,8 +21,10 @@ const DOM_CHAT_PATH = path.join(__dirname, '..', '..', 'src', 'content', 'dom-ch
 // 本番では manifest の content_scripts[].js の並びがこの順序を作る
 const SHARED_PATH = path.join(__dirname, '..', '..', 'src', 'shared', 'comment.js');
 
-// チャット行の入れ物。dom-chat.js が document から引く唯一のセレクタ
+// dom-chat.js が document から引くセレクタ。フェーズ7 で2つになった
+// （#items が差し替わったことに気付くため、祖先も監視する）
 const ITEM_LIST_SELECTOR = 'yt-live-chat-item-list-renderer #items';
+const ITEM_HOST_SELECTOR = 'yt-live-chat-item-list-renderer';
 
 // dom-chat.js が行の中から引くセレクタの全部。
 //
@@ -70,13 +72,19 @@ function loadDomChat({ rows = [], hasItemList = true, pathname = '/live_chat' } 
   const timers = [];
   const sent = [];
   const warnings = [];
+  // chrome.runtime.onMessage に登録されたハンドラ
+  const messageListeners = [];
   // MutationObserver の観測記録。張り方と後始末（#2 / #T3）を見るためのもの
   const observations = [];
   const disconnections = [];
 
   // 監視対象になるチャット行の入れ物。observe の target と同一性で比べられるよう
-  // 1つだけ作って使い回す
-  const itemList = { children: rows };
+  // 1つだけ作って使い回す。YouTube が作り直す状況（#2）は replaceItemList() で作る。
+  // attached は document.contains() の答えになる（外れた節点は false）
+  const makeItemList = children => ({ children, attached: true });
+  let itemList = makeItemList(rows);
+  // #items を抱えている祖先。差し替えを検知するために監視される
+  const host = { tagName: 'yt-live-chat-item-list-renderer', attached: true };
 
   class RecordingMutationObserver {
     constructor(callback) {
@@ -111,15 +119,20 @@ function loadDomChat({ rows = [], hasItemList = true, pathname = '/live_chat' } 
     // hasItemList: false は「既知のセレクタだが、まだDOMに無い」の再現なので null を返す
     document: {
       querySelector(selector) {
-        if (selector !== ITEM_LIST_SELECTOR) throw unknownSelector(selector, 'ITEM_LIST_SELECTOR');
-        return hasItemList ? itemList : null;
-      }
+        if (selector === ITEM_LIST_SELECTOR) return hasItemList ? itemList : null;
+        if (selector === ITEM_HOST_SELECTOR) return hasItemList ? host : null;
+        throw unknownSelector(selector, 'ITEM_LIST_SELECTOR / ITEM_HOST_SELECTOR');
+      },
+      // 張り直しの判定（#2）に使う。差し替えられた古い #items は false になる
+      contains(node) { return !!node?.attached; }
     },
     MutationObserver: RecordingMutationObserver,
     setTimeout: fn => timers.push(fn),
     chrome: {
       runtime: {
-        onMessage: { addListener() {} },
+        // Service Worker からの要求（再スキャン・ヘルスの問い合わせ）の受け口。
+        // テストからは deliver() で叩く
+        onMessage: { addListener: fn => messageListeners.push(fn) },
         lastError: null,
         sendMessage: (payload, callback) => {
           sent.push(payload);
@@ -135,13 +148,39 @@ function loadDomChat({ rows = [], hasItemList = true, pathname = '/live_chat' } 
   vm.runInContext(fs.readFileSync(SHARED_PATH, 'utf8'), context, { filename: SHARED_PATH });
   vm.runInContext(fs.readFileSync(DOM_CHAT_PATH, 'utf8'), context, { filename: DOM_CHAT_PATH });
 
+  const commentPayloads = () => sent.filter(payload => payload.action === 'domChatMessages');
+
   return {
     domChat: context,
-    // MutationObserver が張られた対象（#items）
-    itemList,
+    // MutationObserver が張られた対象（#items）。replaceItemList で差し替わる
+    get itemList() { return itemList; },
+    /** #items を抱えている祖先。差し替えの検知はここへ張った監視が拾う */
+    host,
+    /**
+     * YouTube が #items を作り直した状況（#2）。
+     * 古い方は document.contains() から外れ、新しい入れ物が返る
+     */
+    replaceItemList(newRows = []) {
+      itemList.attached = false;
+      itemList = makeItemList(newRows);
+      return itemList;
+    },
     // chrome.runtime.sendMessage で送られたコメントの一覧
-    messages: () => sent.flatMap(payload => payload.messages || []),
-    sendCount: () => sent.length,
+    messages: () => commentPayloads().flatMap(payload => payload.messages || []),
+    sendCount: () => commentPayloads().length,
+    /** ヘルス状態の報告（action: 'domChatHealth'）。古い順 */
+    healthReports: () => sent.filter(p => p.action === 'domChatHealth').map(p => p.health),
+    /** いま報告されている状態（まだ1度も送っていなければ null） */
+    healthState() {
+      const reports = sent.filter(p => p.action === 'domChatHealth');
+      return reports.length ? reports[reports.length - 1].health.state : null;
+    },
+    /** Service Worker から content script へのメッセージを流す */
+    deliver(request) {
+      let response;
+      for (const fn of messageListeners) fn(request, {}, value => { response = value; });
+      return response;
+    },
     pendingTimers: () => timers.length,
     // console.warn に出た内容（素通ししていない）
     warnings: () => warnings,
@@ -150,11 +189,20 @@ function loadDomChat({ rows = [], hasItemList = true, pathname = '/live_chat' } 
     /** disconnect() された observer の一覧。張り直しの後始末を見る（#2） */
     disconnections: () => disconnections,
     /**
-     * 生きている observer にミューテーションを流す。
+     * 生きている #items の observer にミューテーションを流す。
      * handleMutations を直接呼ぶのと違い、observe の配線を通る（#T3）
      */
     emit(records) {
-      const live = observations.filter(o => !o.observer.disconnected);
+      const live = observations.filter(o => !o.observer.disconnected && o.target !== host);
+      for (const { observer } of live) observer.callback(records, observer);
+      return live.length;
+    },
+    /**
+     * 祖先側の observer を叩く（YouTube が #items まわりを触った状況）。
+     * 本物では #items の差し替えそのものがこの記録を生む
+     */
+    emitHost(records = []) {
+      const live = observations.filter(o => !o.observer.disconnected && o.target === host);
       for (const { observer } of live) observer.callback(records, observer);
       return live.length;
     },
@@ -209,6 +257,16 @@ function stickerImage({ alt = 'ステッカーの説明', src = '//lh3.googleuse
 }
 
 /**
+ * アバターの img。ステッカーと同じく、実物の src はプロトコル相対のことがある。
+ * ブラウザの .src は絶対URLに解決済みの値を返す（#28）
+ */
+function avatarImage({ src = '//yt3.ggpht.com/AVATAR=s32-c-k-c0x00ffffff-no-rj' } = {}) {
+  const img = element('', {}, { src });
+  img.src = src.startsWith('//') ? `https:${src}` : src;
+  return img;
+}
+
+/**
  * スーパーステッカーの行。画像は最初は付いていない（YouTubeが後から作るため）。
  * `attachSticker()` で生やせる。
  */
@@ -241,6 +299,6 @@ function textRow({ displayName = '@viewer', message = 'こんばんは', timesta
 const added = (...nodes) => [{ addedNodes: nodes }];
 
 module.exports = {
-  loadDomChat, element, stickerImage, stickerRow, textRow, added,
-  ITEM_LIST_SELECTOR, ROW_SELECTORS
+  loadDomChat, element, stickerImage, avatarImage, stickerRow, textRow, added,
+  ITEM_LIST_SELECTOR, ITEM_HOST_SELECTOR, ROW_SELECTORS
 };

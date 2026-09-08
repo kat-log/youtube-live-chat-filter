@@ -203,3 +203,91 @@ describe('新着の受け口', () => {
     assert.equal(c.isMonitoring, false);
   });
 });
+
+// チャットの読み取り状態の表示（フェーズ7）。
+//
+// DOMモードで無言で0件になったとき、利用者が「静かな配信」と区別できるようにする
+// のがこの表示の目的（根本原因F）。読めているうちは点だけを出し、
+// 読めていないときにだけ文言を添える（トップバーの見た目を崩さないため）。
+describe('チャットの読み取り状態', () => {
+  const domController = () => {
+    const c = controller();
+    c.chatMode = 'dom';
+    c.isMonitoring = true;
+    return c;
+  };
+  const chip = c => c.popup.document.peek('chat-health');
+  const label = c => c.popup.document.peek('chat-health-text');
+
+  test('既定では何も出さない（APIモードの見た目は変わらない）', () => {
+    const c = controller();
+    assert.equal(chip(c).style.display, 'none');
+  });
+
+  test('読み取れているときは点だけ、文言は出さない', () => {
+    const c = domController();
+
+    c.popup.chrome.__deliver({ action: 'domChatHealth', health: { state: 'reading' } });
+
+    assert.notEqual(chip(c).style.display, 'none', '状態が出ていない');
+    assert.match(chip(c).className, /chat-health--ok/);
+    assert.equal(label(c).textContent, '', '平常時に文言で幅を取っている');
+    assert.match(chip(c).title, /読み取れています/);
+  });
+
+  test('読み取れなくなったら、そうと分かる文言を出す', () => {
+    const c = domController();
+
+    c.popup.chrome.__deliver({ action: 'domChatHealth', health: { state: 'unreadable' } });
+
+    assert.match(chip(c).className, /chat-health--error/);
+    assert.match(label(c).textContent, /読み取れません/);
+  });
+
+  test('チャットが見つからないときも分かる', () => {
+    const c = domController();
+
+    c.popup.chrome.__deliver({ action: 'domChatHealth', health: { state: 'no-chat' } });
+
+    assert.match(label(c).textContent, /見つかりません/);
+  });
+
+  test('APIモードには出さない（DOMの話なので）', () => {
+    const c = controller();
+    c.chatMode = 'api';
+
+    c.popup.chrome.__deliver({ action: 'domChatHealth', health: { state: 'unreadable' } });
+
+    assert.equal(chip(c).style.display, 'none');
+  });
+
+  test('停止したら消える（「読み取れています」が居座らない）', () => {
+    const c = domController();
+    c.popup.chrome.__deliver({ action: 'domChatHealth', health: { state: 'reading' } });
+
+    c.handleAutoStop('テスト');
+
+    assert.equal(chip(c).style.display, 'none');
+  });
+
+  test('知らない状態の語は出さない（拡張機能の版がずれたとき）', () => {
+    const c = domController();
+
+    c.popup.chrome.__deliver({ action: 'domChatHealth', health: { state: 'まだ無い状態' } });
+
+    assert.equal(chip(c).style.display, 'none');
+  });
+
+  test('開いた時点の状態は Service Worker に聞く', async () => {
+    const c = controller({
+      onRequest: request =>
+        request.action === 'getDomChatHealth' ? { success: true, health: { state: 'unreadable' } } : undefined
+    });
+    c.chatMode = 'dom';
+    c.isMonitoring = true;
+
+    await c.refreshChatHealth();
+
+    assert.match(label(c).textContent, /読み取れません/);
+  });
+});

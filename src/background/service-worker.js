@@ -902,6 +902,69 @@ function notifyPopup(message) {
   for (const port of popupPorts) postToPort(port, message);
 }
 
+// === dom-chat.js のヘルス（フェーズ7）=======================================
+//
+// DOMモードの壊れ方は「無言で0件になる」で、静かな配信と区別が付かない
+// （根本原因F）。dom-chat.js が持っている状態をここで受けて popup まで出す。
+//
+// session には持たせない。永続化できないうえ、「いま読めているか」は
+// セッションの持ち物ではない（PERSISTED_SESSION_KEYS を増やさないこと）。
+// Service Worker が終了すると控えは消えるが、正は content script 側にあるので
+// 聞き直せる（getDomChatHealth）
+let domChatHealth = null;
+
+async function recordDomChatHealth(health, sender) {
+  await ensureStateRestored();
+
+  // 監視していないタブからの報告は捨てる。manifest の自動注入で、
+  // dom-chat.js は見ていない配信の live_chat にも乗っている
+  const tabId = sender?.tab?.id ?? null;
+  const mine = session.isMonitoring && session.chatMode === 'dom' &&
+               (tabId === null || session.tabId === null || tabId === session.tabId);
+  if (!mine) return { success: true };
+
+  domChatHealth = { ...health, videoId: session.videoId, receivedAt: Date.now() };
+  notifyPopup({ action: 'domChatHealth', health: domChatHealth });
+  return { success: true };
+}
+
+// タブへの問い合わせは必ず打ち切る。同じタブの content-script.js は、扱わない
+// action でも同期分岐で return true を返す（#30）ので、dom-chat.js が居ない
+// フレーム構成では応答が永久に返らないことがある —— そしてそれは、
+// まさにこの問い合わせで診断したい状況そのもの
+const HEALTH_QUERY_TIMEOUT_MS = 1500;
+
+function askTabForHealth(tabId) {
+  return Promise.race([
+    chrome.tabs.sendMessage(tabId, { action: 'getDomChatHealth' }),
+    new Promise(resolve => setTimeout(() => resolve(null), HEALTH_QUERY_TIMEOUT_MS))
+  ]);
+}
+
+// popup からの問い合わせ。Service Worker が終了して控えを失っていても答えられるよう、
+// まずタブの dom-chat.js に聞く（生きていれば必ずいまの値を返す）
+async function getDomChatHealth() {
+  await ensureStateRestored();
+
+  if (!session.isMonitoring || session.chatMode !== 'dom') return { success: true, health: null };
+
+  if (session.tabId !== null) {
+    try {
+      const reply = await askTabForHealth(session.tabId);
+      if (reply?.health) {
+        domChatHealth = { ...reply.health, videoId: session.videoId, receivedAt: Date.now() };
+      }
+    } catch (error) {
+      debugLog('[Background] dom-chat.js did not answer the health check:',
+        error?.message ?? String(error));
+    }
+  }
+
+  // 別の配信のときの控えは出さない（前の配信の「読めています」が居座る）
+  if (domChatHealth?.videoId !== session.videoId) return { success: true, health: null };
+  return { success: true, health: domChatHealth };
+}
+
 // popup（ポート）と content script（sendMessage）の両方から来る要求を1か所で捌く。
 // 応答は必ず Promise で返し、扱わない action には undefined を返す
 function handleRequest(request, sender) {
@@ -984,10 +1047,15 @@ function handleRequest(request, sender) {
     }));
   }
 
-  // content script からの新着コメント通知を popup へリレー
-  if (action === 'newSpecialComments') {
-    notifyPopup(request);
-    return Promise.resolve({ success: true });
+  // dom-chat.js が「いま読めているか」を知らせてくる（フェーズ7）。
+  // 状態が変わったときだけ来る片道の報告で、popup へそのまま流す
+  if (action === 'domChatHealth') {
+    return recordDomChatHealth(request.health, sender);
+  }
+
+  // popup からの問い合わせ（popup を開いた時点の状態を出すため）
+  if (action === 'getDomChatHealth') {
+    return getDomChatHealth();
   }
 
   if (action === 'getLiveChatIdFromVideo') {
@@ -1185,6 +1253,8 @@ async function stopBackgroundMonitoring() {
   beginSession();
   await saveSession();
   await stopWatchdog();
+  // 「読めています」の控えが、停止後も居座らないようにする
+  domChatHealth = null;
 
   updateBadge(false);
 
