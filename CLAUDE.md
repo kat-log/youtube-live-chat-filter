@@ -2,18 +2,23 @@
 
 このプロジェクトは、YouTubeライブチャットでモデレーター、メンバー（スポンサー）、配信者からのコメントのみを表示するChrome拡張機能です。
 
-## 再設計が進行中（2026-09〜）
+## 再設計は完了した（2026-09-07 〜 2026-09-08）
 
-**コードに手を入れる前に [`docs/redesign-plan.md`](docs/redesign-plan.md) を読むこと。**
+**この文書が現状の正である。** 以下の記述はフェーズ9 完了時点の実装と一致している。
 
-非マージコミット58件のうち14件（24%）が `fix:` で、同じ場所からバグが生え続けていた。
-2026-09-07 に `src/` 全体を調査し、46件の欠陥と6つの構造的原因を特定した。
+なぜこの形なのかは、2つの文書に残してある。**設計の意図に反する変更をしそうなときは
+先にこちらを読むこと**（とくに「決定事項」と「目指す設計」）。
 
-- [`docs/audit-2026-09.md`](docs/audit-2026-09.md) — 何が壊れているか（行番号つき、裏取り済み）
-- [`docs/redesign-plan.md`](docs/redesign-plan.md) — どう直すか（決定事項とフェーズ0〜9）
+- [`docs/redesign-plan.md`](docs/redesign-plan.md) — 決定事項・目指す設計・
+  フェーズ0〜9の**実施記録**（各フェーズで詰まった箇所と、その理由）。
+  末尾に**「この再設計のあとに残っている宿題」**がある
+- [`docs/audit-2026-09.md`](docs/audit-2026-09.md) — 2026-09-07 時点の全体監査。
+  **凍結された記録**で、行番号はいまのコードと対応しない。
+  欠陥番号（#1〜#46 / #T1〜#T11）を引くための索引として読む
 
-**この文書の以下の記述は v1.12.5 時点の「現状」であり、
-再設計で変わる予定のものが含まれる。** 変わる予定のものには印をつけてある。
+きっかけ: 非マージコミット58件のうち14件（24%）が `fix:` で、同じ場所から
+バグが生え続けていた。`src/` 全体を調査して46件の欠陥と6つの構造的原因を特定し、
+10回のセッションに分けて（フェーズ0〜9）片付けた。
 
 ## プロジェクト構成
 
@@ -34,6 +39,9 @@
   - `options/` - 設定画面のHTML/CSS/JS
 - `test/` - テスト（Node標準の`node:test`。拡張機能本体には同梱されない）
   - `helpers/service-worker-harness.js` - chrome APIモックとService Workerローダー
+  - `helpers/content-script-harness.js` - 偽 window/document と chrome APIモック。
+    **内部の関数は露出させない**（本体が class 宣言なので、二重注入ガードの
+    ブロックから漏れない）。見るのは外から見える振る舞いだけ
   - `helpers/dom-chat-harness.js` - 偽DOM（セレクタは厳格）とService Workerへの送信の記録
   - `helpers/popup-harness.js` - 偽 document（id の正は `popup.html`）と chrome APIモック
   - `helpers/indexeddb-mock.js` - IndexedDB の最小の偽実装（依存パッケージは足していない）
@@ -158,6 +166,13 @@ ESLint と CI はフェーズ1で導入済み。devDependency は `eslint` 1つ�
 - ポップアップ／オプション画面の**見た目**（配線と組み立ては
   popup / options のハーネスで見ている）
 
+ただし**実ブラウザでの確認は、かなりのところまで機械にやらせられる**。
+偽の `www.youtube.com`（自己署名TLS + Chromium の `--host-resolver-rules`）を立てて
+拡張機能を読み込ませると、manifest の `matches` も `host_permissions` も本物と同じに
+効くので、注入先のフレーム・自動開始・取り込み・SPA遷移・popup の描画まで通しで
+確かめられる。手順は `docs/redesign-plan.md` の「実ブラウザでの検証」にある
+（道具立てはリポジトリに入れていない。必要なときに書き捨てる）。
+
 Service Worker の状態は `session` 1つに畳んである（フェーズ6a）。
 `beginSession()` のたびに丸ごと再代入されるため、ハーネスは getter 経由で
 露出している（`sw.session`。旧名の `sw.monitoringState` は同じものを指す別名）。
@@ -184,6 +199,24 @@ ESLint の `sourceType` を `module` にするのも同じ理由で不可。
 
 - **DOMモード（既定・APIキー不要）**: `dom-chat.js` がライブチャットのDOMを直接監視する
 - **APIモード**: YouTube Data API v3 の `liveChatMessages` をポーリングする
+
+### watch ページ側（`content/content-script.js`）
+
+このスクリプトが持つのは「この画面はどの配信か」と「その配信のチャットIDは何か」
+だけで、**コメントは1件も持たない**（APIモードの残骸だった控えはフェーズ9で撤去した。
+popup は SW から直接もらう）。やることは3つ。
+
+- 配信の特定（`extractVideoId` / `extractLiveChatId`）
+- 自動開始の要求（`tryDomModeAutoStart` / `tryAutoStart`）
+- SW からの要求への応答（`ping` / `startMonitoring` / `stopMonitoring` /
+  `getLiveChatId` / `pageNavigated`）
+
+**SPA遷移の検知は Service Worker が持つ**（`chrome.tabs.onUpdated`。#24）。
+以前はここが `document.body` 全体を `MutationObserver` で購読して
+`location.href` の変化を見ており、拡張機能がやっていることの中で最も高価な処理だった。
+いまは SW が `pageNavigated` を送ってきて、それを受けて自分の控えを捨て、
+新しい動画で組み立て直す。**セッションを畳むのは SW の側**（`session` の正はあちら。
+ここで `stopBackgroundMonitoring` を呼ぶと突き合わせの正が2つに戻る）。
 
 ### DOMモードの読み取り（`content/dom-chat.js`）
 
@@ -225,9 +258,32 @@ YouTube の「上位のチャット ↔ チャット」切り替えで実際に�
   **全件スキャンでだけ**「既知のタグが1つも無く、行が5つ以上ある」を見る
 - popup の表示は DOMモードで監視中のときだけ。読めているうちは点だけを出す
   （トップバーの幅を平常時に取らないため。文言は `title` から読める）
-- **SW からタブへの `tabs.sendMessage` は必ず打ち切る。** `content-script.js` の
-  `onMessage` は扱わない `action` でも `return true` を返す（#30）ので、
-  応答が永久に返らないことがある
+- **聞き直す先はフレームで指定する**（フェーズ9）。`tabs.sendMessage` はタブの
+  全フレームに配られ、応答は最初に返した1つが勝つ。dom-chat.js から届いた
+  `sender.frameId` を控えておき、そこへ聞く。控えが無いとき（SW の終了後）は
+  宛先なしで聞き、`health` を持たない応答は捨てる
+
+### 権限（`manifest.json`）
+
+実際に使う分だけ（#40。フェーズ9で `activeTab` と `tabs` を落とした）。
+内容は `test/manifest.test.js` が固定しているので、増やすとテストが落ちる。
+
+| 権限 | 用途 |
+| --- | --- |
+| `storage` / `unlimitedStorage` | 設定とセッション（`storage.local`）、履歴（IndexedDB） |
+| `scripting` | dom-chat.js の注入 |
+| `alarms` | 番人（1分周期） |
+| `https://*.youtube.com/*` | チャットの読み取り、タブのURLの判定 |
+| `https://www.googleapis.com/youtube/v3/*` | APIモードのときだけ |
+
+- **`tabs` 権限は要らない。** タブの `url` は host permission があれば読める。
+  ただし**youtube.com 以外のタブでは `url` が `undefined` になる**ので、
+  無防備に `tab.url.includes(...)` と書かないこと
+- **`host_permissions` のパスは通信の可否には効かない**（実測）。
+  `/youtube/v3/*` に絞るのは審査と権限表示のための宣言であって、封じ込めではない
+- content_scripts の `matches` は2エントリで揃えてある（`https://*.youtube.com/`）。
+  エントリ1は `/watch*` と `/live/*`。**`/live*` と書くと `/live_chat*` を飲み込み、
+  ポップアウトのチャット窓で content-script.js と dom-chat.js が同居する**（#41）
 
 ### フィルターの2軸
 
@@ -336,9 +392,14 @@ ping 8回の起床待ち（`waitForServiceWorker`）とタイムアウト付き�
 - **新着を content script 経由で popup へ送り返さない**（フェーズ7で削除）。
   popup は同じバッチを SW から直接もらっているので、リレーすると
   ポートで保証した「送った順に1回ずつ」を崩す echo になるだけだった
-- **content script への `tabs.sendMessage` を `await` するときは打ち切りを付ける。**
-  `content-script.js` の `onMessage` は扱わない `action` でも `return true` を
-  返す（#30）ので、応答が永久に返らないことがある
+- **`content-script.js` の `onMessage` は、同期で応答した分岐で `return true` を
+  返さないこと**（#30。フェーズ9で直した）。`true` は「あとで応答する」の宣言なので、
+  同期で済ませたあとに返すと応答チャネルが開いたまま残り、送信側の `await` が
+  永久に解けない。**知らない `action` には応答する。**
+  ただし**同じタブの dom-chat.js 宛ての `action`（`DOM_CHAT_ACTIONS`）には
+  応答しないこと** —— `tabs.sendMessage` は全フレームに配られ、最初の応答が勝つので、
+  横から即答すると本来の宛先の応答を追い越す（ヘルスの表示が消える）。
+  応答しないだけならチャネルは開いたままにならないので害は無い
 - ポートに「応答」という仕組みは無いので、**要求ごとに `requestId` を振って**
   `{ requestId, payload }` で送り、応答に同じ ID を載せて返す。
   片道の通知は `requestId` を持たない。**知らない `action` にも必ず応答を返すこと**
@@ -492,7 +553,13 @@ Service Worker が渡すのは `readCommentsForPopup(videoId, 'primary')` の結
 
 ## 次のステップ
 
-再設計のフェーズを順に進める。**各フェーズは別セッションで、単独でリリースできる形で行う。**
+**再設計のフェーズ0〜9 はすべて完了した（2026-09-08）。**
+次にやることは [`docs/redesign-plan.md`](docs/redesign-plan.md) の
+**「この再設計のあとに残っている宿題」**にまとめてある
+（i18n、`optional_host_permissions`、実ブラウザでしか確認できないもの、
+残ったテストの盲点、通信路がまだ2本あること、リリース作業）。
+
+以下は完了記録。各フェーズは別セッションで、単独でリリースできる形で行った。
 
 | # | 名前 | 状態 |
 | --- | --- | --- |
@@ -506,12 +573,14 @@ Service Worker が渡すのは `readCommentsForPopup(videoId, 'primary')` の結
 | 6b | ライフサイクル: ポート化（`chrome.runtime.connect`・retry の撤去） | **完了**（2026-09-08） |
 | 7 | dom-chat 耐性 | **完了**（2026-09-08） |
 | 8 | UI の穴（キーボード・テーマ） | **完了**（2026-09-08） |
-| 9 | 掃除（権限・docs） | 未着手 |
+| 9 | 掃除（権限・docs） | **完了**（2026-09-08） |
 
 フェーズ6は当初1本だったが、**軸が2つ入っていた**ため 6a / 6b に分けた
 （「SWが自分の状態をどう持つか」と「SWとpopupがどう話すか」）。
 **順番は 6a → 6b で固定**（ポートのハンドラは単一の `session` を読み書きするため）。
 
-各フェーズの「やること／完了条件／テスト／注意」は
+各フェーズの「やること／完了条件／テスト／注意」と、
+**実施記録（詰まった箇所と、その理由）**は
 [`docs/redesign-plan.md`](docs/redesign-plan.md) にある。
-**フェーズを終えたらこの表の状態を更新すること。**
+実施記録は「なぜこの形なのか」を残すためのもので、
+似た形の変更をするときは先に読むと同じ穴を踏まずに済む。

@@ -447,6 +447,42 @@ popup 側の受け口で区別する。
 切れていた間に流れた片道の通知が失われているので、**保存済みの履歴から
 差分を取り込み直す**（既読の id で落ちるので、増えるのは取りこぼしぶんだけ）。
 
+**`tabs.sendMessage` はタブの全フレームに配られ、応答は最初に返した1つが勝つ**
+（フェーズ9で判明）。watch ページには content-script.js（トップフレーム）と
+dom-chat.js（live_chat の iframe）が同居しているので、これは日常的に起きる。
+帰結が2つある。
+
+- **「知らない `action` にも必ず応答する」を、同じタブに受け口が2つある状況へ
+  そのまま持ち込んではいけない。** 片方が知らない action に即答すると、
+  本来の宛先の応答を**追い越して**しまう（実ブラウザで再現した:
+  ヘルスの問い合わせが「unknown action」で返り、popup の表示が消える）。
+  宛先が別フレームにあると分かっている action には**応答しない**こと。
+  応答しないだけなら害は無い —— `return true` と違ってチャネルを開いたままに
+  しないので、他のフレームが答えればそれが返り、誰も答えなければ
+  送信側はその場でエラーを受け取る（永久に待たされることはない）。
+  **危ないのは「黙ること」ではなく「黙ったままチャネルを開けておくこと」**
+- **宛先が分かっているなら `frameId` を指定する。** dom-chat.js から届いた
+  メッセージの `sender.frameId` を控えておけば、そこへ直接聞ける。
+  控えは Service Worker の終了で失われるので、無いときは宛先なしで聞き、
+  返ってきたものが求める形でなければ捨てる（「誰も答えない」より
+  「別の誰かが答える」ほうが復帰は早い）
+
+### 権限は宣言でもある
+
+ストア審査と権限表示は利用者への説明そのものなので、**実際に使う分だけを
+書く**（#40。フェーズ9で `activeTab` と `tabs` を落とした）。
+そのうえで、フェーズ9 で実測して分かったことが2つある。
+
+- **`tabs` は host_permissions で置き換えられる。** タブの `url` は
+  「そのURLに対する host permission がある」なら読めるので、
+  youtube.com しか見ない拡張機能に `tabs`（= 全タブのURLとタイトル）は要らない。
+  `tabs.query({ url })` も `tabs.onUpdated` の `changeInfo.url` も同じ
+- **`host_permissions` のパスは、通信の可否には使われない。**
+  `https://www.googleapis.com/youtube/v3/*` に絞っても、同じホストの
+  別のパスへの fetch は通る（実ブラウザで確認）。効くのはホストまで。
+  それでもパスを書く価値はあって、**審査と利用者への説明としての宣言**になる。
+  技術的な封じ込めだと誤解しないこと
+
 ---
 
 ## フェーズ
@@ -2318,6 +2354,190 @@ CSS の効き方とタブ移動は本物のレンダリングエンジンで確�
   `tabs.query` `popup:330` `popup:1071` / `tabs.reload` `popup:729` `popup:1022` /
   `tabs.sendMessage` `popup:747` `popup:2592`）
 
+**実施記録（2026-09-08 完了）**
+
+7つとも実装できた。地雷は踏んでいない（両 content script に `'use strict'` を
+足していない、ES モジュールにもしていない、二重注入ガードの
+`if (...) { } else { ... }` ブロック構造は維持、`sourceType` は `script` のまま、
+`shared/` はガードで包まず `self` へ代入、`theme.js` は `importScripts` していない、
+生の U+0000 も書いていない、実行時の依存はゼロのまま、ビルド不要も維持、
+CSS のクラス名・DOM構造・見た目は1文字も触っていない、
+popup / options の HTML の id も変えていない）。
+フェーズ8 からの申し送りはどれも正確で、行番号も全部当たっていた。
+
+1. **`content-script.js` に網を張った**（最初に決めることとして挙がっていた点）。
+   削る量が大きく（634行 → 613行だが、中身は6割が入れ替わっている）、
+   #T6 のまま削ると「消したつもりが挙動も変わっていた」を検出できないため。
+   他のハーネスと**露出の仕方が違う**: このファイルの本体は
+   `class YouTubeLiveChatMonitor` で、**クラス宣言はブロックスコープに閉じる**
+   （Annex B の巻き上げが効くのは関数宣言だけ）ので、
+   `h.contentScript.<関数名>` の形は原理的に作れない。代わりに
+   **外から見える振る舞い**——chrome へ何を送るか / 何に応答するか /
+   どのタイマーと監視を張るか——だけを見る形にした。それで足りた
+   （このファイルがやっていることは、ほぼ全部が外との通信である）。
+   最初のコミットは**いまの姿を固定する24件**で、次のコミットで
+   そのうち8件を期待値ごと書き換えている。差分がそのまま挙動の変更記録になる。
+
+2. **#30 を素直に直すと、別の穴が開く。今回いちばんの落とし穴。**
+   「知らない `action` にも必ず応答する」を実装した直後、実ブラウザで
+   **ヘルスの表示が消えた**。`tabs.sendMessage` はタブの**全フレーム**に配られ、
+   応答は最初に返した1つが勝つ。watch ページでは content-script.js
+   （トップフレーム）が dom-chat.js（live_chat の iframe）宛ての
+   `getDomChatHealth` に「unknown action」と即答して、**本来の応答を追い越していた**。
+   #30 が直す前は「答えないままチャネルを開ける」だったので、この競争自体が
+   存在しなかった —— 直したことで新しく生まれた問題である。
+   対処は2つ重ねた: (a) Service Worker は dom-chat.js から届いた
+   `sender.frameId` を控え、聞き返すときは**フレームを指定する**、
+   (b) content-script.js は `DOM_CHAT_ACTIONS`（`getDomChatHealth` /
+   `requestInitialSweep`）には**応答しない**（`return false`。チャネルは開かない
+   ので #30 の害は無い）。**指針側（「popup と SW の通信」の節）に書き足した。**
+
+3. **`HEALTH_QUERY_TIMEOUT_MS`（1.5秒）は外せた。** #30 の根治で
+   「応答チャネルを開けたまま黙る content script」が居なくなり、
+   宛先のフレームが消えていれば `tabs.sendMessage` はその場で reject する。
+   対のテスト（「タブが応答しなくても、問い合わせは打ち切られる」）は、
+   打ち切りが無くなった以上そのままでは**永久に終わらないテスト**になるので、
+   「聞き返す先は dom-chat.js が居るフレーム」と
+   「別のフレームが先に答えても、その応答は採らない」の2件に置き換えた。
+   `tabs.sendMessage` を `await` している箇所は他に3つ（`isContentScriptAlive`・
+   `requestInitialSweep`・`pageNavigated` の通知）あるが、前者は `catch` 付きで
+   後2つは応答を待っていないので、打ち切りは要らない。
+
+4. **`tabs` 権限は外せた。** タブの `url` は host permission があれば読めるので、
+   popup の6箇所も `tabs.query({ url })` も `tabs.onUpdated` の `changeInfo.url` も
+   そのまま動く（実ブラウザで確認）。ただし**外すと `url` が undefined になる
+   タブができる**（youtube.com 以外）ので、`popup.js` の初期化ログにあった
+   `this.currentTab.url.includes(...)` が1箇所だけ落ちる。他の7箇所は
+   元から `url &&` で守られていた。**「権限を外す」は「値が来なくなる」なので、
+   その値を無防備に触っている箇所を先に探すこと。**
+
+5. **googleapis の `optional_host_permissions` は見送った。** 節は
+   「APIモードが任意機能である以上、本来の形」と書いているが、必須から任意へ
+   移すと**更新した瞬間に既存のAPIモード利用者の権限が剥がれ**、
+   キーを保存し直す（＝ユーザー操作で `permissions.request()` を通す）まで
+   黙って動かなくなる。掃除のフェーズで背負う risk ではないと判断し、
+   パスの絞り込み（`https://www.googleapis.com/youtube/v3/*`）だけを入れて、
+   残りは下の「宿題」に回した。
+   あわせて実測で分かったこと: **Chrome は host_permissions のパスを
+   通信の可否には使わない**（同じホストの別パスへの fetch も通る）。
+   絞り込みは審査と権限表示のための**宣言**であって、技術的な封じ込めではない。
+   **指針側（「権限は宣言でもある」の節を新設）に書いた。**
+
+6. **SPA遷移を SW に移すと、content script 側の「畳む」処理が消える。**
+   以前は content script が URL の変化を見つけて自分で
+   `stopBackgroundMonitoring()` を呼んでいた（＝突き合わせの正がもう1つあった）。
+   SW の `tabs.onUpdated` なら `reconcile(tabId, videoId)` がそのまま使えるので、
+   畳む判断は SW、content script は `pageNavigated` を受けて自分の控えを捨て、
+   新しい動画で組み立て直すだけになった。根本原因A の後始末でもある。
+
+7. **実ブラウザでの確認の仕方を1段強くした。** フェーズ8 は `file://` から
+   popup を開くところまでだったが、今回は
+   **偽の `www.youtube.com`（自己署名TLS + `--host-resolver-rules` で 127.0.0.1 へ）**
+   を立てて、拡張機能を実際に読み込んだ Chromium から見せた。
+   拡張機能から見るとオリジンは本物なので、**manifest の match も
+   host_permissions も本物と同じに効く**。これで確認できたことは大きい:
+   権限を絞った状態での自動開始・取り込み・SPA遷移・ポップアップ描画、
+   `#items` の張り直し（フェーズ7 が実ブラウザ未確認のまま残していたもの）、
+   そして **#41 の完了条件「ポップアウトのチャット窓で二重注入が起きない」**
+   （`chrome.scripting.executeScript({ allFrames: true })` は content script と
+   同じ isolated world で走るので、`window.__ytSpecialCommentsInitialized` と
+   `window.__domChatInitialized` をフレームごとに直接読める）。
+   **「実ブラウザでの検証」の節に手順を書き足した。**
+   これでも分からないのは**本物の YouTube の DOM**（セレクタの正しさ）と
+   APIモード（本物の quota と liveChatId 取得）だけになった。
+
+テストは 239 件 → **279 件**（content-script 25件・manifest 7件・
+SW の SPA遷移6件・ヘルスの宛先2件を追加。既存のうち1件だけ、
+打ち切りのテストを上の3の理由で置き換えた）。
+ハーネスは7つ（`test/helpers/content-script-harness.js` を新設）。
+
+**詰まった箇所**: 上の2（#30 を直したことで新しい競争が生まれた）が唯一。
+テストは全部通っていて、実ブラウザで動かして初めて気付いた
+（しかも1回目の実行では**たまたま通った** —— Service Worker が生きていて
+`frameId` の控えが残っていたため。2回目で落ちた）。
+**資料に書いてほしかったこと**は2つで、どちらも指針側に書いた:
+(a) `tabs.sendMessage` は全フレームに配られ、最初の応答が勝つ
+（「popup と SW の通信」の節）、(b) 権限は宣言でもあり、
+host_permissions のパスは通信の可否には効かない（「権限は宣言でもある」の節を新設）。
+
+---
+
+## この再設計のあとに残っている宿題
+
+フェーズ0〜9 で 46件の欠陥と6つの根本原因は片付いた。
+**以下は「やらないと決めた」ものと「やれなかった」もの。** 行番号は 2026-09-08 時点。
+
+### 1. i18n（英語対応）
+
+約125個の日本語リテラルが `popup.js` / `options.js` / `content-script.js` /
+`dom-chat.js` と `manifest.json` に散っている。`chrome.i18n` + `_locales/` へ
+移すのは独立した計画にすべき（「やらないこと」に挙げたまま）。
+ストアの掲載文（`docs/store-listing.md`）も対で要る。
+
+### 2. `optional_host_permissions`（googleapis）
+
+`manifest.json:9` の `https://www.googleapis.com/youtube/v3/*` は必須のまま。
+任意へ移すなら、`options.js` の APIキー保存（`options.js:199` 付近）で
+`chrome.permissions.request()` をユーザー操作の中から呼び、
+**既に使っている人の権限が剥がれる**ことを更新時に案内する導線が要る。
+`service-worker.js:1160`（`liveChat/messages`）と `1771`（`videos`）、
+`options.js:225`（疎通テスト）が、権限が無いときに出す文言も要る。
+
+### 3. 実ブラウザでしか確認できないもの（未確認のまま）
+
+- **本物の YouTube の DOM に対するセレクタの正しさ**（`dom-chat.js:62` の
+  `SELECTORS` 19個）。偽 YouTube でも `#T1` `#T2` は塞げない
+- **「上位のチャット ↔ チャット」の切り替え**（#2 の完了条件）。
+  `#items` の差し替えは偽 YouTube で確認できたが、YouTube 側の実際の
+  切り替え操作は本物でしか踏めない
+- **APIモード全体**。quota エラーからの復帰（番人）、`liveChatId` の取得、
+  `pageToken` の続き。APIキーが要るのでこの環境では動かせない
+- **長時間（1時間以上）の運転**と、**IndexedDB の実際の書き込み量**
+  （`chrome.storage.local.getBytesInUse` との前後比較）
+
+### 4. テストの残った盲点
+
+閉じたもの: #T3 #T4（フェーズ7）/ #T7 #T8（フェーズ5・8）/ #T9（フェーズ7）/
+**#T6 #T11（フェーズ9）**。残っているもの:
+
+- **#T1 / #T2**: セレクタの正しさは原理的に検証できない
+  （ハーネスは「知らないセレクタなら例外」までしかできない）
+- **#T5**: `chrome.runtime.lastError` が固定 `null` なので、
+  `dom-chat.js` の送信リトライ（`dom-chat.js:589` 付近）が未実行
+- **#T10**: dom-chat の送信ペイロードと SW の期待の**契約テストが無い**。
+  両側が別々の想定でモックされている（実ブラウザの e2e で1本だけ通したが、
+  リポジトリには入れていない）
+
+### 5. 通信路がまだ2本ある
+
+popup ↔ SW はポート（フェーズ6b）だが、content script ↔ SW は
+`sendMessage` のまま。そのため content script 側にだけ、ポート化で消えたはずの
+道具が残っている: `waitForServiceWorker` の ping 10回（`content-script.js:147`）と
+`sendMessageWithRetry`（`content-script.js:559` 付近、8箇所から呼ばれる）。
+popup 側の `sendTabMessageWithTimeout`（`popup.js:743`）/
+`sendTabMessageWithRetry`（`popup.js:2564`）も同じ理由で残っている。
+content script をポートにするなら、これらは一括で消える。
+**ただし「タブの中のスクリプト」への到達手段は `tabs.sendMessage` しかない**ので、
+移すのは content script → SW の向きだけになる（往復の非対称が増える）。
+
+### 6. 見た目・機能の宿題
+
+- **options ページのフォントスタックが popup と別**（`options.css` の `body`）。
+  揃えると見た目が変わるので、フェーズ8 の「見た目を変えない」から外してある
+- **同名ユーザーのアバターが混ざる**（`docs/avatar-design.md` §3.1 が自認）。
+  `avatars` ストアの keyPath が `['videoId', 'displayName']` なので、
+  同じ表示名の別人は上書きし合う
+- **保持枠の上限（`primary` 20,000 / `bulk` 50,000）は実測していない**
+  （`shared/store.js:48`）。長時間配信での実際の件数を見て決め直す価値がある
+
+### 7. リリース
+
+**フェーズ9 の範囲外。** バージョン上げ（`manifest.json:4` は 1.12.5 のまま）、
+zip の生成（`/release`）、ストア掲載文の反映（`docs/store-listing.md` は
+更新済み・貼り付けは手動）、スクリーンショットの差し替え。
+再設計で挙動が変わっている（フィルターが過去分にも効く、履歴の保存先が変わる、
+権限が減る）ので、**更新の告知文には少なくとも「権限が減ったこと」を書くこと。**
+
 ---
 
 ## 実ブラウザでの検証
@@ -2344,6 +2564,8 @@ CSS の効き方とタブ移動は本物のレンダリングエンジンで確�
 | APIモードで quota エラーを踏んだあと、放置して再開する | 6a |
 | Tab キーだけでフィルターとダークモードを操作できる | 8 |
 | 書き込み量が減っている（`chrome.storage.local.getBytesInUse(null)` と DevTools で前後比較） | 3 |
+| 権限を絞った状態で DOMモードとAPIモードの両方が動く | 9 |
+| **ポップアウトのチャット窓で二重注入が起きない**（#41） | 9 |
 
 **UI の確認は、途中まで自動化できる**（フェーズ8で判明）。`popup.html` /
 `options.html` は `chrome.*` を最小限スタブすれば `file://` から直接開けるので、
@@ -2353,6 +2575,40 @@ CSS の効き方とタブ移動は本物のレンダリングエンジンで確�
 ただし **Service Worker も YouTube も居ない**ので、これは
 `chrome://extensions` からの読み込み確認の代わりにはならない
 （この道具立てはリポジトリに入れていない。必要なときに書き捨てればよい）。
+
+**もう1段強い自動確認もできる**（フェーズ9で判明）。**偽の `www.youtube.com`**
+を立てて、拡張機能を実際に読み込んだ Chromium にそれを見せる。
+
+1. 自己署名の証明書を作り（`CN=www.youtube.com`）、`https://127.0.0.1:8443` で
+   `/watch` と `/live_chat` を返すだけの Node の https サーバを立てる
+2. Chromium を
+   `--load-extension=src`
+   `--host-resolver-rules="MAP www.youtube.com 127.0.0.1:8443"`
+   `--ignore-certificate-errors` `--no-proxy-server` で起動する
+
+拡張機能から見るとオリジンは本物なので、**manifest の `matches` も
+`host_permissions` もそのまま効く**。Service Worker も content script も本物で動く。
+これで機械的に確かめられるもの:
+
+- 権限を絞った状態で拡張機能が読み込めること、`tab.url` が読めること
+- **どのフレームに何が注入されたか**（#41）——
+  `chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func })` は
+  content script と**同じ isolated world** で走るので、
+  `window.__ytSpecialCommentsInitialized` / `window.__domChatInitialized` を
+  フレームごとに直接読める
+- DOMモードの自動開始 → 取り込み → IndexedDB（`self.YTFStore.read(videoId)` を
+  Service Worker の中で評価する）→ popup の描画まで、ひと続きで
+- `#items` の差し替え（フェーズ7 の自己修復）と、SPA遷移（#24）
+
+**これでも分からないのは、本物の YouTube の DOM（セレクタの正しさ）と
+APIモード（本物の quota・`liveChatId` の取得）だけ**になる。
+偽 YouTube の DOM は自分で書いたものなので、セレクタの検証にはならない
+（#T1 #T2 はここでも塞がらない）。
+
+**ポップアップを「タブとして」開いたときは、`tabs.query({ active: true })` が
+popup 自身のタブを返す**ことに注意（本物のツールバーのポップアップは
+YouTube のタブが active）。YouTube のタブを前面に戻してから popup を
+読み込み直せば、本番と同じ答えになる。
 
 ---
 
