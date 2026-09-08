@@ -37,7 +37,9 @@ function createChromeMock({
 } = {}) {
   const store = {};
   const calls = {
-    badge: [], executeScript: [], tabMessages: [], runtimeMessages: [], alarms: []
+    badge: [], executeScript: [], tabMessages: [], runtimeMessages: [], alarms: [],
+    // popup へポートで送ったもの（フェーズ6b）。開いている popup が無ければ空のまま
+    portMessages: []
   };
 
   const usedBytes = () => Buffer.byteLength(JSON.stringify(store));
@@ -74,6 +76,8 @@ function createChromeMock({
       lastError: null,
       getManifest: () => ({ version: 'test', content_scripts: contentScripts }),
       onMessage: { addListener: fn => { chrome.__onMessage = fn; } },
+      // popup とのポート（フェーズ6b）。__connectPopup() で popup が繋いだことにする
+      onConnect: { addListener: fn => { chrome.__onConnect = fn; } },
       onInstalled: { addListener: fn => { chrome.__onInstalled = fn; } },
       onStartup: { addListener: () => {} },
       onSuspend: { addListener: () => {} },
@@ -111,6 +115,54 @@ function createChromeMock({
   };
 
   chrome.__onTabRemoved = [];
+
+  // popup が開いていることにする（chrome.runtime.connect の相手側）。
+  // SW からの片道の通知は port.posted に、popup から SW への要求は
+  // port.request() で送る。切るのは port.disconnect()
+  let requestSeq = 0;
+  chrome.__connectPopup = ({ name = 'popup', sender = {} } = {}) => {
+    const listeners = { message: [], disconnect: [] };
+    const port = {
+      name,
+      sender,
+      /** SW が popup へ送ったもの */
+      posted: [],
+      postMessage(message) {
+        if (!port.connected) throw new Error('Attempting to use a disconnected port object');
+        port.posted.push(message);
+        calls.portMessages.push(message);
+      },
+      connected: true,
+      onMessage: { addListener: fn => listeners.message.push(fn) },
+      onDisconnect: { addListener: fn => listeners.disconnect.push(fn) },
+      /** popup 側が閉じた（SW の onDisconnect が走る） */
+      disconnect() {
+        if (!port.connected) return;
+        port.connected = false;
+        for (const fn of listeners.disconnect) fn(port);
+      },
+      /** popup から SW へ要求を送り、応答（{ requestId, payload }）を待つ */
+      request(payload) {
+        const requestId = ++requestSeq;
+        return new Promise(resolve => {
+          const seen = port.posted.length;
+          for (const fn of listeners.message) fn({ requestId, payload });
+          // 応答は非同期に来る。届いた順ではなく requestId で拾う
+          const poll = () => {
+            const hit = port.posted.slice(seen).find(m => m?.requestId === requestId);
+            if (hit) return resolve(hit.payload);
+            setTimeout(poll, 1);
+          };
+          poll();
+        });
+      },
+      /** SW からの片道の通知（応答ではないもの）だけを取り出す */
+      notifications() { return port.posted.filter(m => m?.requestId === undefined); }
+    };
+    chrome.__onConnect?.(port);
+    return port;
+  };
+
   /** 番人の alarm を1回発火させる（本物は1分周期） */
   chrome.__fireAlarm = (name = 'monitoring-watchdog') =>
     Promise.resolve(chrome.__onAlarm?.({ name }));
@@ -146,6 +198,9 @@ function loadServiceWorker(chrome, idb = chrome.__idb || createIndexedDBMock()) 
       // 世代の確認をすり抜けるテストを書いてしまう。世代ごと作る口も置く
       beginSession: (patch) => beginSession(patch),
       reconcile,
+      // popup が開いているか（ポートがあるか）。フェーズ6b
+      isPopupOpen,
+      notifyPopup,
       loadSession,
       saveSession,
       runWatchdog,

@@ -554,10 +554,12 @@ describe('アバターの取り込み', () => {
   });
 
   test('新着通知には追加分のアバターだけが載る', async () => {
-    const { chrome, calls } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
     const sw = loadServiceWorker(chrome);
     await settle();
     startedSession(sw);
+    // 新着は popup のポートへ流れる（フェーズ6b）。開いていなければ送り先が無い
+    const popup = chrome.__connectPopup();
 
     await sw.handleDomChatMessages(
       [{ ...domComment(1), displayName: 'A', avatarUrl: AVATAR }], senderFor(3, 'V'));
@@ -566,7 +568,7 @@ describe('アバターの取り込み', () => {
 
     // Service Worker は vm コンテキスト内で動くため、そこで作られたオブジェクトは
     // プロトタイプが別realmになる。deepEqual を通すために展開して比較する
-    const deltas = calls.runtimeMessages
+    const deltas = popup.notifications()
       .filter(m => m.action === 'newSpecialComments')
       .map(m => ({ ...m.avatars }));
     assert.deepEqual(deltas[0], { A: AVATAR });
@@ -660,10 +662,11 @@ describe('アバターの取り込み', () => {
 
   test('同じアバターを送り直しても、追加分としては通知しない', async () => {
     // 末尾へ入れ直す処理を足したので、delta が毎回ふくらんでいないかを見る
-    const { chrome, calls } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
     const sw = loadServiceWorker(chrome);
     await settle();
     startedSession(sw);
+    const popup = chrome.__connectPopup();
 
     const owner = index => ({
       ...domComment(index), role: 'owner', displayName: '配信者', avatarUrl: AVATAR
@@ -671,7 +674,7 @@ describe('アバターの取り込み', () => {
     await sw.handleDomChatMessages([owner(1)], senderFor(3, 'V'));
     await sw.handleDomChatMessages([owner(2)], senderFor(3, 'V'));
 
-    const deltas = calls.runtimeMessages
+    const deltas = popup.notifications()
       .filter(m => m.action === 'newSpecialComments')
       .map(m => ({ ...m.avatars }));
     assert.deepEqual(deltas[1], {}, '同じURLを送り直している');
@@ -960,7 +963,7 @@ describe('セッション状態の一本化', () => {
 
     const state = await sendMessage(chrome, { action: 'getMonitoringState' });
     assert.equal(state.isMonitoring, false, '古い true が勝っている');
-    assert.equal(state.currentVideoId, null);
+    assert.equal(state.videoId, null);
   });
 
   test('突き合わせは reconcile 1つ', async () => {
@@ -1269,9 +1272,10 @@ describe('タブが閉じられたとき', () => {
   });
 
   test('監視中のタブが閉じられたら停止し、履歴は書き切る', async () => {
-    const { chrome, store, calls } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const { chrome, store } = createChromeMock({ tabs: watchTab(3, 'V') });
     const sw = loadServiceWorker(chrome);
     await settle();
+    const popup = chrome.__connectPopup();
     await sw.startDomMonitoring(3, 'V');
     await sw.handleDomChatMessages([domComment(1)], senderFor(3, 'V'));
 
@@ -1282,7 +1286,7 @@ describe('タブが閉じられたとき', () => {
     assert.equal(store.monitoringState.isMonitoring, false);
     assert.deepEqual([...(await sw.store.read('V')).map(c => c.id)], ['dom_1'],
       '保存待ちのコメントが失われている');
-    assert.ok(calls.runtimeMessages.some(m => m.action === 'monitoringAutoStopped'),
+    assert.ok(popup.notifications().some(m => m.action === 'monitoringAutoStopped'),
       'popup へ通知していない');
   });
 
@@ -1296,5 +1300,139 @@ describe('タブが閉じられたとき', () => {
     await settle();
 
     assert.equal(sw.session.isMonitoring, true);
+  });
+});
+
+describe('popup とのポート（フェーズ6b）', () => {
+  const startedSession = sw => sw.setState({
+    isMonitoring: true, chatMode: 'dom', tabId: 3, videoId: 'V',
+    processedMessageIds: new Set(), avatarsByAuthor: {}
+  });
+
+  test('ポートが繋がっている間だけ「popup は開いている」と分かる', async () => {
+    // 以前は sendMessage を撃って「Receiving end does not exist」を握りつぶすしかなく、
+    // Service Worker から popup の生死は見えなかった
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    assert.equal(sw.isPopupOpen(), false, '繋ぐ前から開いていることになっている');
+
+    const popup = chrome.__connectPopup();
+    assert.equal(sw.isPopupOpen(), true);
+
+    popup.disconnect();
+    assert.equal(sw.isPopupOpen(), false, 'popup を閉じても開いていることになっている');
+  });
+
+  test('popup 以外の名前のポートは覚えない', async () => {
+    const { chrome } = createChromeMock();
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    chrome.__connectPopup({ name: 'something-else' });
+    assert.equal(sw.isPopupOpen(), false);
+  });
+
+  test('閉じた popup へ送っても落ちず、新着はもう届かない', async () => {
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    startedSession(sw);
+
+    const popup = chrome.__connectPopup();
+    await sw.handleDomChatMessages([domComment(1)], senderFor(3, 'V'));
+    popup.disconnect();
+    await sw.handleDomChatMessages([domComment(2)], senderFor(3, 'V'));
+
+    const batches = popup.notifications().filter(m => m.action === 'newSpecialComments');
+    assert.equal(batches.length, 1, '閉じたあとの通知が届いている');
+  });
+
+  test('新着のバッチは送った順に、1回ずつ届く', async () => {
+    // 差分追加（フェーズ5）はこの順番を前提にしている
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    startedSession(sw);
+    const popup = chrome.__connectPopup();
+
+    await sw.handleDomChatMessages([domComment(1), domComment(2)], senderFor(3, 'V'));
+    await sw.handleDomChatMessages([domComment(3)], senderFor(3, 'V'));
+
+    const ids = popup.notifications()
+      .filter(m => m.action === 'newSpecialComments')
+      .map(m => [...m.comments].map(c => c.id));
+    assert.deepEqual(ids, [['dom_1', 'dom_2'], ['dom_3']]);
+  });
+
+  test('開いている popup が複数あれば、どちらにも届く', async () => {
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    startedSession(sw);
+    const first = chrome.__connectPopup();
+    const second = chrome.__connectPopup();
+
+    await sw.handleDomChatMessages([domComment(1)], senderFor(3, 'V'));
+
+    for (const popup of [first, second]) {
+      assert.equal(popup.notifications().filter(m => m.action === 'newSpecialComments').length, 1);
+    }
+  });
+
+  test('ポートから来た要求にも、onMessage と同じ答えが返る', async () => {
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    await sw.startDomMonitoring(3, 'V');
+
+    const popup = chrome.__connectPopup();
+    const viaPort = await popup.request({ action: 'getMonitoringState' });
+    const viaMessage = await sendMessage(chrome, { action: 'getMonitoringState' });
+
+    assert.equal(viaPort.isMonitoring, true);
+    assert.equal(viaPort.videoId, 'V');
+    assert.deepEqual({ ...viaPort }, { ...viaMessage });
+  });
+
+  test('知らない action にも応答は返る（popup の待ちが宙に浮かない）', async () => {
+    const { chrome } = createChromeMock();
+    loadServiceWorker(chrome);
+    await settle();
+
+    const popup = chrome.__connectPopup();
+    assert.equal(await popup.request({ action: 'まだ無い機能' }), undefined);
+  });
+
+  test('処理が失敗しても、応答は { success: false } で返る', async () => {
+    const { chrome } = createChromeMock();
+    loadServiceWorker(chrome);
+    await settle();
+    // APIキーが無いので getLiveChatIdFromVideo は必ず投げる
+    const popup = chrome.__connectPopup();
+    const response = await popup.request({ action: 'getLiveChatIdFromVideo', videoId: 'V' });
+    assert.equal(response.success, false);
+    assert.match(response.error, /API key/);
+  });
+
+  test('reconcileSession は突き合わせの語をそのまま返す', async () => {
+    // popup が自前で動画IDを比べるのをやめ、SW の reconcile に聞くようになった
+    // （根本原因A の突き合わせ分岐、5本目）
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    const popup = chrome.__connectPopup();
+
+    assert.equal((await popup.request({ action: 'reconcileSession', tabId: 3, videoId: 'V' })).state,
+      'idle');
+
+    await sw.startDomMonitoring(3, 'V');
+    const ask = (tabId, videoId) =>
+      popup.request({ action: 'reconcileSession', tabId, videoId }).then(r => r.state);
+
+    assert.equal(await ask(3, 'V'), 'same');
+    assert.equal(await ask(3, 'OTHER_VIDEO'), 'changed');
+    assert.equal(await ask(9, 'V'), 'other');
   });
 });

@@ -240,19 +240,73 @@ function createFakeDocument({ ids = idsInPopupHtml(), strictIds = true } = {}) {
 }
 
 /**
+ * chrome.runtime.connect が返すポートの偽物（フェーズ6b）。
+ *
+ * popup は SW との通信をこのポート1本に集約している。要求は
+ * `{ requestId, payload }` で送られ、応答は同じ requestId を載せて返る。
+ * 片道の通知（新着コメント等）は requestId を持たない。
+ *
+ * **既定では応答を返さない。** 本物の Service Worker が居ない状態を再現するためで、
+ * これにより popup の初期化は最初の要求で止まったままになり、テストは
+ * 組み立てられた DOM だけを見られる（ポート化の前は ping の待ちが同じ役をしていた）。
+ * 応答が要るテストは loadPopup({ onRequest }) で作る。
+ */
+function createFakePort({ name, onRequest, calls }) {
+  const listeners = { message: [], disconnect: [] };
+  const port = {
+    name,
+    connected: true,
+    /** popup から SW へ送られたもの（{ requestId, payload } の列） */
+    posted: [],
+
+    postMessage(message) {
+      if (!port.connected) throw new Error('Attempting to use a disconnected port object');
+      port.posted.push(message);
+      calls.portRequests.push(message);
+      if (!onRequest) return;
+      const payload = onRequest(message.payload, message);
+      if (payload === undefined) return;
+      // 本物と同じく、応答は必ず非同期に返る
+      Promise.resolve(payload).then(value =>
+        port.__deliver({ requestId: message.requestId, payload: value }));
+    },
+
+    onMessage: { addListener: fn => listeners.message.push(fn) },
+    onDisconnect: { addListener: fn => listeners.disconnect.push(fn) },
+    /** popup 側から切る（本物の port.disconnect） */
+    disconnect() { port.connected = false; },
+
+    /** SW から popup へ流す（応答も片道の通知もここを通る） */
+    __deliver(message) {
+      for (const fn of listeners.message) fn(message);
+    },
+    /** SW 側が落ちた／拡張機能が再読み込みされた（popup の onDisconnect を撃つ） */
+    __disconnect() {
+      if (!port.connected) return;
+      port.connected = false;
+      for (const fn of listeners.disconnect) fn(port);
+    }
+  };
+  return port;
+}
+
+/**
  * popup.js が触る chrome API の最小モック。
  *
  * 応答の作り込みは描画テスト（フェーズ5）の担当。ここでは
  * 「DOMContentLoaded を流しても API が undefined で落ちない」ところまでを用意する。
  *
  * @param {object}   [options]
- * @param {object}   [options.storage]  storage.local の中身
- * @param {Function} [options.onMessage] runtime.sendMessage への応答を作る
+ * @param {object}   [options.storage]   storage.local の中身
+ * @param {Function} [options.onRequest] ポートに来た要求への応答を作る。
+ *                                       undefined を返すと応答しない（既定）
  * @param {object[]} [options.queryTabs] tabs.query() が返すタブ一覧
+ * @param {Function} [options.onConnect] connect が失敗する状況を作る（throw させる）
  */
-function createChromeMock({ storage = {}, onMessage = () => undefined, queryTabs = [] } = {}) {
-  const calls = { runtimeMessages: [], tabMessages: [] };
-  const listeners = [];
+function createChromeMock({
+  storage = {}, onRequest = null, queryTabs = [], onConnect = null
+} = {}) {
+  const calls = { runtimeMessages: [], tabMessages: [], portRequests: [], ports: [] };
 
   const chrome = {
     runtime: {
@@ -261,11 +315,18 @@ function createChromeMock({ storage = {}, onMessage = () => undefined, queryTabs
       getManifest: () => ({ version: 'test' }),
       getURL: relativePath => `chrome-extension://test-extension-id/${relativePath}`,
       openOptionsPage: () => {},
+      // popup ↔ SW はポート1本（フェーズ6b）。sendMessage は残してあるが、
+      // popup からは1回も呼ばれない（呼ばれたら calls.runtimeMessages に出る）
       async sendMessage(message) {
         calls.runtimeMessages.push(message);
-        return onMessage(message);
+        return undefined;
       },
-      onMessage: { addListener: fn => listeners.push(fn) }
+      connect(info = {}) {
+        if (onConnect) onConnect(info);
+        const port = createFakePort({ name: info.name, onRequest, calls });
+        calls.ports.push(port);
+        return port;
+      }
     },
     tabs: {
       async query() { return structuredClone(queryTabs); },
@@ -292,10 +353,16 @@ function createChromeMock({ storage = {}, onMessage = () => undefined, queryTabs
       },
       onChanged: { addListener() {} }
     },
+    /** いま繋がっているポート（張り直されたら新しい方） */
+    __port() { return calls.ports[calls.ports.length - 1] || null; },
+    /** 張られたポートの本数。#32 の二重登録はここで見つかる */
+    __portCount() { return calls.ports.length; },
     // SW から popup へのメッセージを流す（popup 側の受け口を叩く）
     __deliver(message) {
-      for (const listener of listeners) listener(message, {}, () => {});
+      chrome.__port()?.__deliver(message);
     },
+    /** SW 側からポートを切る（拡張機能の再読み込み相当） */
+    __disconnect() { chrome.__port()?.__disconnect(); },
     __calls: calls
   };
 
@@ -309,22 +376,28 @@ function createChromeMock({ storage = {}, onMessage = () => undefined, queryTabs
  * 描画まで見たいときは document.fire('DOMContentLoaded') を呼ぶか、
  * context.__popup.PopupController を直接 new する。
  *
- * setTimeout は dom-chat ハーネスと同じく「積むだけ」にしてある。実時間で回すと、
- * 初期化が Service Worker への ping を8回＋1秒・2秒の待ちを挟むため、
- * テスト1本で十数秒かかる。積むだけにしておくと初期化は最初の待ちで止まったまま
- * になり、同期的に組み立てられた部分だけを見られる。
+ * setTimeout は dom-chat ハーネスと同じく「積むだけ」にしてある。実時間で回すと
+ * 描画の遅延（検索のデバウンス・成功／エラー表示の自動消去・requestAnimationFrame の
+ * 代わり）がそのぶん待たされ、テストが遅くなるうえ順番も見えなくなるため。
+ * テストからは tick() で1つずつ進める。
  *
- * @param {object} [options]
- * @param {object} [options.document] 差し替える偽 document（既定は createFakeDocument()）
- * @param {object} [options.chrome]   差し替える chrome モック（既定は createChromeMock()）
- * @param {object} [options.storage]  chrome.storage.local が返す中身
- * @param {number} [options.maxCommentsToPopup] メモリ上限を小さくする
+ * 初期化は、ポートへの最初の要求（getCommentFilters）で止まったままになる ——
+ * 偽ポートは既定で応答を返さないため（createFakePort の但し書き）。
+ * フェーズ6b より前は「Service Worker への ping を8回投げる待ち」が同じ役をしていた。
+ *
+ * @param {object}   [options]
+ * @param {object}   [options.document] 差し替える偽 document（既定は createFakeDocument()）
+ * @param {object}   [options.chrome]   差し替える chrome モック（既定は createChromeMock()）
+ * @param {object}   [options.storage]  chrome.storage.local が返す中身
+ * @param {Function} [options.onRequest] ポートに来た要求への応答を作る
+ * @param {number}   [options.maxCommentsToPopup] メモリ上限を小さくする
  *   （10,000件を積まずに切り詰めの挙動を見るため。store 側の LIMITS と同じ流儀）
  */
 function loadPopup({
   document = createFakeDocument(),
   storage = {},
-  chrome = createChromeMock({ storage }),
+  onRequest = null,
+  chrome = createChromeMock({ storage, onRequest }),
   maxCommentsToPopup = null
 } = {}) {
   // popup は bulk 枠（メンバー・一般）を IndexedDB から直接読む（決定4）。
