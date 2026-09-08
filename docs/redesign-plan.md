@@ -2244,16 +2244,17 @@ CSS の効き方とタブ移動は本物のレンダリングエンジンで確�
   - `options/options.html`（全169行）: `theme.js` の読み込み 10（`<head>`）
   - `shared/theme.js`（全74行・新設）: `applyTheme` 46 / `applyCachedTheme` 54 /
     `loadTheme` 58 / 読み込み時の実行 71-72
-  - `content/content-script.js`（全634行・フェーズ9の主戦場）: `specialComments` 47 /
+  - `content/content-script.js`（全634行・フェーズ9の主戦場）: `specialComments` 48 /
     `setupMessageListener` 263（**#30。扱わない action でも `return true`**）/
-    `addNewComments` 387 / SPA遷移の購読 446 付近（#24）/
-    `sendMessageWithRetry` 561 / `setupVisibilityMonitoring` 610 付近（#31）
+    `addNewComments` 387 / `waitForYouTubeLive` の `setInterval` 405 /
+    SPA遷移の購読 446 付近（#24）/ `sendMessageWithRetry` 561 /
+    `setupVisibilityMonitoring` 607（#31）——
+    フェーズ9 の節の値（#81 で更新済み）と同じ
   - `manifest.json`（全48行）: `permissions` 7（`activeTab` は #40）/
     `host_permissions` 9 / `content_scripts` 15-27（match の非対称は #41）
-- **フェーズ9で権限を削るとき、`popup.js` の `chrome.tabs` 依存は
-  行が動いている**（`tabs.query` / `tabs.reload` / `tabs.sendMessage`）。
-  節が挙げている `popup.js:299 / 912 / 602` はもう当たらないので、
-  `grep -n "chrome.tabs" src/popup/popup.js` で引き直すこと。
+- **フェーズ9で権限を削るとき、`popup.js` の `chrome.tabs` 依存は6箇所ある**
+  （節が挙げていた `popup.js:299 / 912 / 602` はもう当たらないので、
+  フェーズ9 の「注意」を実測値に直しておいた）。
 - **`shared/theme.js` を `importScripts` しないこと。** `document` と
   `localStorage` を使うので Service Worker では即死する。
   ESLint も `src/shared/theme.js` だけ別のグローバルで見ている。
@@ -2313,7 +2314,9 @@ CSS の効き方とタブ移動は本物のレンダリングエンジンで確�
 **注意**
 
 - **権限の削減は挙動に影響しうる。** 1つずつ外して実ブラウザで確認すること。
-  特に `tabs` は `popup.js:299` / `popup.js:912` / `popup.js:602` が依存している
+  特に `tabs` は popup の6箇所が依存している（フェーズ8後の実測:
+  `tabs.query` `popup:330` `popup:1071` / `tabs.reload` `popup:729` `popup:1022` /
+  `tabs.sendMessage` `popup:747` `popup:2592`）
 
 ---
 
