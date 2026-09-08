@@ -97,6 +97,24 @@ describe('manifest.json', () => {
     assert.deepEqual(chatEntry.js, ['shared/comment.js', 'content/dom-chat.js']);
   });
 
+  test('description は docs/store-listing.md の「短い説明」と同一（ストアがこれを使う）', () => {
+    // ストアのカードに出るのは manifest の description。掲載文の正は store-listing.md なので、
+    // 片方だけ直すと「掲載文を直したのにストアの表示が変わらない」が起きる
+    const listing = fs.readFileSync(path.join(__dirname, '..', 'docs', 'store-listing.md'), 'utf8');
+    const block = listing.match(/## 短い説明[^\n]*\n[\s\S]*?```\n([\s\S]*?)\n```/);
+    assert.ok(block, 'store-listing.md の「短い説明」のコードブロックが読めない');
+    assert.equal(manifest.description, block[1]);
+    assert.ok(manifest.description.length <= 132,
+      `短い説明が132文字を超えている: ${manifest.description.length}`);
+  });
+
+  test('version は README の冒頭と揃っている（#44）', () => {
+    const readme = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
+    const shown = readme.match(/\*\*バージョン:\*\* v(\d+\.\d+\.\d+)/);
+    assert.ok(shown, 'README の冒頭にバージョンが見つからない');
+    assert.equal(shown[1], manifest.version);
+  });
+
   test('参照しているファイルが実在する', () => {
     const referenced = [
       manifest.background.service_worker,

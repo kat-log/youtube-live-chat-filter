@@ -25,6 +25,11 @@
 - `docs/` - 設計書などのドキュメント
   - `audit-2026-09.md` - **全体監査（2026-09）。46件の欠陥を行番号つきで列挙**
   - `redesign-plan.md` - **再設計計画。決定事項とフェーズ0〜9の実行手順**
+  - `store-listing.md` - **ストア掲載文の正**（短い説明は `manifest.json` の `description` と同一文字列）。
+    更新の告知文と、ストア審査用の権限の説明もここ
+  - `release-checklist.md` - **リリース手順と確認項目**（機械で見られるもの／偽 YouTube で見られるもの／
+    実配信でしか踏めないものの3段）と、各リリースの実施記録
+- `CHANGELOG.md` - **利用者から見える変更だけ**を書く。2.0.0 から
 - `.github/workflows/ci.yml` - push と PR で lint とテストを回す
 - `eslint.config.js` - ESLint のフラット設定（ルールは最低限の2つ）
 - `src/` - Chrome拡張機能のソースコード
