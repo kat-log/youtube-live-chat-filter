@@ -3,7 +3,7 @@
 ストアの掲載文はこのファイルを正とする。機能を追加・変更したら、コードと一緒にここも更新すること。
 （ストア側への反映は手動。デベロッパーダッシュボードに貼り付ける）
 
-最終更新: 2026-09-07（v1.12.5 時点）
+最終更新: 2026-09-08（v1.12.5 / 再設計フェーズ9 時点）
 
 v1.11.0 でスーパーチャット・スーパーステッカーとメンバーシップ（新規加入・継続・ギフト）を
 取り込むようになった。「役割（配信者／モデレーター／メンバー／一般）」とは別に「種別」の軸が増え、
@@ -91,15 +91,17 @@ YouTubeのライブ配信では大量のコメントが流れるため、重要�
 | APIキー不要が標準 | `popup.js` / `service-worker.js` とも `chatMode` の既定は `'dom'`（`result.chatMode \|\| 'dom'`） |
 | 開くと自動で始まる | `autoStart` の既定は `true`（`service-worker.js` の `result.autoStart ?? true`）。DOMモードは `content-script.js` の `tryDomModeAutoStart()` がAPIキー無しで開始する |
 | APIモードは自動開始にキーが要る | `content-script.js` の `tryAutoStart()` はキー未設定ならスキップする |
-| 履歴は直近5配信ぶん | `service-worker.js` の `MAX_HISTORY_VIDEOS = 5`（1配信あたり `MAX_COMMENTS_PER_VIDEO = 2000`） |
+| 履歴は直近5配信ぶん | `shared/store.js` の `MAX_HISTORY_VIDEOS = 5`（保存は IndexedDB。1配信あたりの上限は保持枠ごとに `primary` 20,000 / `bulk` 50,000） |
 | 開始前の過去コメントも取り込む | `service-worker.js` の `startDomMonitoring()` が `requestInitialSweep` を `force: true` で送り、`dom-chat.js` がチャット欄に残っている分を全件送り直す。取れるのはYouTubeがDOMに保持している範囲（およそ直近200件）だけで、それより前は遡れない |
 | ポップアップを開くだけで壊れない | v1.10.1 で `content-script.js` 全体を `window.__ytSpecialCommentsInitialized` ガードで囲み、`reinjectContentScripts()` は ping で生存確認して動作中のタブをスキップする。「動かないので再インストール」系のレビューにつながる挙動なので、掲載文で安定性をうたう際はここを確認する |
-| 6種類に分けて表示 | `popup.js` の `FILTER_KEYS`（`owner` / `moderator` / `sponsor` / `normal` / `superchat` / `membership`）とトグルが1対1で対応する。「特別なコメントのみ」という書き方は一般コメントを出せる現状と矛盾するため使わない |
+| 6種類に分けて表示 | `shared/comment.js` の `FILTER_KEYS`（`owner` / `moderator` / `sponsor` / `normal` / `superchat` / `membership`）とトグルが1対1で対応する。「特別なコメントのみ」という書き方は一般コメントを出せる現状と矛盾するため使わない |
+| 取り込みは全件で、フィルターは表示側だけ | 取り込み口が見るのは `shared/comment.js` の `isDisplayableKind()` だけ（再設計の決定1）。「特別なコメントだけを取得」と書くと嘘になる —— あとからトグルをONにすれば過去分も出る |
+| 権限は最小限 | `manifest.json` の `permissions` は `storage` / `unlimitedStorage` / `scripting` / `alarms` の4つ、ホストは `https://*.youtube.com/*` と `https://www.googleapis.com/youtube/v3/*` だけ（2026-09 に `activeTab` と `tabs` を削除）。審査で必ず聞かれるので、増やしたらここも直す |
 | スパチャは役割と切り離して切り替えられる | 種別を持つメッセージは種別のフィルターだけを見て、役割のフィルターは参照しない（スパチャは一般視聴者からも飛んでくるため、役割で絞ると取りこぼす） |
 | 拾うのはスパチャ／ステッカー／加入・継続・ギフト購入 | DOMモードは `dom-chat.js` の監視対象タグ（`yt-live-chat-paid-message-renderer` / `paid-sticker` / `membership-item` / `sponsorships-gift-purchase-announcement`）、APIモードは `service-worker.js` の `KIND_BY_API_TYPE`（`superChatEvent` / `superStickerEvent` / `newSponsorEvent` / `memberMilestoneChatEvent` / `membershipGiftingEvent`）。**ギフトの受領告知は受け取った人数ぶん流れて量が多いため対象外**なので、「ギフト対応」と書くときは購入の告知だけを指すことに注意 |
-| 金額・件数を表示 | 金額チップは `popup.js` の `formatApiDetail()` / `dom-chat.js` の `extractDetail()`、件数バッジは `superchat-count` / `membership-count` |
+| 金額・件数を表示 | 金額チップは `shared/comment.js` の正準形の `amountText` / `dom-chat.js` の `extractDetail()`、件数バッジは `superchat-count` / `membership-count` |
 | ステッカーの画像を表示 | `dom-chat.js` が `#sticker img` から `stickerUrl` を拾い（新着も全件スキャンも `waitForStickerImage()` で `src` が入るまで待つ）、`popup.js` の `stickerHtml()` が `img` で描く。**DOMモードのみ**で、APIモードは画像URLを返さないため出ない。URLは `safeStickerUrl()` が `STICKER_IMAGE_HOSTS` のホストだけ通す。画像が出せなくてもステッカー名は本文として残る |
-| コピーした語でも検索が引ける | `popup.js` の `normalizeForSearch()` が NFKC 正規化（全角・半角の吸収）＋ `INVISIBLE_CHARS` の除去＋ `trim()` を通す。検索対象は `comment._searchText` にキャッシュされる |
+| コピーした語でも検索が引ける | `shared/comment.js` の `normalizeForSearch()` が NFKC 正規化（全角・半角の吸収）＋不可視文字の除去＋ `trim()` を通す。検索対象の文字列（`searchText`）は取り込み時に1件ずつ作る |
 
 ### 過去に古くなっていた記述
 
