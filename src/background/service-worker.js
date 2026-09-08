@@ -1764,9 +1764,16 @@ async function getLiveChatIdFromVideo(videoId) {
     const result = await chrome.storage.local.get(['youtubeApiKey', 'chatMode']);
     const apiKey = result.youtubeApiKey;
 
+    // **chatMode が未保存なら DOMモード**（getChatMode と popup と同じ既定）。
+    // ここだけ既定を持っておらず、`result.chatMode === 'dom'` が
+    // インストール直後（未保存 = undefined）に外れていた。その結果、
+    // APIキーの要らない既定の構成で「API key not found」が投げられ、
+    // chrome://extensions のエラー欄に出ていた
+    const chatMode = result.chatMode || session.chatMode || 'dom';
+
     // DOMモードではAPIキー不要なのでスキップ
     if (!apiKey) {
-      if (result.chatMode === 'dom' || session.chatMode === 'dom') {
+      if (chatMode !== 'api') {
         debugLog('[Background] DOM mode: skipping API key check for getLiveChatIdFromVideo');
         return { liveChatId: null };
       }
