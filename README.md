@@ -1,6 +1,7 @@
 # YouTube特別コメントフィルター
 
-**バージョン:** v1.12.5（正は [`src/manifest.json`](src/manifest.json) の `version`）
+**バージョン:** v2.0.0（正は [`src/manifest.json`](src/manifest.json) の `version`。
+変更履歴は [`CHANGELOG.md`](CHANGELOG.md)）
 
 YouTubeライブチャットから、**配信者・モデレーター・メンバー・一般**のコメントと
 **スーパーチャット／スーパーステッカー／メンバーシップ**を取り込み、
