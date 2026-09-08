@@ -120,24 +120,23 @@ test('メッセージの受け口', async t => {
     assert.equal(response.liveChatId, 'CHAT1');
   });
 
-  await t.test('同期で応答した分岐でも、チャネルを開いたままにする', () => {
-    // #30。いまの姿。return true が全分岐に掛かっているので、同期で応答済みでも
-    // チャネルが開いたまま残る。フェーズ9 でここを直す
-    const h = loadContentScript();
+  await t.test('同期で応答した分岐はチャネルを開いたままにしない', async () => {
+    // #30。開いたままにすると、送信側の await が永久に解けないことがある
+    const h = await boot(loadContentScript());
 
-    assert.equal(h.deliver({ action: 'ping' }).keepOpen, true);
-    assert.equal(h.deliver({ action: 'stopMonitoring' }).keepOpen, true);
+    assert.equal(h.deliver({ action: 'ping' }).keepOpen, false);
+    assert.equal(h.deliver({ action: 'stopMonitoring' }).keepOpen, false);
   });
 
-  await t.test('知らない action には応答しないまま、チャネルだけ開く', async () => {
-    // #30 の実害。dom-chat.js 宛ての action もこのフレームに配られるので、
-    // Service Worker の問い合わせ（getDomChatHealth）が永久に返らないことがある。
-    // フェーズ7 はこれを 1.5 秒の打ち切りで凌いでいる
+  await t.test('知らない action にも必ず応答する', async () => {
+    // #30。応答しないまま return true にすると、送信側は永久に待つ。
+    // dom-chat.js 宛ての action がこのフレームにも配られるので、実際に起きる
     const h = await boot(loadContentScript());
 
     const result = h.deliver({ action: 'getDomChatHealth' });
-    assert.equal(result.responded, false);
-    assert.equal(result.keepOpen, true);
+    assert.equal(result.responded, true, '知らない action に応答していない');
+    assert.equal(result.keepOpen, false, 'チャネルを開いたままにしている');
+    assert.equal(result.response.success, false);
   });
 
   await t.test('DOMモードの開始要求は SW へ回して、その応答を返す', async () => {
@@ -154,25 +153,23 @@ test('メッセージの受け口', async t => {
 });
 
 test('SPA遷移', async t => {
-  await t.test('ページ全体の DOM 変化を購読している', async () => {
-    // #24。いまの姿。location.href という文字列を見るためだけに、watch ページ全体の
-    // DOM 変化（再生時間・視聴回数・関連動画…）を購読している。
-    // 拡張機能がやっていることの中で最も高価な処理で、disconnect も無い
+  await t.test('ページ全体の DOM 変化を購読しない', async () => {
+    // #24。location.href という文字列を見るためだけに watch ページ全体を
+    // 購読していた（拡張機能がやっていることの中で最も高価な処理）。
+    // 検知は Service Worker の chrome.tabs.onUpdated に移した
     const h = await boot(loadContentScript());
 
     const bodyWatchers = h.observations().filter(o => o.target?.__isDocumentBody);
-    assert.equal(bodyWatchers.length, 1);
-    assert.deepEqual(bodyWatchers[0].options, { childList: true, subtree: true });
-    assert.equal(h.disconnections().length, 0);
+    assert.equal(bodyWatchers.length, 0, 'document.body を購読している');
+    assert.equal(h.observations().length, 0);
   });
 
-  await t.test('URL が変わったら、取得を組み立て直す', async () => {
+  await t.test('SW からの通知で、新しい動画の取得を組み立て直す', async () => {
     const h = await boot(loadContentScript());
     const before = h.sent().length;
 
     h.navigateTo('https://www.youtube.com/watch?v=NEXT456');
-    // YouTube 側の DOM が動いたことにする（本物は絶え間なく動いている）
-    for (const { observer } of h.observations()) observer.callback([], observer);
+    h.deliver({ action: 'pageNavigated', videoId: 'NEXT456' });
     await h.advance(5000);
 
     const after = h.sent().slice(before);
@@ -181,44 +178,43 @@ test('SPA遷移', async t => {
     assert.ok(after.some(m => m.action === 'startDomMonitoring' && m.videoId === 'NEXT456'),
       '新しい動画で自動開始していない');
   });
-});
 
-test('APIモードの残骸', async t => {
-  await t.test('ページ離脱時に sendBeacon を撃つ', async () => {
-    // #31。いまの姿。chrome-extension:// への beacon は HTTP POST であって
-    // chrome.runtime.onMessage にはならないので、この要求は一度も届いたことがない。
-    // 実際にセッションを畳んでいるのは SW の tabs.onRemoved だけ
-    const h = await boot(loadContentScript({
-      onRuntimeMessage: m => {
-        if (m.action === 'getChatMode') return { chatMode: 'api' };
-        if (m.action === 'getApiKey') return { apiKey: 'KEY' };
-        if (m.action === 'getLiveChatIdFromVideo') return { liveChatId: 'CHAT1' };
-        return undefined;
-      }
-    }));
-    h.deliver({ action: 'startMonitoring', chatMode: 'api' });
-    await h.advance(10);
-
-    h.fireWindowEvent('beforeunload');
-
-    assert.equal(h.beacons().length, 1);
-    assert.match(h.beacons()[0].body, /requestAutoStop/);
-  });
-
-  await t.test('watch ページでなければ、毎秒 URL を見張り続ける', async () => {
-    // waitForYouTubeLive の setInterval（1秒ごと・30秒で打ち切り）
-    const h = await boot(loadContentScript({ url: 'https://www.youtube.com/' }));
-
-    assert.ok(h.pendingTimers() > 0, 'ポーリングのタイマーが無い');
-  });
-
-  await t.test('コメントの控えを持っている', async () => {
-    // APIモードの残骸。SW → content script → popup のリレーはフェーズ7で消えたので、
-    // この控えを配る先はもう無い（popup は SW から直接もらう）
+  await t.test('遷移の通知にも応答する（送信側を待たせない）', async () => {
     const h = await boot(loadContentScript());
 
-    const { response } = h.deliver({ action: 'getSpecialComments' });
-    assert.deepEqual(response.comments, []);
-    assert.equal(response.videoId, 'VIDEO123');
+    const result = h.deliver({ action: 'pageNavigated', videoId: 'NEXT456' });
+    assert.equal(result.responded, true);
+    assert.equal(result.keepOpen, false);
+    await h.advance(5000);
+  });
+});
+
+test('残骸の撤去', async t => {
+  await t.test('ページ離脱時に sendBeacon を撃たない', async () => {
+    // #31。chrome-extension:// への beacon は onMessage にはならない。
+    // 一度も届いたことがない要求で、実際に畳んでいるのは tabs.onRemoved
+    const h = await boot(loadContentScript());
+
+    assert.equal(h.windowListeners('beforeunload').length, 0,
+      'beforeunload のリスナーが残っている');
+    h.fireWindowEvent('beforeunload');
+    assert.equal(h.beacons().length, 0);
+  });
+
+  await t.test('watch ページでなくても、毎秒のポーリングを回さない', async () => {
+    // waitForYouTubeLive の setInterval（1秒ごと・30秒）。SPA遷移の検知が
+    // SW に移った以上、ページ側で URL を見張り続ける必要はない
+    const h = await boot(loadContentScript({ url: 'https://www.youtube.com/' }));
+
+    assert.equal(h.pendingTimers(), 0, 'タイマーが残っている');
+  });
+
+  await t.test('コメントの控えを持たない', async () => {
+    // APIモードの残骸。SW → content script → popup のリレーはフェーズ7で消えており、
+    // 控えを配る先はもう無い（popup は SW から直接もらう）
+    const h = await boot(loadContentScript());
+
+    const result = h.deliver({ action: 'getSpecialComments' });
+    assert.equal(result.response.success, false, 'まだコメントを控えている');
   });
 });

@@ -923,22 +923,39 @@ async function recordDomChatHealth(health, sender) {
                (tabId === null || session.tabId === null || tabId === session.tabId);
   if (!mine) return { success: true };
 
+  rememberDomChatFrame(sender);
+
   domChatHealth = { ...health, videoId: session.videoId, receivedAt: Date.now() };
   notifyPopup({ action: 'domChatHealth', health: domChatHealth });
   return { success: true };
 }
 
-// タブへの問い合わせは必ず打ち切る。同じタブの content-script.js は、扱わない
-// action でも同期分岐で return true を返す（#30）ので、dom-chat.js が居ない
-// フレーム構成では応答が永久に返らないことがある —— そしてそれは、
-// まさにこの問い合わせで診断したい状況そのもの
-const HEALTH_QUERY_TIMEOUT_MS = 1500;
+// dom-chat.js が居るフレーム。report のたびに更新する。
+//
+// tabs.sendMessage はタブの**全フレーム**に配られ、応答は最初に返した1つが勝つ。
+// watch ページのトップフレームには content-script.js が居て、#30 を直したいまは
+// 知らない action にも即座に応答するので、フレームを指定しないと
+// 「unknown action」がヘルスの応答を追い越す。宛先が分かっているなら指定する。
+// 永続化はしない（session の持ち物ではない）。Service Worker が終了して
+// 失われたら、宛先なしで聞き直す ——「誰も答えない」より「別の誰かが答える」ほうが
+// 復帰は早く、答えが違えば health を持たない応答として捨てられる
+let domChatFrame = null;
 
+function rememberDomChatFrame(sender) {
+  const tabId = sender?.tab?.id ?? null;
+  const frameId = sender?.frameId ?? null;
+  if (tabId === null || frameId === null) return;
+  domChatFrame = { tabId, frameId };
+}
+
+// 打ち切りは要らなくなった（#30 を直したので、応答チャネルを開いたまま
+// 黙る content script はもう居ない）。宛先のフレームが消えていれば
+// tabs.sendMessage はその場で reject する
 function askTabForHealth(tabId) {
-  return Promise.race([
-    chrome.tabs.sendMessage(tabId, { action: 'getDomChatHealth' }),
-    new Promise(resolve => setTimeout(() => resolve(null), HEALTH_QUERY_TIMEOUT_MS))
-  ]);
+  const message = { action: 'getDomChatHealth' };
+  return domChatFrame?.tabId === tabId
+    ? chrome.tabs.sendMessage(tabId, message, { frameId: domChatFrame.frameId })
+    : chrome.tabs.sendMessage(tabId, message);
 }
 
 // popup からの問い合わせ。Service Worker が終了して控えを失っていても答えられるよう、
@@ -1361,21 +1378,12 @@ async function onPollSuccess(epoch, videoId, response) {
       // 履歴へ追記（保存の実体は IndexedDB。上限は保持枠ごとに store が見る）
       appendComments(videoId, newComments);
 
-      // popupに新しいコメントを通知（ポート。開いていなければ何も起きない）
+      // popupに新しいコメントを通知（ポート。開いていなければ何も起きない）。
+      // content script には送らない —— 控えを持つのをやめたので配る先が無い
       notifyPopup({
         action: 'newSpecialComments',
         comments: newComments
       });
-
-      // content scriptにも通知（あれば）
-      if (session.tabId) {
-        chrome.tabs.sendMessage(session.tabId, {
-          action: 'newSpecialComments',
-          comments: newComments
-        }).catch(error => {
-          debugLog('[Background] Content script not available:', error?.message);
-        });
-      }
     }
   }
 
@@ -1518,6 +1526,9 @@ async function handleDomChatMessages(messages, sender = null) {
   const senderVideoId = extractVideoIdFromUrl(sender?.url) ||
                         extractVideoIdFromUrl(sender?.tab?.url);
 
+  // 送り主のフレーム＝dom-chat.js の居場所。ヘルスを聞き返す宛先に使う
+  rememberDomChatFrame(sender);
+
   // 同じタブなのに監視対象の動画IDが食い違う場合は、復元した状態が古い。
   // そのまま処理すると別動画の履歴にコメントを積んでしまうのでセッションを張り直す
   if (session.chatMode === 'dom' && reconcile(senderTabId, senderVideoId) === 'changed') {
@@ -1590,13 +1601,6 @@ async function handleDomChatMessages(messages, sender = null) {
     comments: newMessages,
     avatars: notify
   });
-  if (session.tabId) {
-    chrome.tabs.sendMessage(session.tabId, {
-      action: 'newSpecialComments',
-      comments: newMessages,
-      avatars: notify
-    }).catch(() => {});
-  }
 }
 
 // サービスワーカーのライフサイクル管理
@@ -1628,6 +1632,41 @@ async function handleTabRemoved(tabId) {
   if (!session.isMonitoring || session.tabId !== tabId) return;
   debugLog('[Background] YouTube tab was closed, auto-stopping monitoring');
   await autoStopMonitoring('YouTubeタブが閉じられました');
+}
+
+// YouTube の SPA 遷移を拾う（#24）。
+//
+// 以前は content script が document.body 全体を MutationObserver で購読して
+// location.href の変化を見ていた。watch ページの DOM は再生時間・視聴回数・
+// 関連動画と絶え間なく動くので、拡張機能がやっていることの中で
+// いちばん高価な処理だった。ここなら**ページ側の負荷はゼロ**で同じ判定ができる。
+//
+// changeInfo.url が届くのは host_permissions を持つタブ（= youtube.com）だけ。
+// 権限を絞っても（#40）この経路は保たれる
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (!changeInfo.url) return;
+  handleTabUpdated(tabId, changeInfo.url).catch(error =>
+    debugError('[Background] Error handling tab update:', error));
+});
+
+async function handleTabUpdated(tabId, url) {
+  await ensureStateRestored();
+
+  const videoId = extractVideoIdFromUrl(url);
+
+  // 監視中のタブが別の配信へ動いたら、セッションはここで畳む。
+  // 突き合わせは reconcile ただ1つに任せる（根本原因A）。
+  // 'changed' は「同じタブで動画IDが変わった」の意味で、URLから動画IDが
+  // 読めないとき（トップページなど）は videoId が null になり 'same' に落ちる
+  if (reconcile(tabId, videoId) === 'changed') {
+    debugLog('[Background] Video changed by SPA navigation:', session.videoId, '->', videoId);
+    await autoStopMonitoring('配信が切り替わりました');
+  }
+
+  // content script は自分では遷移に気付けない。ここから知らせる。
+  // 応答は待たない（片道）。dom-chat.js が居るフレームにも配られるが、
+  // 知らない action として黙って落ちる
+  chrome.tabs.sendMessage(tabId, { action: 'pageNavigated', videoId }).catch(() => {});
 }
 
 // === 番人（chrome.alarms、1分周期） =========================================

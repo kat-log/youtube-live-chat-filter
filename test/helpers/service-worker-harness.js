@@ -95,14 +95,16 @@ function createChromeMock({
       // #35 でリスナーを1本に決めた。2本目が足されたらここで気付けるよう、
       // 登録は配列で受ける
       onRemoved: { addListener: fn => { chrome.__onTabRemoved.push(fn); } },
+      // SPA遷移の検知（#24。フェーズ9で content script から移した）
+      onUpdated: { addListener: fn => { chrome.__onTabUpdated.push(fn); } },
       async query() { return structuredClone(queryTabs); },
       async get(tabId) {
         if (!(tabId in tabs)) throw new Error(`No tab with id: ${tabId}`);
         return tabs[tabId];
       },
-      async sendMessage(tabId, message) {
-        calls.tabMessages.push({ tabId, message });
-        return onTabMessage(tabId, message);
+      async sendMessage(tabId, message, options) {
+        calls.tabMessages.push({ tabId, message, options });
+        return onTabMessage(tabId, message, options);
       }
     },
     scripting: {
@@ -115,6 +117,7 @@ function createChromeMock({
   };
 
   chrome.__onTabRemoved = [];
+  chrome.__onTabUpdated = [];
 
   // popup が開いていることにする（chrome.runtime.connect の相手側）。
   // SW からの片道の通知は port.posted に、popup から SW への要求は
@@ -168,6 +171,15 @@ function createChromeMock({
     Promise.resolve(chrome.__onAlarm?.({ name }));
   /** タブが閉じられたことを通知する（登録されたリスナー全部に配る） */
   chrome.__closeTab = tabId => Promise.all(chrome.__onTabRemoved.map(fn => fn(tabId)));
+  /**
+   * タブのURLが変わったことを通知する（YouTube の SPA遷移。#24）。
+   * 本物と同じく、URL が変わった通知にだけ changeInfo.url が載る
+   */
+  chrome.__navigateTab = (tabId, url) => {
+    for (const fn of chrome.__onTabUpdated) fn(tabId, { url }, tabs[tabId] ?? { id: tabId, url });
+    // リスナーは同期で戻り、続きは非同期に走る。呼び出し側が待てるよう settle を返す
+    return new Promise(resolve => setTimeout(resolve, 30));
+  };
 
   // コメント履歴の保存先（shared/store.js が開く IndexedDB）。
   // store という名前は storage.local のモックが先に使っているので idb と呼ぶ。
