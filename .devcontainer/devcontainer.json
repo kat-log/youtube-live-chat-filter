@@ -40,7 +40,10 @@
     "CLAUDE_CONFIG_DIR": "/home/node/.claude",
     "PATH": "${containerEnv:PATH}:/home/node/.local/bin"
   },
-  "postCreateCommand": "bash -li /workspace/.devcontainer/install-usage-monitor.sh",
+  // ESLint は devDependency（決定5）。入れておかないと、上の
+  // dbaeumer.vscode-eslint と source.fixAll.eslint は**黙って無効**のままになる。
+  // 設定と実態が食い違っている状態がいちばん有害だった（#43）
+  "postCreateCommand": "bash -li /workspace/.devcontainer/install-usage-monitor.sh && npm ci",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
   "workspaceFolder": "/workspace"
   // "postCreateCommand": "sudo /usr/local/bin/init-firewall.sh"

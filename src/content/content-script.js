@@ -39,6 +39,10 @@ function debugError(prefix, ...args) {
   console.error(prefix, ...args);
 }
 
+// 同じタブの live_chat フレームに居る dom-chat.js 宛ての action。
+// このスクリプトは宛先ではないので、横から答えない（下の理由を参照）
+const DOM_CHAT_ACTIONS = new Set(['getDomChatHealth', 'requestInitialSweep']);
+
 class YouTubeLiveChatMonitor {
   constructor() {
     // ポーリングそのものは Service Worker がやる。ここが持つのは
@@ -347,9 +351,25 @@ class YouTubeLiveChatMonitor {
         return true;
       }
 
-      // 知らない action にも必ず応答する（#30）。応答しないまま黙ると、
-      // 送信側は「The message port closed before a response was received」を
-      // 受け取り、それを一時障害とみなしてリトライを空振りする
+      // ここから先は「このフレーム宛てではない」もの。
+      //
+      // tabs.sendMessage はタブの**全フレーム**に配られ、応答は最初に返した1つが勝つ。
+      // watch ページでは、このスクリプト（トップフレーム）と dom-chat.js
+      // （live_chat の iframe）が同じタブに居るので、dom-chat.js 宛ての要求に
+      // ここが即答すると**本来の宛先の応答を追い越して**しまう。
+      // 実ブラウザで確認済み: 追い越されると Service Worker は
+      // 「読み取り状態は不明」を受け取り、popup の表示が消える。
+      //
+      // 応答しないまま false を返すのは #30 とは別で、害が無い。
+      // true（あとで応答する）と違って応答チャネルを開いたままにしないので、
+      // 他のフレームが答えればそれが返り、誰も答えなければ送信側は
+      // その場でエラーを受け取る（永久に待たされることはない）
+      if (DOM_CHAT_ACTIONS.has(action)) return false;
+
+      // 本当に知らない action には必ず応答する（#30）。応答しないまま
+      // return true で黙ると、送信側は待ち続けるか
+      //「The message port closed before a response was received」を受け取り、
+      // それを一時障害とみなしてリトライを空振りする
       sendResponse({ success: false, error: `unknown action: ${action}` });
       return false;
     });

@@ -346,7 +346,9 @@ class PopupController {
             currentTab: this.currentTab ? {
                 id: this.currentTab.id,
                 url: this.currentTab.url,
-                isYouTube: this.currentTab.url.includes('youtube.com')
+                // tabs 権限を外したので（#40）、url は host_permissions が当たる
+                // タブ（= youtube.com）でしか読めない。他所のタブでは undefined になる
+                isYouTube: this.currentTab.url?.includes('youtube.com') ?? false
             } : null,
             apiKeyLoaded: !!this.elements.apiKeyInput.value,
             filterSettings: this.commentFilters

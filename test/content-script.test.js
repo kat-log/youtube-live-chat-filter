@@ -129,14 +129,26 @@ test('メッセージの受け口', async t => {
   });
 
   await t.test('知らない action にも必ず応答する', async () => {
-    // #30。応答しないまま return true にすると、送信側は永久に待つ。
-    // dom-chat.js 宛ての action がこのフレームにも配られるので、実際に起きる
+    // #30。応答しないまま return true にすると、送信側は永久に待つ
     const h = await boot(loadContentScript());
 
-    const result = h.deliver({ action: 'getDomChatHealth' });
+    const result = h.deliver({ action: 'somethingFromANewerVersion' });
     assert.equal(result.responded, true, '知らない action に応答していない');
     assert.equal(result.keepOpen, false, 'チャネルを開いたままにしている');
     assert.equal(result.response.success, false);
+  });
+
+  await t.test('dom-chat.js 宛ての action には横から答えない', async () => {
+    // tabs.sendMessage はタブの全フレームに配られ、応答は最初の1つが勝つ。
+    // ここが即答すると、live_chat の iframe に居る dom-chat.js の応答を
+    // 追い越して「読み取り状態は不明」にしてしまう（実ブラウザで確認済み）。
+    // 応答しないだけならチャネルは開いたままにならないので、#30 の害は無い
+    for (const action of ['getDomChatHealth', 'requestInitialSweep']) {
+      const h = await boot(loadContentScript());
+      const result = h.deliver({ action });
+      assert.equal(result.responded, false, `${action} に横から答えている`);
+      assert.equal(result.keepOpen, false, `${action} でチャネルを開いたままにしている`);
+    }
   });
 
   await t.test('DOMモードの開始要求は SW へ回して、その応答を返す', async () => {
