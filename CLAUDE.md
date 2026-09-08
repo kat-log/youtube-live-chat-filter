@@ -237,6 +237,12 @@ DB: ytChatFilter
 枠の判定は `shared/comment.js` の `bucketOf()` が正で、store 側には書かない。
 保持する動画は5本（`MAX_HISTORY_VIDEOS`）。
 
+**保持枠と表示フィルターのキーは1対1で対応している**（どちらも流量で切っているため）。
+`primary` は `owner` / `moderator` / `superchat` / `membership`、
+`bulk` は `sponsor`（メンバー） / `normal`。
+そのため `primary` だけをメモリに載せていても、
+**4つのバッジの件数は常に正確に出せる**（決定4はこの性質の上に成り立っている）。
+
 更新前に `storage.local` へ保存された履歴は、Service Worker の起動時に
 **片道で** IndexedDB へ移る。旧データを消すのは書き込みを読み直して確かめた後で、
 移行を走らせるのは Service Worker だけ（popup と同時に走らせると二重に積まれる）。
