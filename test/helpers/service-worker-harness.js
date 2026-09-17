@@ -223,6 +223,7 @@ function loadServiceWorker(chrome, idb = chrome.__idb || createIndexedDBMock()) 
       cleanupOldCommentHistories,
       reinjectContentScripts,
       handleDomChatMessages,
+      handleDomChatAvatars,
       startDomMonitoring,
       stopBackgroundMonitoring,
       getCommentsHistory,

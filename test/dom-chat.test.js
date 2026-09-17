@@ -10,7 +10,7 @@ const assert = require('node:assert/strict');
 
 const {
   loadDomChat, element, stickerImage, avatarImage, emojiImage, stickerRow, textRow,
-  withAvatarHost, added
+  withLateAvatar, added
 } = require('./helpers/dom-chat-harness');
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -460,111 +460,129 @@ describe('アバターURLの取り出し', () => {
   });
 });
 
-// アバター画像が生えるのを待つ（ステッカーと同じ罠を、こちらも踏んでいた）。
+// アバターの拾い直し。
 //
-// 器（yt-img-shadow#author-photo）は行と一緒に入るが、中の img は少し遅れて
-// 生える。その場で読むと URL が取れず、popup ではほとんどの行が頭文字（@）の
-// ままになる。実配信で新着を待たないと再現しない種類の不具合
-describe('アバター画像の待ち', () => {
-  test('器はあるのに img がまだ無い行は、生えるまで待ってから送る', () => {
+// アバターの img は行と同時には生えず、いつ生えるかは YouTube の都合
+// （ビューポートに入ってから読み込む）で上限が無い。取り込みをそれに待たせると、
+// 待ち時間をいくつに決めても「コメントが遅れる」か「頭文字のまま取りこぼす」の
+// どちらかになる（0.5秒待つ版を実配信で試して、半分が間に合わなかった）。
+// そこで取り込みは待たせず、アバターだけを別便で追いかける
+describe('アバターの拾い直し', () => {
+  test('アバターが無くてもコメントは待たせずに送る', () => {
     const h = loadDomChat();
-    const row = withAvatarHost(textRow({ message: 'こんばんは' }));
+
+    h.domChat.handleMutations(added(withLateAvatar(textRow({ message: 'こんばんは' }))));
+
+    assert.equal(h.sendCount(), 1, 'アバターのためにコメントを待たせている');
+    assert.equal(h.messages()[0].message, 'こんばんは');
+    assert.equal(h.messages()[0].avatarUrl, null);
+    assert.equal(h.avatarSendCount(), 0, 'まだ生えていないのに送っている');
+  });
+
+  test('あとから生えたら、発言者ぶんのアバターだけを別便で送る', () => {
+    const h = loadDomChat();
+    const row = withLateAvatar(textRow({ displayName: '@viewer' }));
 
     h.domChat.handleMutations(added(row));
-    assert.equal(h.sendCount(), 0, 'アバターが無いうちに送ってしまっている');
-    assert.ok(h.pendingTimers() > 0, '再チェックが予約されていない');
-
-    h.tick();
-    assert.equal(h.sendCount(), 0, '空振り中に送ってしまっている');
-
     row.attachAvatar(avatarImage({ src: '//yt3.ggpht.com/AVATAR=s32-c-k' }));
     h.flush();
 
-    const messages = h.messages();
-    assert.equal(messages.length, 1);
-    assert.equal(messages[0].message, 'こんばんは');
-    assert.equal(messages[0].avatarUrl, 'https://yt3.ggpht.com/AVATAR=s64-c-k');
+    const updates = h.avatarUpdates();
+    assert.equal(updates.length, 1);
+    assert.equal(updates[0].displayName, '@viewer');
+    assert.equal(updates[0].avatarUrl, 'https://yt3.ggpht.com/AVATAR=s64-c-k');
+    assert.equal(h.sendCount(), 1, 'コメントを送り直している');
   });
 
-  test('img だけ先に生えて src がまだ空でも待つ', () => {
+  test('枠の材料（役割・種別）を載せる。スパチャのアバターを一般の流量で失わないため', () => {
+    // 枠（primary / bulk）を決めるのは Service Worker の bucketOf なので、
+    // その材料を落とさずに渡す。落とすと有料の行のアバターが bulk 扱いになり、
+    // 一般コメントの流量で押し出される
     const h = loadDomChat();
-    const row = withAvatarHost(textRow({}));
-    row.attachAvatar(avatarImage({ src: '' }));
+    const row = withLateAvatar(stickerRow({ displayName: '@fan' }));
+    row.attachSticker();
 
     h.domChat.handleMutations(added(row));
-    assert.equal(h.sendCount(), 0, 'src が空のまま送ってしまっている');
-
     row.attachAvatar();
     h.flush();
 
-    assert.ok(h.messages()[0].avatarUrl, 'src が入ったあとも拾えていない');
+    const [update] = h.avatarUpdates();
+    assert.equal(update.kind, 'supersticker');
+    assert.equal(update.role, 'normal', 'スパチャは一般視聴者からも飛んでくる');
   });
 
-  test('生えてこなくても打ち切って取り込む（アバター無しで出す）', () => {
+  test('行が流れてくるたびに拾い直す（タイマー任せにしない）', () => {
+    // 背面タブではタイマーが間引かれる。行が動いたときにも見に行く
     const h = loadDomChat();
+    const row = withLateAvatar(textRow({ displayName: '@viewer', message: '1本目' }));
 
-    h.domChat.handleMutations(added(withAvatarHost(textRow({ message: 'こんばんは' }))));
-    h.flush();
+    h.domChat.handleMutations(added(row));
+    row.attachAvatar();
+    h.domChat.handleMutations(added(textRow({ displayName: '@other', message: '2本目' })));
 
-    const messages = h.messages();
-    assert.equal(messages.length, 1, '待ち続けてコメントごと落としている');
-    assert.equal(messages[0].message, 'こんばんは');
-    assert.equal(messages[0].avatarUrl, null);
+    assert.equal(h.avatarSendCount(), 1, '行が動いたときに拾い直していない');
   });
 
-  test('器ごと無い行は待たない（待っても出てこないため）', () => {
+  test('同じ発言者のアバターを何度も送らない', () => {
     const h = loadDomChat();
+    const row = withLateAvatar(textRow({ displayName: '@viewer', message: '1本目' }));
 
-    h.domChat.handleMutations(added(textRow({ message: 'こんばんは' })));
-
-    assert.equal(h.sendCount(), 1, 'アバターの器が無い行まで遅延させている');
-  });
-
-  test('待っている行を、あとから来た行が追い越さない', () => {
-    // popup は届いた順に積むので、追い越されるとチャットの並びが前後する
-    const h = loadDomChat();
-    const waiting = withAvatarHost(textRow({ message: '先に来た' }));
-
-    h.domChat.handleMutations(added(waiting));
-    h.domChat.handleMutations(added(textRow({ message: 'あとから来た' })));
-    assert.equal(h.sendCount(), 0, '待っている行を追い越して送っている');
-
-    waiting.attachAvatar();
-    h.flush();
-
-    assert.deepEqual(h.messages().map(msg => msg.message), ['先に来た', 'あとから来た']);
-  });
-
-  test('チャットを開いた直後の全件スキャンでも、アバターが揃うまで待つ', () => {
-    const row = withAvatarHost(textRow({ timestamp: '23:02' }));
-    const h = loadDomChat({ rows: [row] }); // 読み込みと同時に全件スキャンが走る
-
-    assert.equal(h.sendCount(), 0, 'アバターが無いうちに送ってしまっている');
-
+    h.domChat.handleMutations(added(row));
     row.attachAvatar();
     h.flush();
 
-    const messages = h.messages();
-    assert.equal(messages.length, 1);
-    assert.ok(messages[0].avatarUrl, '待った末にアバターを拾えていない');
-    // 過去分なので投稿時刻はDOMの時刻表示（分単位）から作る
-    assert.equal(new Date(messages[0].publishedAt).getSeconds(), 0, '受信時刻で上書きしている');
+    h.domChat.handleMutations(added(textRow({ displayName: '@viewer', message: '2本目' })));
+    h.flush();
+
+    assert.equal(h.avatarSendCount(), 1, '同じ発言者を送り直している');
   });
 
-  test('ステッカーの画像をアバターとして拾わない', () => {
-    // 有料の行は器が違うので id だけで拾い直す（img#img）が、ステッカーの img も
-    // 同じ id を持つ。取り違えると、スパチャの行に投げたステッカーが顔として並ぶ
+  test('コメントに載って届いた発言者は追いかけない', () => {
     const h = loadDomChat();
-    const row = stickerRow();
-    const sticker = row.attachSticker();
-    row.children['img#img'] = sticker;
-
-    assert.equal(h.domChat.extractAvatarUrl(row), null);
+    const row = withLateAvatar(textRow({ displayName: '@viewer' }));
+    row.attachAvatar(); // 行が入った時点で生えていた（間に合った行）
 
     h.domChat.handleMutations(added(row));
     h.flush();
 
-    assert.equal(h.messages()[0].avatarUrl, null);
+    assert.ok(h.messages()[0].avatarUrl, 'コメントに載っていない');
+    assert.equal(h.avatarSendCount(), 0, '同じURLを別便でも送っている');
+  });
+
+  test('行がチャットから流れ去ったら諦める', () => {
+    // その行からはもう取れない。同じ人が次に喋れば、新しい行で追いかけ直す
+    const h = loadDomChat();
+    const row = withLateAvatar(textRow({ displayName: '@viewer' }));
+
+    h.domChat.handleMutations(added(row));
+    row.attached = false; // YouTube が古い行を捨てた
+    const ticks = h.flush();
+
+    assert.equal(h.avatarSendCount(), 0);
+    assert.ok(ticks <= 2, `諦めるまでに見に行きすぎ（${ticks}回）`);
+  });
+
+  test('外れた行でも、読めるなら拾う（URLは行ではなく発言者のもの）', () => {
+    const h = loadDomChat();
+    const row = withLateAvatar(textRow({ displayName: '@viewer' }));
+
+    h.domChat.handleMutations(added(row));
+    row.attachAvatar();
+    row.attached = false;
+    h.flush();
+
+    assert.equal(h.avatarSendCount(), 1, '読めるのに捨てている');
+  });
+
+  test('生えないまま居座る行も、いつかは諦める（見に行き続けない）', () => {
+    const h = loadDomChat();
+
+    h.domChat.handleMutations(added(withLateAvatar(textRow({ displayName: '@viewer' }))));
+    // 尽きなければ flush が例外を投げる（＝見に行くのが止まっていない）
+    h.flush();
+
+    assert.equal(h.avatarSendCount(), 0);
+    assert.equal(h.pendingTimers(), 0, '諦めたあとにもタイマーが残っている');
   });
 });
 

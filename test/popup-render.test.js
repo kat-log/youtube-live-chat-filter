@@ -85,6 +85,62 @@ describe('行の組み立て（#25 #26）', () => {
     assert.equal(rows[2].avatar.tagName, 'SPAN');
   });
 
+  test('あとから届いたアバターで、描画済みの行を埋め直す', () => {
+    // アバターの画像は行が出たあとに生えることがある（YouTube の都合。
+    // dom-chat.js が別便で送ってくる）。描画時に焼き付けたままだと、
+    // その人の行は頭文字のまま最後まで残る
+    const c = controller();
+    c.addNewComments([
+      { ...comment({ displayName: '@viewer' }), id: 'a' },
+      { ...comment({ displayName: '@viewer' }), id: 'b' },
+      { ...comment({ displayName: '@other' }), id: 'c' }
+    ]);
+    assert.equal(readCommentRows(c.elements.commentsList)[0].avatar.tagName, 'SPAN');
+
+    // アバターだけの便はコメントが空で来る
+    c.handleBackgroundMessage({
+      action: 'newSpecialComments',
+      comments: [],
+      avatars: { '@viewer': 'https://yt3.ggpht.com/abc=s64-c' }
+    });
+
+    const rows = readCommentRows(c.elements.commentsList);
+    assert.equal(rows[0].avatar.tagName, 'IMG');
+    assert.equal(rows[0].avatar.getAttribute('src'), 'https://yt3.ggpht.com/abc=s64-c');
+    assert.equal(rows[1].avatar.tagName, 'IMG', '同じ人の過去の行が埋まっていない');
+    assert.equal(rows[2].avatar.tagName, 'SPAN', '別の人の行まで差し替えている');
+  });
+
+  test('アバターだけの便では、行を作り直さない', () => {
+    const c = controller();
+    c.addNewComments([{ ...comment({ displayName: '@viewer' }), id: 'a' }]);
+    const before = c.popup.document.calls.createElement.length;
+
+    c.handleBackgroundMessage({
+      action: 'newSpecialComments',
+      comments: [],
+      avatars: { '@viewer': 'https://yt3.ggpht.com/abc=s64-c' }
+    });
+
+    // 足すのはアバター1つぶんだけ（行ごと作り直していたら何倍にもなる）
+    assert.equal(c.popup.document.calls.createElement.length - before, 1);
+  });
+
+  test('知っているアバターが同じURLで来ても、行には触らない', () => {
+    const c = controller();
+    c.addNewComments([{ ...comment({ displayName: '@viewer' }), id: 'a',
+      avatarUrl: 'https://yt3.ggpht.com/abc=s64-c' }]);
+    const before = c.popup.document.calls.createElement.length;
+
+    c.handleBackgroundMessage({
+      action: 'newSpecialComments',
+      comments: [],
+      avatars: { '@viewer': 'https://yt3.ggpht.com/abc=s64-c' }
+    });
+
+    assert.equal(c.popup.document.calls.createElement.length, before);
+  });
+
   test('ステッカーは配信ホストのものだけを img にする', () => {
     const c = controller();
     c.setComments([

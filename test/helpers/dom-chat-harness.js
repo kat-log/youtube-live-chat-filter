@@ -41,7 +41,6 @@ const ROW_SELECTORS = new Set([
   '#purchase-amount',
   '#purchase-amount-chip',
   '#author-photo img',
-  '#author-photo',
   'img#img',
   'yt-live-chat-author-badge-renderer[type="moderator"]',
   'yt-live-chat-author-badge-renderer[type="member"]'
@@ -150,6 +149,7 @@ function loadDomChat({ rows = [], hasItemList = true, pathname = '/live_chat' } 
   vm.runInContext(fs.readFileSync(DOM_CHAT_PATH, 'utf8'), context, { filename: DOM_CHAT_PATH });
 
   const commentPayloads = () => sent.filter(payload => payload.action === 'domChatMessages');
+  const avatarPayloads = () => sent.filter(payload => payload.action === 'domChatAvatars');
 
   return {
     domChat: context,
@@ -169,6 +169,9 @@ function loadDomChat({ rows = [], hasItemList = true, pathname = '/live_chat' } 
     // chrome.runtime.sendMessage で送られたコメントの一覧
     messages: () => commentPayloads().flatMap(payload => payload.messages || []),
     sendCount: () => commentPayloads().length,
+    /** あとから生えたアバターの便（action: 'domChatAvatars'）。古い順 */
+    avatarUpdates: () => avatarPayloads().flatMap(payload => payload.avatars || []),
+    avatarSendCount: () => avatarPayloads().length,
     /** ヘルス状態の報告（action: 'domChatHealth'）。古い順 */
     healthReports: () => sent.filter(p => p.action === 'domChatHealth').map(p => p.health),
     /** いま報告されている状態（まだ1度も送っていなければ null） */
@@ -239,6 +242,9 @@ function element(textContent = '', children = {}, attributes = {}) {
     textContent,
     children,
     attributes,
+    // document.contains() の答え。チャットから流れ去った行は false にする
+    // （アバターの拾い直しが「もう取れない」と判断する手掛かり）
+    attached: true,
     // extractMessageContent() が本文と絵文字を組み立てるために辿る
     childNodes: textContent ? [{ nodeType: 3, textContent }] : [],
     querySelector(selector) {
@@ -327,14 +333,14 @@ function textRow({ displayName = '@viewer', message = 'こんばんは', timesta
 }
 
 /**
- * アバターの器（yt-img-shadow#author-photo）を行に付ける。
+ * アバターがまだ生えていない行にする。
  *
- * 実物は「器が先にあり、img は yt-img-shadow があとから作る」という順序で、
- * 行がDOMに入った直後に読むとアバターURLが取れない。その状態を再現する。
- * `attachAvatar()` で img を生やせる
+ * 実物の img は yt-img-shadow があとから作る（ビューポートに入ってから
+ * 読み込むので、いつ生えるかは YouTube の都合）。行がDOMに入った直後に
+ * 読んでもURLが取れない、その状態を再現する。
+ * `attachAvatar()` で生やせる
  */
-function withAvatarHost(row) {
-  row.children['#author-photo'] = element('');
+function withLateAvatar(row) {
   row.attachAvatar = (image = avatarImage()) => {
     row.children['#author-photo img'] = image;
     return image;
@@ -347,6 +353,6 @@ const added = (...nodes) => [{ addedNodes: nodes }];
 
 module.exports = {
   loadDomChat, element, stickerImage, avatarImage, emojiImage, messageElement,
-  stickerRow, textRow, withAvatarHost, added,
+  stickerRow, textRow, withLateAvatar, added,
   ITEM_LIST_SELECTOR, ITEM_HOST_SELECTOR, ROW_SELECTORS
 };

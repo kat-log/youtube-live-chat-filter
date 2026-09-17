@@ -428,8 +428,10 @@ class PopupController {
         debugLog('[Popup] Received message:', request.action, 'with', request.comments?.length || 0, 'comments');
         if (request.action === 'newSpecialComments') {
             // formatComment がアバターを引けるよう、コメントより先に取り込む
-            Object.assign(this.avatarsByAuthor, request.avatars || {});
-            this.addNewComments(request.comments);
+            const updatedAuthors = this.mergeAvatars(request.avatars);
+            // アバターだけの便（あとから生えたぶん）はコメントが空で来る
+            if (request.comments?.length) this.addNewComments(request.comments);
+            if (updatedAuthors.size > 0) this.fillInAvatars(updatedAuthors);
         } else if (request.action === 'domChatHealth') {
             this.updateChatHealth(request.health);
         } else if (request.action === 'monitoringAutoStopped') {
@@ -1503,6 +1505,38 @@ class PopupController {
         this.renderComments();
     }
 
+    /** 受け取ったアバターを取り込み、URLが変わった発言者の名前を返す */
+    mergeAvatars(avatars) {
+        const updated = new Set();
+        for (const [displayName, url] of Object.entries(avatars || {})) {
+            if (this.avatarsByAuthor[displayName] === url) continue;
+            this.avatarsByAuthor[displayName] = url;
+            updated.add(displayName);
+        }
+        return updated;
+    }
+
+    // あとから届いたアバターで、描画済みの行を埋め直す。
+    //
+    // アバターの画像は行が出たあとに生えることがあり（YouTube の都合。
+    // dom-chat.js の「アバターの拾い直し」が別便で送ってくる）、描画のときに
+    // 焼き付けたままだと、その人の行は頭文字のまま最後まで残る。
+    // 埋めるのは1人ぶんでも、その人の過去の行がまとめて埋まる
+    fillInAvatars(displayNames) {
+        for (const comment of this.comments) {
+            if (!displayNames.has(comment.displayName)) continue;
+            const url = this.avatarsByAuthor[comment.displayName] || null;
+            if (comment.profileImageUrl === url) continue;
+            comment.profileImageUrl = url;
+            // 描画済みの行だけ差し替える（まだ行が無いものは、作るときに引かれる）
+            const row = this.rows.get(comment.id);
+            if (!row) continue;
+            const avatar = this.avatarNode(comment);
+            row.avatar.replaceWith(avatar);
+            row.avatar = avatar;
+        }
+    }
+
     // 上限を超えたぶんを古い方から落とす。行も一緒に落として、
     // メモリから消えたコメントの DOM が残らないようにする
     trimCommentsToLimit() {
@@ -1794,7 +1828,10 @@ class PopupController {
         row.setAttribute('data-comment-id', comment.id);
 
         const header = this.createNode('div', 'comment-header');
-        header.appendChild(this.avatarNode(comment));
+        // 控えておく。アバターは行を出したあとに届くことがあり（fillInAvatars）、
+        // そのときに引き直さず差し替えられるようにする
+        const avatar = this.avatarNode(comment);
+        header.appendChild(avatar);
 
         const roleBadge = this.roleBadgeNode(comment);
         if (roleBadge) header.appendChild(roleBadge);
@@ -1828,7 +1865,7 @@ class PopupController {
             row.appendChild(this.messageNode(comment));
         }
 
-        return { element: row, author, displayName: comment.displayName };
+        return { element: row, author, avatar, displayName: comment.displayName };
     }
 
     // === bulk 枠の遅延読み込み（決定4） =====================================
