@@ -551,11 +551,26 @@ describe('ハーネスのセレクタ', () => {
   });
 });
 
-describe('メンバー限定絵文字', () => {
+describe('本文の絵文字', () => {
   // 本文に混ざる絵文字は img で入っていて、文字としては alt にしか残らない。
-  // メンバー限定絵文字の alt は「:_hearts:」のような短縮名なので、
-  // 対応表を持たせないと画面に短縮名が並ぶ
-  test('本文は短縮名のまま、画像URLを対応表で持つ', () => {
+  // alt は「:_hearts:」のような短縮名のこともあれば、実配信で確かめた
+  // 「2BROOtojya」「eyes-pink-heart-shape」のようにコロンの無い裸の名前のこともある。
+  // どちらも画像に戻せないと、画面に名前の文字が並ぶ
+  test('コロンの無い名前でも対応表に載せる（実配信の形）', () => {
+    const h = loadDomChat();
+    const row = textRow({
+      messageParts: ['こんばんは', emojiImage({ alt: '2BROOtojya' }), emojiImage({ alt: '2BROAnijya' })]
+    });
+
+    h.domChat.handleMutations(added(row));
+
+    const [message] = h.messages();
+    // 本文の文字列は従来どおり alt をそのまま並べる（IDが変わらないように）
+    assert.equal(message.message, 'こんばんは2BROOtojya2BROAnijya');
+    assert.deepEqual(Object.keys({ ...message.emojis }), ['2BROOtojya', '2BROAnijya']);
+  });
+
+  test('短縮名の形でも載せる', () => {
     const h = loadDomChat();
     const row = textRow({
       messageParts: ['おめでとう', emojiImage({ alt: ':_hearts:' }), '！']
@@ -575,50 +590,67 @@ describe('メンバー限定絵文字', () => {
     const h = loadDomChat();
     const row = textRow({
       messageParts: [
-        emojiImage({ alt: ':_clap:' }),
-        emojiImage({ alt: ':_clap:' }),
-        emojiImage({ alt: ':_clap:' })
+        emojiImage({ alt: '2BROOtocry' }),
+        emojiImage({ alt: '2BROOtocry' }),
+        emojiImage({ alt: '2BROOtocry' })
       ]
     });
 
     h.domChat.handleMutations(added(row));
 
     const [message] = h.messages();
-    assert.equal(message.message, ':_clap::_clap::_clap:');
-    assert.deepEqual(Object.keys(message.emojis), [':_clap:']);
+    assert.equal(message.message, '2BROOtocry2BROOtocry2BROOtocry');
+    assert.deepEqual(Object.keys({ ...message.emojis }), ['2BROOtocry']);
   });
 
   test('Unicode の絵文字は対応表に載せない（alt が絵文字そのもので読める）', () => {
     const h = loadDomChat();
-    const row = textRow({
-      messageParts: ['やった', emojiImage({ alt: '\u{1F389}', src: '//www.youtube.com/s/gaming/emoji/x/emoji_u1f389.svg' })]
-    });
+    for (const alt of ['\u{1F527}', '\u{1F389}', '\u{1F44D}\u{1F3FD}', '1\uFE0F\u20E3']) {
+      const h2 = loadDomChat();
+      h2.domChat.handleMutations(added(textRow({
+        messageParts: ['やった', emojiImage({ alt, src: '//www.youtube.com/s/gaming/emoji/x/e.svg' })]
+      })));
 
-    h.domChat.handleMutations(added(row));
-
-    const [message] = h.messages();
-    assert.equal(message.message, 'やった\u{1F389}');
-    assert.equal(message.emojis, undefined, '画像に差し替える必要が無いものまで持っている');
+      const [message] = h2.messages();
+      assert.equal(message.message, `やった${alt}`);
+      assert.equal(message.emojis, undefined, `${alt} まで画像にしようとしている`);
+    }
+    assert.equal(h.messages().length, 0);
   });
 
-  test('YouTube 標準の :shortcut: 絵文字は静的ファイルのパスをそのまま使う', () => {
+  test('YouTube 標準の絵文字は静的ファイルのパスをそのまま使う', () => {
     const h = loadDomChat();
     const row = textRow({
-      messageParts: [emojiImage({ alt: ':yt:', src: '//www.youtube.com/s/gaming/emoji/abc/yt.svg' })]
+      messageParts: [emojiImage({
+        alt: 'eyes-pink-heart-shape',
+        src: '//www.youtube.com/s/gaming/emoji/abc/eyes.svg'
+      })]
     });
 
     h.domChat.handleMutations(added(row));
 
     assert.deepEqual({ ...h.messages()[0].emojis }, {
-      ':yt:': 'https://www.youtube.com/s/gaming/emoji/abc/yt.svg'
+      'eyes-pink-heart-shape': 'https://www.youtube.com/s/gaming/emoji/abc/eyes.svg'
     });
   });
 
-  test('配信ホスト以外のURLは載せない（本文の短縮名は残す）', () => {
+  test('チャンネルの画像置き場は番号違いのホストでも通す', () => {
+    const h = loadDomChat();
+    // yt3 / yt4 のような番号違いが実際にある。末尾一致で見ている
+    const row = textRow({ messageParts: [emojiImage({ alt: '2BROOtojya', src: '//yt4.ggpht.com/E=w24-h24-c-k-nd' })] });
+
+    h.domChat.handleMutations(added(row));
+
+    assert.deepEqual({ ...h.messages()[0].emojis }, {
+      '2BROOtojya': 'https://yt4.ggpht.com/E=w48-h48-c-k-nd'
+    });
+  });
+
+  test('配信ホスト以外のURLは載せない（本文の名前は残す・1度だけ警告する）', () => {
     for (const src of ['https://evil.example.com/e=w24-h24', 'javascript:alert(1)',
       'https://www.youtube.com/watch?v=x']) {
       const h = loadDomChat();
-      const image = emojiImage({ alt: ':_ng:', src });
+      const image = emojiImage({ alt: 'ng-emoji', src });
       image.src = src; // プロトコル相対の解決を挟まず、そのままの値を見せる
       const row = textRow({ messageParts: ['ねえ', image] });
 
@@ -626,8 +658,29 @@ describe('メンバー限定絵文字', () => {
 
       const [message] = h.messages();
       assert.equal(message.emojis, undefined, `${src} を通してしまっている`);
-      assert.equal(message.message, 'ねえ:_ng:', '画像が読めなくても本文は残す');
+      assert.equal(message.message, 'ねえng-emoji', '画像が読めなくても本文は残す');
     }
+
+    // 未知の配信元は診断できるように知らせる（同じホストで繰り返さない）
+    const h = loadDomChat();
+    const bad = () => {
+      const image = emojiImage({ alt: 'ng-emoji', src: 'https://cdn.example.com/e.png' });
+      image.src = 'https://cdn.example.com/e.png';
+      return textRow({ messageParts: [image] });
+    };
+    h.domChat.handleMutations(added(bad(), bad()));
+    assert.equal(h.warnings().filter(w => w.includes('cdn.example.com')).length, 1);
+  });
+
+  test('名前が「__proto__」でもプロトタイプを汚さない', () => {
+    const h = loadDomChat();
+    const row = textRow({ messageParts: [emojiImage({ alt: '__proto__' })] });
+
+    h.domChat.handleMutations(added(row));
+
+    const { emojis } = h.messages()[0];
+    assert.equal(Object.getPrototypeOf({}), Object.prototype);
+    assert.deepEqual(Object.keys({ ...emojis }), ['__proto__']);
   });
 
   test('絵文字を含まない普通のコメントには対応表を生やさない', () => {
@@ -640,18 +693,19 @@ describe('メンバー限定絵文字', () => {
   });
 
   test('画像URLが変わってもIDは変わらない（履歴と二重にならない）', () => {
-    const parts = alt => ['やあ', emojiImage({ alt, src: `//yt3.ggpht.com/${alt}=w24-h24-c-k-nd` })];
-
     const first = loadDomChat();
-    first.domChat.handleMutations(added(textRow({ messageParts: parts(':_wave:') })));
+    first.domChat.handleMutations(added(textRow({
+      messageParts: ['やあ', emojiImage({ alt: '2BROOtojya', src: '//yt3.ggpht.com/A=w24-h24-c-k-nd' })]
+    })));
 
-    // 同じコメントだが、YouTube が別のサイズ・別のIDで画像を出した場合
+    // 同じコメントだが、YouTube が別のIDやサイズで画像を出した場合
     const second = loadDomChat();
-    const image = emojiImage({ alt: ':_wave:', src: '//yt3.ggpht.com/OTHER=w96-h96-c-k-nd' });
-    second.domChat.handleMutations(added(textRow({ messageParts: ['やあ', image] })));
+    second.domChat.handleMutations(added(textRow({
+      messageParts: ['やあ', emojiImage({ alt: '2BROOtojya', src: '//yt3.ggpht.com/OTHER=w96-h96-c-k-nd' })]
+    })));
 
     assert.equal(second.messages()[0].id, first.messages()[0].id);
-    assert.notEqual(second.messages()[0].emojis[':_wave:'],
-      first.messages()[0].emojis[':_wave:'], '前提が崩れている（同じURLになっている）');
+    assert.notEqual(second.messages()[0].emojis['2BROOtojya'],
+      first.messages()[0].emojis['2BROOtojya'], '前提が崩れている（同じURLになっている）');
   });
 });

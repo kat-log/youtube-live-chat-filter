@@ -13,7 +13,7 @@ window.__domChatInitialized = true;
 
 // IDの作り方は shared/comment.js に集約している（再設計の決定7）。
 // manifest の js 配列で、このファイルより先に読み込まれる
-const { commentKeyOf, commentIdFor, legacyCommentIdFor, isEmojiShortcut } = self.YTF;
+const { commentKeyOf, commentIdFor, legacyCommentIdFor, isEmojiLabel } = self.YTF;
 
 // 送信済みのID。上限に達したら古い方から捨てる（全消しにすると、直後の
 // 再スキャンで全件を送り直すことになる）
@@ -394,7 +394,7 @@ function extractMessage(el, kind, useDomTimestamp = false, receivedAt = null) {
     if (detail.stickerUrl) result.stickerUrl = detail.stickerUrl;
   }
 
-  // メンバー限定絵文字の対応表。通常のコメントにも付く（本文に混ざるのはこちらが主）。
+  // 絵文字の対応表（名前 → 画像URL）。通常のコメントにも付く（本文に混ざるのはこちらが主）。
   // 使われていない行には生やさない —— 1件あたりのバイト数が全件ぶん積み上がるため。
   // ステッカーと同じく、IDの元になるキーには混ぜない
   if (detail.emojis) result.emojis = detail.emojis;
@@ -405,7 +405,7 @@ function extractMessage(el, kind, useDomTimestamp = false, receivedAt = null) {
 // 本文・金額・イベント文言の取り出し
 function extractDetail(el, kind) {
   const messageEl = el.querySelector(SELECTORS.message);
-  // 本文と、そこに混ざっていたメンバー限定絵文字（短縮名 → 画像URL）
+  // 本文と、そこに混ざっていた絵文字（名前 → 画像URL）
   const { text: message, emojis } = extractMessageContent(messageEl);
 
   if (kind === 'text') {
@@ -477,11 +477,19 @@ function extractStickerUrl(img) {
   return `${url.origin}${url.pathname.split('=')[0]}${STICKER_IMAGE_SIZE}`;
 }
 
-// メンバー限定絵文字の画像URL。表示は24pxなので、ステッカーと同じ考えで2倍を要求する。
-// YouTube 標準の :shortcut: 絵文字（:yt: など）は youtube.com の静的ファイルで、
-// サイズ指定を受け付けないのでパスをそのまま使う
-const EMOJI_IMAGE_HOSTS = ['lh3.googleusercontent.com', 'yt3.ggpht.com', 'www.youtube.com'];
+// 絵文字の画像URL。表示は24pxなので、ステッカーと同じ考えで2倍を要求する。
+//
+// メンバー限定絵文字はチャンネルの画像置き場（*.ggpht.com / *.googleusercontent.com）、
+// YouTube標準の絵文字は youtube.com の静的ファイル。後者はサイズ指定を受け付けないので
+// パスをそのまま使う。ホストはアバターと同じく末尾一致で見る（yt3 / yt4 のような
+// 番号違いが実際にある）
+const EMOJI_IMAGE_HOST_SUFFIXES = ['.ggpht.com', '.googleusercontent.com'];
+const EMOJI_STATIC_HOST = 'www.youtube.com';
 const EMOJI_IMAGE_SIZE = '=w48-h48-c-k-nd';
+
+// 通さなかったホストを1回だけ知らせる。ここで落ちると画面には名前の文字が出るだけで、
+// 「YouTubeが別の置き場に移した」のか「絵文字ではない画像だった」のか見分けが付かない
+const warnedEmojiHosts = new Set();
 
 function extractEmojiUrl(img) {
   if (!img?.src) return null;
@@ -492,13 +500,21 @@ function extractEmojiUrl(img) {
     return null;
   }
   if (url.protocol !== 'https:') return null;
-  if (!EMOJI_IMAGE_HOSTS.includes(url.hostname)) return null;
-  if (url.hostname === 'www.youtube.com') {
+
+  if (url.hostname === EMOJI_STATIC_HOST) {
     // 静的ファイルの置き場だけを通す（/s/gaming/emoji/... など）
     return url.pathname.startsWith('/s/') ? `${url.origin}${url.pathname}` : null;
   }
-  // ステッカーと同じ「/<ID>=<サイズ>」の形
-  return `${url.origin}${url.pathname.split('=')[0]}${EMOJI_IMAGE_SIZE}`;
+  if (EMOJI_IMAGE_HOST_SUFFIXES.some(suffix => url.hostname.endsWith(suffix))) {
+    // ステッカーと同じ「/<ID>=<サイズ>」の形
+    return `${url.origin}${url.pathname.split('=')[0]}${EMOJI_IMAGE_SIZE}`;
+  }
+
+  if (!warnedEmojiHosts.has(url.hostname)) {
+    warnedEmojiHosts.add(url.hostname);
+    console.warn('[YouTube Special Comments] 未知の絵文字の配信元:', url.hostname);
+  }
+  return null;
 }
 
 // 「¥500」「$5.00」などの金額表記。DOM変更で別物を拾ったときのために長さで足切りする
@@ -608,13 +624,17 @@ function textOf(el) {
 // 表示に使う文字列と、画像として出せる絵文字を1回の走査で取り出す。
 //
 // 絵文字は img で入っていて、文字としては alt しか残らない。
-// メンバー限定絵文字の alt は「:_hearts:」のような短縮名なので、そのまま出すと
-// 本文に短縮名が並ぶ。画像URLを別に持たせて、表示側で画像に戻す。
+// メンバー限定絵文字・YouTube標準の絵文字の alt は名前（「2BROOtojya」
+// 「eyes-pink-heart-shape」「:_hearts:」など、形はまちまち）なので、そのまま出すと
+// 本文に名前が並ぶ。画像URLを別に持たせて、表示側で画像に戻す。
 // Unicode の絵文字も img で来るが、alt が絵文字そのものなので対応表には載せない
+// （見分け方は shared/comment.js の isEmojiLabel()）
 function extractMessageContent(el) {
   if (!el) return { text: '', emojis: null };
   let text = '';
-  let emojis = null;
+  // 名前は外から来る文字列なので、素のオブジェクトに直接代入しない
+  // （'__proto__' が来ると代入がプロトタイプへ流れる）
+  const emojis = new Map();
   for (const node of el.childNodes) {
     if (node.nodeType === Node.TEXT_NODE) {
       text += node.textContent;
@@ -624,15 +644,17 @@ function extractMessageContent(el) {
       text += node.textContent;
       continue;
     }
+    // 本文の文字列は従来どおり alt をそのまま足す。ここに手を入れるとIDが変わる
     const alt = node.getAttribute('alt') || '';
     text += alt;
-    if (!isEmojiShortcut(alt) || (emojis && alt in emojis)) continue;
+    if (!isEmojiLabel(alt) || emojis.has(alt)) continue;
     const url = extractEmojiUrl(node);
-    if (!url) continue;
-    if (!emojis) emojis = {};
-    emojis[alt] = url;
+    if (url) emojis.set(alt, url);
   }
-  return { text: text.trim(), emojis };
+  return {
+    text: text.trim(),
+    emojis: emojis.size > 0 ? Object.fromEntries(emojis) : null
+  };
 }
 
 // Service Worker への片道の送信。コメントもヘルスもここを通る

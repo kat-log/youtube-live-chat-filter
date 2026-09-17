@@ -177,21 +177,35 @@
     return { message: fallback, amountText: null, eventText: null };
   }
 
-  // === メンバー限定絵文字 ==================================================
-  // メンバー限定絵文字は本文に画像として混ざっており、文字としては
-  // 「:_hearts:」のような短縮名でしか残らない。短縮名 → 画像URL の対応表を
-  // コメントに持たせて、表示側でだけ画像に戻す（本文の文字列は変えない）。
+  // === 絵文字（メンバー限定・YouTube標準） ==================================
+  // 本文に混ざる絵文字は画像として入っていて、文字としては img の alt しか残らない。
+  // alt には2種類あり、扱いを分ける必要がある。
   //
-  // 本文を書き換えないのは、IDの元になるキー（commentKeyOf）と検索対象
-  // （searchText）が本文から作られているため。画像URLは配信ごと・絵文字ごとに
-  // 変わりうるので、混ぜると同じコメントのIDがぶれる（ステッカーと同じ理由）。
+  //   Unicode の絵文字      alt は絵文字そのもの（🔧）  → 文字のままで読める
+  //   名前の付いた絵文字    alt は名前                   → 画像でないと読めない
   //
-  // Unicode の絵文字も img で入ってくるが、そちらは alt が絵文字そのもの
-  // （文字としてそのまま読める）なので、短縮名の形のものだけを対象にする
-  const EMOJI_SHORTCUT = /^:[^\s:]{1,64}:$/;
+  // 名前の形は**まちまち**で、短縮名（:_hearts:）のことも、コロンの無い裸の名前
+  // （2BROOtojya / eyes-pink-heart-shape）のこともある。だから「コロンで囲まれているか」
+  // では見分けられない。見分けるのは「絵文字そのものではないか」の1点だけにする。
+  //
+  // 短縮名 → 画像URL の対応表をコメントに持たせて、表示側でだけ画像に戻す。
+  // 本文の文字列は変えない —— ID の元になるキー（commentKeyOf）と検索対象
+  // （searchText）が本文から作られているので、画像URLを混ぜると同じコメントの ID が
+  // 配信ごとにぶれて履歴が二重に積まれる（ステッカーの stickerUrl と同じ理由）。
+  // 本文に足す文字（コロンなど）も同じ理由で足さない。更新前に保存した履歴と
+  // 突き合わせられなくなる
 
-  function isEmojiShortcut(text) {
-    return typeof text === 'string' && EMOJI_SHORTCUT.test(text);
+  // 絵文字そのもの（絵文字・肌の色・異体字セレクタ・ZWJ・囲み記号）だけで出来た文字列。
+  // 数字や記号だけの alt（キーキャップの「1️⃣」など）もここに入る
+  const PICTOGRAPH_ONLY = /^[\p{Extended_Pictographic}\p{Emoji_Component}\u200D\uFE0F\u20E3\s]+$/u;
+  // 名前の長さの上限。保存に載る値なので、極端に長いものは持たない
+  const MAX_EMOJI_LABEL = 64;
+
+  function isEmojiLabel(alt) {
+    return typeof alt === 'string'
+      && alt.length > 0
+      && alt.length <= MAX_EMOJI_LABEL
+      && !PICTOGRAPH_ONLY.test(alt);
   }
 
   // 1件が持てる絵文字の種類数。履歴は1動画で数万件になりうるので、
@@ -199,19 +213,20 @@
   const MAX_EMOJI_PER_COMMENT = 16;
 
   // 保存にも表示にも回る値なので、形をここで揃える。
-  // URLのホストまで見るのは表示側（popup の EMOJI_IMAGE_HOSTS）の仕事
+  // URLのホストまで見るのは表示側（popup の EMOJI_IMAGE_HOSTS）の仕事。
+  //
+  // Object.fromEntries で組み立てるのは、名前が外から来る文字列だから。
+  // normalized['__proto__'] = url と書くと代入がプロトタイプへ流れる
   function normalizeEmojis(emojis) {
     if (!emojis || typeof emojis !== 'object') return null;
-    const normalized = {};
-    let count = 0;
-    for (const [shortcut, url] of Object.entries(emojis)) {
-      if (count >= MAX_EMOJI_PER_COMMENT) break;
-      if (!isEmojiShortcut(shortcut)) continue;
+    const entries = [];
+    for (const [label, url] of Object.entries(emojis)) {
+      if (entries.length >= MAX_EMOJI_PER_COMMENT) break;
+      if (!isEmojiLabel(label)) continue;
       if (typeof url !== 'string' || !url.startsWith('https://')) continue;
-      normalized[shortcut] = url;
-      count++;
+      entries.push([label, url]);
     }
-    return count > 0 ? normalized : null;
+    return entries.length > 0 ? Object.fromEntries(entries) : null;
   }
 
   // === 検索用の正規化 ======================================================
@@ -408,7 +423,7 @@
     apiCommentRole,
     apiDetailOf,
     normalizeComment,
-    isEmojiShortcut,
+    isEmojiLabel,
     normalizeEmojis,
     normalizeForSearch,
     buildSearchText,
