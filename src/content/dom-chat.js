@@ -78,9 +78,6 @@ const SELECTORS = {
   purchaseAmount: '#purchase-amount',
   purchaseAmountChip: '#purchase-amount-chip',
   authorPhoto: '#author-photo img',
-  // アバターの器。img は yt-img-shadow があとから作るので、器だけが先にある
-  // 状態が普通にある（「まだ生えていない」と「そもそも無い」の見分けに使う）
-  authorPhotoHost: '#author-photo',
   // 有料メッセージの行はアバターの器が違う
   authorPhotoFallback: 'img#img',
   moderatorBadge: 'yt-live-chat-author-badge-renderer[type="moderator"]',
@@ -319,31 +316,31 @@ function takeMessage(node, kind, { receivedAt = null, useDomTimestamp = false, f
     return null;
   }
   noteExtracted();
+  noteAvatar(node, msg);
   if (!force && seenIds.has(msg.id)) return null;
   seenIds.add(msg.id);
   trimOldest(seenIds, MAX_SEEN_IDS);
   return msg;
 }
 
-// === 画像が生えるのを待つ待ち行列 ==========================================
+// === ステッカーの画像が生えるのを待つ待ち行列 ==============================
 //
-// 行がDOMに入った直後は、中の img がまだ無い。yt-img-shadow があとから作るため、
-// その場で読むと空になる。空振りするのは2か所:
+// 行がDOMに入った直後は、中の img がまだ無い（yt-img-shadow があとから作る）。
+// ステッカーはその場で読むと画像URLもステッカー名（alt）も空になり、
+// **名前は本文そのもの**なので、取り込みを待たせるだけの理由がある
+// （IDも本文から作るため、あとから足すと別のコメントになってしまう）。
+// 生えてこなくても打ち切って取り込む（画像なしで従来どおりの表示になる）。
+// 待っている間に投稿時刻がずれないよう、受信時刻は行を見つけた時点のものを持ち回る。
 //
-//  - ステッカー: 画像URLもステッカー名（alt）も取れない
-//  - アバター: URLが取れず、popup では頭文字（@）のままになる。こちらは
-//    ほとんどの行で起きる（間に合うのは画像が手元にある一部の行だけ）
-//
-// どちらも生えるまで待ってから取り込む。生えてこなくても打ち切って取り込む
-// （画像なしで従来どおりの表示になる）。待っている間に投稿時刻がずれないよう、
-// 受信時刻は行を見つけた時点のものを持ち回る。
+// **アバターはここで待たない。** いつ生えるかは YouTube の都合（ビューポートに
+// 入ってから読み込む）で上限が無く、待ち時間をいくつに決めても「待ちすぎ」か
+// 「取りこぼし」のどちらかになる。取り込みから切り離して別便で追いかける
+// （下の「アバターの拾い直し」）。
 //
 // 待ちは1本の列にまとめ、先頭から順に出す。行ごとに待たせると、あとから来た
 // 行が待っている行を追い越し、popup の並びが前後する（popup は届いた順に積む）。
 const PENDING_POLL_MS = 100;
-// 打ち切りまでの回数。ステッカーは本文そのものが画像に載っているので長めに待つ。
-// アバターは欠けても本文は出るので短く切る（待つあいだ後続の行も止まるため）
-const PENDING_MAX_POLLS = { supersticker: 15, default: 5 }; // 最長で約1.5秒 / 0.5秒
+const PENDING_MAX_POLLS = 15; // 最長で約1.5秒
 
 const pendingRows = [];
 let pendingPollScheduled = false;
@@ -352,18 +349,20 @@ let pendingPollScheduled = false;
 // （1秒に1回、5分を超えると1分に1回）ので、回数だけだと打ち切りがそのぶん
 // 後ろへ延びる。時間でも見ておけば、間引かれた1回で追い付ける
 function pendingRow(node, kind, options) {
-  const polls = PENDING_MAX_POLLS[kind] || PENDING_MAX_POLLS.default;
-  return { node, kind, options, polls, deadline: Date.now() + polls * PENDING_POLL_MS };
+  return {
+    node, kind, options,
+    polls: PENDING_MAX_POLLS,
+    deadline: Date.now() + PENDING_MAX_POLLS * PENDING_POLL_MS
+  };
 }
 
 function isPendingRowExpired(row) {
   return row.polls <= 0 || Date.now() >= row.deadline;
 }
 
-// 行に要る画像がすべて揃っているか。揃っていなければ待つ
+// 行に要る画像が揃っているか。待つのはステッカーだけ（アバターは待たない）
 function isRowReady({ node, kind }) {
-  if (kind === 'supersticker' && !isStickerImageReady(node)) return false;
-  return isAvatarImageReady(node);
+  return kind !== 'supersticker' || isStickerImageReady(node);
 }
 
 function queueRows(rows) {
@@ -383,6 +382,9 @@ function flushPendingRows() {
     if (msg) messages.push(msg);
   }
   if (messages.length > 0) sendMessages(messages);
+  // 行が動いたこの瞬間は、ひとつ前の行のアバターが生えている頃合いでもある。
+  // タイマー任せにしないぶん、背面タブでタイマーが間引かれても追い付ける
+  harvestAvatars();
   schedulePendingPoll();
 }
 
@@ -394,6 +396,85 @@ function schedulePendingPoll() {
     for (const row of pendingRows) row.polls--;
     flushPendingRows();
   }, PENDING_POLL_MS);
+}
+
+// === アバターの拾い直し ====================================================
+//
+// アバターの img は行と同時には生えない。yt-img-shadow がビューポートに入って
+// から作るので、**いつ生えるかは YouTube の都合で上限が無い**。取り込みを
+// それに待たせると、待ち時間をいくつに決めても「待ちすぎ（コメントが遅れる）」か
+// 「取りこぼし（頭文字のまま）」のどちらかになる。実際 0.5秒 待っても半分は
+// 間に合わなかった。
+//
+// そこで取り込みは待たせず、アバターだけを別便で追いかける。追いかける単位は
+// **発言者**（保存も popup の表示も「発言者名 -> URL」のマップが正なので、
+// 1人ぶん取れれば、その人の過去の行も表示側で埋まる）。
+//
+// 行がチャットから流れ去ったら諦める（その行からはもう取れない）。
+// 生えないまま居座る行のために回数の上限も置く。どちらで諦めても、
+// 同じ人が次に喋れば新しい行でまた追いかけ直す（取り込みは止めていないので、
+// ここで諦めても消えるのは「その人の丸い画像」だけ）。
+const MAX_PENDING_AVATARS = 200;  // 追いかけ中の発言者。行と一緒に消えるので溜まらない
+const MAX_KNOWN_AVATARS = 500;    // 送り終えた発言者。store の bulk 枠に合わせる
+const AVATAR_HARVEST_MS = 1000;
+const AVATAR_HARVEST_ROUNDS = 30; // 見に行くのは1人あたり30回まで（約30秒）
+
+// displayName -> { node, role, kind }。まだURLを取れていない発言者
+const pendingAvatars = new Map();
+// 送り終えた発言者。同じものを何度も送らないための控え
+const knownAvatars = new Set();
+let avatarHarvestScheduled = false;
+
+// 取り込んだ行を追いかけ対象に入れる。URLがその場で取れているものは
+// コメントに載って一緒に届くので、ここでは何もしない
+function noteAvatar(node, msg) {
+  if (!msg.displayName || msg.avatarUrl || knownAvatars.has(msg.displayName)) return;
+  pendingAvatars.delete(msg.displayName); // 入れ直して新しい行のほうを見る
+  pendingAvatars.set(msg.displayName, {
+    node, role: msg.role, kind: msg.kind || 'text', rounds: AVATAR_HARVEST_ROUNDS
+  });
+  trimOldest(pendingAvatars, MAX_PENDING_AVATARS);
+  scheduleAvatarHarvest();
+}
+
+// 追いかけ中の行をもう一度読む。生えていたら送り、流れ去っていたら諦める
+function harvestAvatars() {
+  if (pendingAvatars.size === 0) return;
+  const found = [];
+  for (const [displayName, entry] of pendingAvatars) {
+    const avatarUrl = extractAvatarUrl(entry.node);
+    if (avatarUrl) {
+      pendingAvatars.delete(displayName);
+      rememberAvatar(displayName);
+      // 枠（primary / bulk）の判定は Service Worker の bucketOf が正なので、
+      // その材料になる役割・種別だけを一緒に送る
+      found.push({ displayName, avatarUrl, role: entry.role, kind: entry.kind });
+      continue;
+    }
+    if (!document.contains(entry.node)) pendingAvatars.delete(displayName);
+  }
+  if (found.length > 0) sendAvatars(found);
+  scheduleAvatarHarvest();
+}
+
+// 定期の見に行き。新しい行が来ないまま生えることもあるので、行の動きとは別に回す。
+// 回数を数えるのはこちらだけ（行が流れるたびの拾い直しで数えると、
+// チャットの流量で諦めの早さが変わってしまう）
+function scheduleAvatarHarvest() {
+  if (avatarHarvestScheduled || pendingAvatars.size === 0) return;
+  avatarHarvestScheduled = true;
+  setTimeout(() => {
+    avatarHarvestScheduled = false;
+    for (const [displayName, entry] of pendingAvatars) {
+      if (--entry.rounds <= 0) pendingAvatars.delete(displayName);
+    }
+    harvestAvatars();
+  }, AVATAR_HARVEST_MS);
+}
+
+function rememberAvatar(displayName) {
+  knownAvatars.add(displayName);
+  trimOldest(knownAvatars, MAX_KNOWN_AVATARS);
 }
 
 function extractMessage(el, kind, useDomTimestamp = false, receivedAt = null) {
@@ -669,17 +750,6 @@ function avatarImgOf(el) {
   return fallback && fallback !== stickerImgOf(el) ? fallback : null;
 }
 
-// アバターを読める状態か。見るのは「URLとして取れるか」で、img の有無ではない
-// （YouTube は src を空のまま、あるいは仮の値で先に img を作ることがある）。
-//
-// 取れないときに「まだ生えていない」のか「そもそも無い行」なのかは、
-// 器（yt-img-shadow#author-photo）と img の有無で見分ける。どちらも無い行は
-// 待っても出てこないので、待たずに取り込む
-function isAvatarImageReady(el) {
-  if (extractAvatarUrl(el)) return true;
-  return !avatarImgOf(el) && !el.querySelector(SELECTORS.authorPhotoHost);
-}
-
 function textOf(el) {
   return el?.textContent?.trim() || '';
 }
@@ -735,7 +805,19 @@ function sendToBackground(payload, retries = 3) {
 }
 
 function sendMessages(messages) {
+  // コメントに載って届いたぶんは、追いかけ対象から外す
+  for (const msg of messages) {
+    if (!msg.avatarUrl || !msg.displayName) continue;
+    pendingAvatars.delete(msg.displayName);
+    rememberAvatar(msg.displayName);
+  }
   sendToBackground({ action: 'domChatMessages', messages });
+}
+
+// あとから生えたアバターだけの便。コメントとは別便で、遅れて届いても
+// popup が発言者ごとに行を埋め直す
+function sendAvatars(avatars) {
+  sendToBackground({ action: 'domChatAvatars', avatars });
 }
 
 attachObserver();

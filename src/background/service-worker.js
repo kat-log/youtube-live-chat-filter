@@ -1106,6 +1106,13 @@ function handleRequest(request, sender) {
     return Promise.resolve({ success: true });
   }
 
+  if (action === 'domChatAvatars') {
+    // コメントと同じ鎖に並べる。別の鎖にすると、セッションを張り直している
+    // 最中のアバターが古いセッションに書き込む（#5 と同じ形）
+    enqueueDomChatBatch(() => handleDomChatAvatars(request.avatars, sender));
+    return Promise.resolve({ success: true });
+  }
+
   return undefined;
 }
 
@@ -1510,14 +1517,20 @@ async function startDomMonitoring(tabId, videoId) {
 // 入口で1本の鎖に並べ、さらに epoch で世代を確かめる
 let domBatchChain = Promise.resolve();
 
-function enqueueDomChatMessages(messages, sender) {
+function enqueueDomChatBatch(run) {
   domBatchChain = domBatchChain
-    .then(() => handleDomChatMessages(messages, sender))
-    .catch(error => debugError('[Background] Error handling DOM chat messages:', error));
+    .then(run)
+    .catch(error => debugError('[Background] Error handling DOM chat batch:', error));
   return domBatchChain;
 }
 
-async function handleDomChatMessages(messages, sender = null) {
+function enqueueDomChatMessages(messages, sender) {
+  return enqueueDomChatBatch(() => handleDomChatMessages(messages, sender));
+}
+
+// dom-chat.js から来た便に共通の関門。通ったら「この世代の仕事」として
+// 控えた videoId と epoch を返す。通らなければ null（その便は捨てる）
+async function acceptDomChatBatch(sender) {
   // Service Worker終了から復帰した直後はセッションが初期値に戻っているため、
   // ガード判定の前に必ずstorageからの復元を待つ
   await ensureStateRestored();
@@ -1542,7 +1555,7 @@ async function handleDomChatMessages(messages, sender = null) {
       isMonitoring: session.isMonitoring,
       chatMode: session.chatMode
     });
-    return;
+    return null;
   }
 
   // 張り直したあとで、もう一度だけ突き合わせる。
@@ -1551,12 +1564,47 @@ async function handleDomChatMessages(messages, sender = null) {
   const verdict = reconcile(senderTabId, senderVideoId);
   if (verdict !== 'same') {
     debugLog('[Background] Dropping DOM messages from', verdict, 'tab:', senderTabId);
-    return;
+    return null;
   }
 
-  // ここから先はこの世代の仕事。await をまたいでも、控えた videoId に積む
-  const epoch = session.epoch;
-  const videoId = session.videoId;
+  // await をまたいでも、控えたこの videoId に積む
+  return { videoId: session.videoId, epoch: session.epoch };
+}
+
+// あとから生えたアバターだけの便（dom-chat.js の「アバターの拾い直し」）。
+// コメントは既に届いて表示も済んでいるので、ここでするのは発言者ごとの
+// マップの更新と、popup への差分の通知だけ
+async function handleDomChatAvatars(avatars, sender = null) {
+  const accepted = await acceptDomChatBatch(sender);
+  if (!accepted) return;
+
+  // 枠の判定は bucketOf が正（決定3）。コメントと同じ道（collectAvatars）へ
+  // 通すために、その材料だけを持った最小の形に整える
+  const entries = (Array.isArray(avatars) ? avatars : [])
+    .filter(entry => entry?.displayName && entry?.avatarUrl)
+    .map(entry => ({
+      displayName: entry.displayName,
+      avatarUrl: entry.avatarUrl,
+      bucket: bucketOf({ role: entry.role, kind: entry.kind })
+    }));
+  if (entries.length === 0) return;
+
+  const { persist, notify, evicted } = collectAvatars(entries);
+  await saveAvatars(accepted.videoId, persist, evicted);
+
+  if (Object.keys(notify).length === 0) return;
+  if (accepted.epoch !== session.epoch) {
+    debugLog('[Background] Session changed while saving avatars; skipping notify');
+    return;
+  }
+  // コメントの無い通知。popup は受け取ったアバターで、描画済みの行を埋め直す
+  notifyPopup({ action: 'newSpecialComments', comments: [], avatars: notify });
+}
+
+async function handleDomChatMessages(messages, sender = null) {
+  const accepted = await acceptDomChatBatch(sender);
+  if (!accepted) return;
+  const { videoId, epoch } = accepted;
 
   const newMessages = messages.filter(msg => {
     // 更新前に保存された履歴のIDは旧形式。dom-chat.js が両方を載せてくるので、

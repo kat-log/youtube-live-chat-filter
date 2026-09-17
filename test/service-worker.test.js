@@ -575,6 +575,73 @@ describe('アバターの取り込み', () => {
     assert.deepEqual(deltas[1], {}, '既知のアバターを毎回送り直している');
   });
 
+  test('あとから届いたアバターだけの便も、同じマップに入って popup へ流れる', async () => {
+    // アバターの画像は行が出たあとに生えることがあり、dom-chat.js が
+    // 拾い直して別便で送ってくる。コメントは既に届いているので、
+    // ここでするのはマップの更新と差分の通知だけ
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    startedSession(sw);
+    const popup = chrome.__connectPopup();
+
+    await sw.handleDomChatAvatars(
+      [{ displayName: 'A', avatarUrl: AVATAR, role: 'normal', kind: 'text' }],
+      senderFor(3, 'V'));
+
+    assert.deepEqual({ ...sw.session.avatarsByAuthor['A'] }, { url: AVATAR, bucket: 'bulk' });
+    assert.equal((await sw.store.readAvatars('V'))['A'].url, AVATAR, '保存されていない');
+
+    const [note] = popup.notifications().filter(m => m.action === 'newSpecialComments');
+    assert.deepEqual({ ...note.avatars }, { A: AVATAR });
+    assert.deepEqual([...note.comments], [], 'コメントが混ざっている');
+  });
+
+  test('有料の行のアバターは primary 枠に入る（枠の判定は bucketOf が正）', async () => {
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    startedSession(sw);
+
+    await sw.handleDomChatAvatars(
+      [{ displayName: 'F', avatarUrl: AVATAR, role: 'normal', kind: 'supersticker' }],
+      senderFor(3, 'V'));
+
+    assert.equal(sw.session.avatarsByAuthor['F'].bucket, 'primary');
+  });
+
+  test('既に知っているアバターは popup へ送り直さない', async () => {
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    startedSession(sw);
+    const popup = chrome.__connectPopup();
+
+    await sw.handleDomChatMessages(
+      [{ ...domComment(1), displayName: 'A', avatarUrl: AVATAR }], senderFor(3, 'V'));
+    await sw.handleDomChatAvatars(
+      [{ displayName: 'A', avatarUrl: AVATAR, role: 'normal', kind: 'text' }],
+      senderFor(3, 'V'));
+
+    const notes = popup.notifications().filter(m => m.action === 'newSpecialComments');
+    assert.equal(notes.length, 1, '同じURLで通知を増やしている');
+  });
+
+  test('別のタブから来たアバターは取り込まない', async () => {
+    // コメントと同じ関門を通す。別の配信のアバターが混ざると、
+    // 同じ名前の発言者の顔が入れ替わる
+    const { chrome } = createChromeMock({ tabs: watchTab(3, 'V') });
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    startedSession(sw);
+
+    await sw.handleDomChatAvatars(
+      [{ displayName: 'X', avatarUrl: AVATAR, role: 'normal', kind: 'text' }],
+      senderFor(9, 'OTHER'));
+
+    assert.deepEqual(Object.keys(sw.session.avatarsByAuthor), []);
+  });
+
   test('表示フィルターで外れる発言者のアバターも取り込む', async () => {
     // 取り込みが全件になった以上、アバターも全件ぶん要る（決定1）。
     // 一般コメントを表示するときに、その人のアバターだけ無いことになる
