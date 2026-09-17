@@ -55,6 +55,11 @@ npm test
 - **content_scripts の `matches` に `/live*` と書かない。** `/live_chat*` を飲み込み、
   ポップアウトのチャット窓で content-script.js と dom-chat.js が同居する（#41）。
   正しくは `/watch*` と `/live/*`。
+- **本文の絵文字は `alt` の形で見分ける。** Unicode の絵文字も `img` で来るが、
+  そちらは `alt` が絵文字そのものなので文字のまま出す。画像に戻すのは `alt` が
+  短縮名（`:_hearts:`）のものだけ（メンバー限定絵文字・`:yt:` など）。
+  **画像URLを本文やIDのキーに混ぜない** —— 本文から ID と `searchText` を作っているので、
+  混ぜると同じコメントのIDが配信ごとにぶれて履歴が二重に積まれる。
 - **番人（`chrome.alarms`）の再注入で直せるのは、注入時に走るものだけ。**
   `executeScript` は二重注入ガードに弾かれて1行も走らない。効くのは一緒に送る
   `requestInitialSweep` の側だけで、外れた `MutationObserver` のような

@@ -238,7 +238,7 @@ function element(textContent = '', children = {}, attributes = {}) {
     textContent,
     children,
     attributes,
-    // extractText() が絵文字画像を混ぜて本文を組み立てるために辿る
+    // extractMessageContent() が本文と絵文字を組み立てるために辿る
     childNodes: textContent ? [{ nodeType: 3, textContent }] : [],
     querySelector(selector) {
       if (!ROW_SELECTORS.has(selector)) throw unknownSelector(selector, 'ROW_SELECTORS');
@@ -284,12 +284,42 @@ function stickerRow({ displayName = '@viewer', timestamp = '23:02', amount = '¥
   return row;
 }
 
-/** 通常のテキストコメントの行 */
-function textRow({ displayName = '@viewer', message = 'こんばんは', timestamp = '23:02' } = {}) {
+/**
+ * メンバー限定絵文字の img。実物と同じく alt に短縮名が入り、
+ * src はプロトコル相対のことがある（ブラウザの .src は絶対URLに解決済み）
+ */
+function emojiImage({ alt = ':_hearts:', src = '//yt3.ggpht.com/EMOJI=w24-h24-c-k-nd' } = {}) {
+  const img = element('', {}, { alt, src });
+  img.tagName = 'IMG';
+  img.src = src.startsWith('//') ? `https:${src}` : src;
+  return img;
+}
+
+/**
+ * 文字と絵文字画像が混ざった #message の中身。
+ * parts には文字列か emojiImage() の img を並べる。
+ * 本物の #message と同じく、画像は childNodes に img として入っている
+ */
+function messageElement(parts) {
+  const nodes = parts.map(part =>
+    typeof part === 'string' ? { nodeType: 3, textContent: part } : part);
+  const el = element(nodes
+    .map(node => (node.nodeType === 3 ? node.textContent : node.getAttribute('alt') || ''))
+    .join(''));
+  el.childNodes = nodes;
+  return el;
+}
+
+/**
+ * 通常のテキストコメントの行。
+ * messageParts を渡すと、本文を文字と絵文字画像の並びとして組み立てる
+ */
+function textRow({ displayName = '@viewer', message = 'こんばんは', timestamp = '23:02',
+  messageParts = null } = {}) {
   const row = element('', {
     '#author-name': element(displayName),
     '#timestamp': element(timestamp),
-    '#message': element(message)
+    '#message': messageParts ? messageElement(messageParts) : element(message)
   });
   row.tagName = 'yt-live-chat-text-message-renderer';
   return row;
@@ -299,6 +329,7 @@ function textRow({ displayName = '@viewer', message = 'こんばんは', timesta
 const added = (...nodes) => [{ addedNodes: nodes }];
 
 module.exports = {
-  loadDomChat, element, stickerImage, avatarImage, stickerRow, textRow, added,
+  loadDomChat, element, stickerImage, avatarImage, emojiImage, messageElement,
+  stickerRow, textRow, added,
   ITEM_LIST_SELECTOR, ITEM_HOST_SELECTOR, ROW_SELECTORS
 };
