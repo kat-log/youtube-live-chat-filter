@@ -61,6 +61,12 @@ function debugError(prefix, ...args) {
 // 初期化時にデバッグモードを読み込み
 loadDebugMode();
 
+// 正規表現の中で「文字そのもの」として扱わせる。絵文字の名前は YouTube 由来の
+// 外部文字列なので、そのまま正規表現に入れない
+function escapeRegExp(text) {
+    return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 // コメントの型・正規化・検索用の文字列は shared/comment.js が正（再設計の決定7）。
 // popup.html で popup.js より先に読み込んでいる。
 //
@@ -126,11 +132,9 @@ const KIND_ICONS = {
 // ステッカーは dom-chat.js が組み立てるURLと1対1なので完全一致のままにする
 const AVATAR_IMAGE_HOSTS = ['.ggpht.com', '.googleusercontent.com'];
 const STICKER_IMAGE_HOSTS = ['lh3.googleusercontent.com', 'yt3.ggpht.com'];
-// メンバー限定絵文字の画像。YouTube 標準の :shortcut: 絵文字は youtube.com から来る
-const EMOJI_IMAGE_HOSTS = ['lh3.googleusercontent.com', 'yt3.ggpht.com', 'www.youtube.com'];
-// 本文から短縮名（:_hearts:）を切り出すための区切り。捕捉にしているのは
-// split の結果に短縮名そのものを残すため（文字と絵文字が交互に並ぶ）
-const EMOJI_SHORTCUT_SPLIT = /(:[^\s:]{1,64}:)/g;
+// 絵文字の画像。メンバー限定絵文字はチャンネルの画像置き場、YouTube標準の絵文字は
+// youtube.com から来る。dom-chat.js の許可ホストと揃えてある（末尾一致）
+const EMOJI_IMAGE_HOSTS = ['.ggpht.com', '.googleusercontent.com', 'www.youtube.com'];
 
 // DOMモードで「チャットを読み取れているか」（フェーズ7）。
 // dom-chat.js が持っている状態の語と1対1で対応させる。
@@ -970,7 +974,7 @@ class PopupController {
             // ステッカーは取り除く。ステッカー名の行はそのまま残る
             image.remove();
         } else if (image.classList.contains('comment-emoji')) {
-            // 絵文字は短縮名の文字に戻す。本文の一部なので、消すと文が欠ける
+            // 絵文字は名前の文字に戻す。本文の一部なので、消すと文が欠ける
             image.replaceWith(document.createTextNode(image.getAttribute('alt') || ''));
         }
     }
@@ -1641,16 +1645,24 @@ class PopupController {
         return img;
     }
 
-    // 本文1行ぶん。メンバー限定絵文字は本文に短縮名（:_hearts:）で入っているので、
+    // 本文1行ぶん。絵文字は本文に名前（「2BROOtojya」「:_hearts:」など）で入っているので、
     // 画像URLが分かっているものだけを img に差し替える。差し替えないものは
-    // 短縮名の文字のまま残す（APIモードや、更新前に保存した履歴がこれに当たる）。
+    // 名前の文字のまま残す（APIモードや、更新前に保存した履歴がこれに当たる）。
+    //
+    // 名前の形はまちまち（コロンで囲まれているとは限らない）なので、切り出しは
+    // 対応表にある名前そのもので行う。長いものから当てるのは、短い名前が
+    // 長い名前の一部だったときに先に食われないようにするため
     //
     // 検索が見るのは取り込み時に作った searchText なので、ここでの差し替えは
     // 検索にも件数にも影響しない
     messageNode(comment) {
         const emojis = comment.emojis;
-        if (!emojis) return this.createNode('div', 'comment-message', comment.message);
+        const labels = emojis ? Object.keys(emojis) : [];
+        if (labels.length === 0) return this.createNode('div', 'comment-message', comment.message);
 
+        const pattern = labels
+            .sort((a, b) => b.length - a.length)
+            .map(escapeRegExp).join('|');
         const div = this.createNode('div', 'comment-message');
         // 続いた文字はまとめて1つの節点にする（1文字ずつ足すと節点が増えるだけ）
         let text = '';
@@ -1660,9 +1672,8 @@ class PopupController {
             text = '';
         };
 
-        for (const part of String(comment.message).split(EMOJI_SHORTCUT_SPLIT)) {
+        for (const part of String(comment.message).split(new RegExp(`(${pattern})`, 'g'))) {
             if (!part) continue;
-            // 対応表に無い短縮名（他の配信の絵文字など）は文字のまま
             const url = Object.prototype.hasOwnProperty.call(emojis, part)
                 ? this.safeEmojiUrl(emojis[part]) : null;
             if (!url) {
@@ -1676,12 +1687,12 @@ class PopupController {
         return div;
     }
 
-    // 絵文字1つぶん。読み込めなかったときに短縮名の文字へ戻せるよう、alt に短縮名を残す
-    emojiNode(shortcut, url) {
+    // 絵文字1つぶん。読み込めなかったときに名前の文字へ戻せるよう、alt に名前を残す
+    emojiNode(label, url) {
         const img = this.createNode('img', 'comment-emoji');
         img.setAttribute('src', url);
-        img.setAttribute('alt', shortcut);
-        img.setAttribute('title', shortcut);
+        img.setAttribute('alt', label);
+        img.setAttribute('title', label);
         img.setAttribute('loading', 'lazy');
         img.setAttribute('decoding', 'async');
         img.setAttribute('width', '24');

@@ -189,60 +189,74 @@ describe('HTML の扱い', () => {
   });
 });
 
-describe('メンバー限定絵文字の対応表', () => {
+describe('絵文字の対応表', () => {
   test('DOMモードの対応表はそのまま正準形に載る', () => {
     const comment = YTF.normalizeComment({
       id: 'dom2_1_0',
       displayName: 'にゃんこ',
-      message: 'おめでとう:_hearts:',
-      emojis: { ':_hearts:': 'https://yt3.ggpht.com/E=w48-h48-c-k-nd' },
+      message: 'こんばんは2BROOtojya',
+      emojis: { '2BROOtojya': 'https://yt3.ggpht.com/E=w48-h48-c-k-nd' },
       publishedAt: '2026-09-07T13:02:00.000Z'
     });
 
     assert.deepEqual(plain(comment.emojis), {
-      ':_hearts:': 'https://yt3.ggpht.com/E=w48-h48-c-k-nd'
+      '2BROOtojya': 'https://yt3.ggpht.com/E=w48-h48-c-k-nd'
     });
-    // 本文は短縮名のまま。検索も短縮名で当たる（表示だけが画像になる）
-    assert.equal(comment.message, 'おめでとう:_hearts:');
-    assert.equal(comment.searchText, 'にゃんこ おめでとう:_hearts:');
+    // 本文は名前のまま。検索も名前で当たる（表示だけが画像になる）
+    assert.equal(comment.message, 'こんばんは2BROOtojya');
+    assert.equal(comment.searchText, 'にゃんこ こんばんは2brootojya');
   });
 
   test('APIモードには対応表が付かない（URLが返ってこない）', () => {
     const comment = YTF.normalizeComment({
       id: 'api-1',
-      snippet: { type: 'textMessageEvent', displayMessage: 'おめでとう:_hearts:' },
+      snippet: { type: 'textMessageEvent', displayMessage: 'こんばんは:_hearts:' },
       authorDetails: { displayName: 'にゃんこ' }
     });
 
     assert.equal(comment.emojis, null);
-    assert.equal(comment.message, 'おめでとう:_hearts:');
+    assert.equal(comment.message, 'こんばんは:_hearts:');
   });
 
   test('形の違うもの・https でないものは落とす', () => {
     assert.equal(YTF.normalizeEmojis(null), null);
     assert.equal(YTF.normalizeEmojis('こんばんは'), null);
     assert.equal(YTF.normalizeEmojis({}), null);
-    // 短縮名の形をしていないキーと、http / javascript: のURL
-    assert.equal(YTF.normalizeEmojis({ hearts: 'https://yt3.ggpht.com/E' }), null);
-    assert.equal(YTF.normalizeEmojis({ ':_a:': 'http://yt3.ggpht.com/E' }), null);
-    assert.equal(YTF.normalizeEmojis({ ':_a:': 'javascript:alert(1)' }), null);
-    assert.equal(YTF.normalizeEmojis({ ':_a:': 1 }), null);
+    // 絵文字そのものの名前（画像に戻す必要が無い）と、http / javascript: のURL
+    assert.equal(YTF.normalizeEmojis({ '\u{1F389}': 'https://yt3.ggpht.com/E' }), null);
+    assert.equal(YTF.normalizeEmojis({ '': 'https://yt3.ggpht.com/E' }), null);
+    assert.equal(YTF.normalizeEmojis({ ['a'.repeat(65)]: 'https://yt3.ggpht.com/E' }), null);
+    assert.equal(YTF.normalizeEmojis({ '2BROOtojya': 'http://yt3.ggpht.com/E' }), null);
+    assert.equal(YTF.normalizeEmojis({ '2BROOtojya': 'javascript:alert(1)' }), null);
+    assert.equal(YTF.normalizeEmojis({ '2BROOtojya': 1 }), null);
+  });
+
+  test('名前が「__proto__」でもプロトタイプに流れない', () => {
+    const emojis = YTF.normalizeEmojis({ ['__proto__']: 'https://yt3.ggpht.com/E' });
+
+    assert.deepEqual(Object.keys(plain(emojis)), ['__proto__']);
+    assert.equal(Object.getPrototypeOf({}), Object.prototype);
   });
 
   test('1件に載る種類数には上限がある（履歴の大きさを抑えるため）', () => {
     const many = {};
-    for (let i = 0; i < 40; i++) many[`:_e${i}:`] = `https://yt3.ggpht.com/${i}`;
+    for (let i = 0; i < 40; i++) many[`emoji${i}`] = `https://yt3.ggpht.com/${i}`;
 
     assert.equal(Object.keys(YTF.normalizeEmojis(many)).length, 16);
   });
 
-  test('isEmojiShortcut は短縮名の形だけを通す', () => {
-    assert.equal(YTF.isEmojiShortcut(':_hearts:'), true);
-    assert.equal(YTF.isEmojiShortcut(':yt:'), true);
-    // Unicode の絵文字（img の alt が絵文字そのもの）は対象外
-    assert.equal(YTF.isEmojiShortcut('\u{1F389}'), false);
-    assert.equal(YTF.isEmojiShortcut('19:30 から'), false);
-    assert.equal(YTF.isEmojiShortcut('::'), false);
-    assert.equal(YTF.isEmojiShortcut(null), false);
+  test('isEmojiLabel は「絵文字そのものではない alt」だけを通す', () => {
+    // 画像でないと読めないもの（名前の形はまちまち）
+    assert.equal(YTF.isEmojiLabel('2BROOtojya'), true);
+    assert.equal(YTF.isEmojiLabel('eyes-pink-heart-shape'), true);
+    assert.equal(YTF.isEmojiLabel(':_hearts:'), true);
+    assert.equal(YTF.isEmojiLabel(':yt:'), true);
+    // 文字のままで読めるもの（Unicode の絵文字・肌の色・ZWJ・キーキャップ）
+    assert.equal(YTF.isEmojiLabel('\u{1F527}'), false);
+    assert.equal(YTF.isEmojiLabel('\u{1F44D}\u{1F3FD}'), false);
+    assert.equal(YTF.isEmojiLabel('\u{1F468}\u200D\u{1F469}\u200D\u{1F467}'), false);
+    assert.equal(YTF.isEmojiLabel('1\uFE0F\u20E3'), false);
+    assert.equal(YTF.isEmojiLabel(''), false);
+    assert.equal(YTF.isEmojiLabel(null), false);
   });
 });
