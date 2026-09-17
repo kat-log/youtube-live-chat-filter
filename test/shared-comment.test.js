@@ -188,3 +188,61 @@ describe('HTML の扱い', () => {
     assert.equal(YTF.stripHtmlTags(null), '');
   });
 });
+
+describe('メンバー限定絵文字の対応表', () => {
+  test('DOMモードの対応表はそのまま正準形に載る', () => {
+    const comment = YTF.normalizeComment({
+      id: 'dom2_1_0',
+      displayName: 'にゃんこ',
+      message: 'おめでとう:_hearts:',
+      emojis: { ':_hearts:': 'https://yt3.ggpht.com/E=w48-h48-c-k-nd' },
+      publishedAt: '2026-09-07T13:02:00.000Z'
+    });
+
+    assert.deepEqual(plain(comment.emojis), {
+      ':_hearts:': 'https://yt3.ggpht.com/E=w48-h48-c-k-nd'
+    });
+    // 本文は短縮名のまま。検索も短縮名で当たる（表示だけが画像になる）
+    assert.equal(comment.message, 'おめでとう:_hearts:');
+    assert.equal(comment.searchText, 'にゃんこ おめでとう:_hearts:');
+  });
+
+  test('APIモードには対応表が付かない（URLが返ってこない）', () => {
+    const comment = YTF.normalizeComment({
+      id: 'api-1',
+      snippet: { type: 'textMessageEvent', displayMessage: 'おめでとう:_hearts:' },
+      authorDetails: { displayName: 'にゃんこ' }
+    });
+
+    assert.equal(comment.emojis, null);
+    assert.equal(comment.message, 'おめでとう:_hearts:');
+  });
+
+  test('形の違うもの・https でないものは落とす', () => {
+    assert.equal(YTF.normalizeEmojis(null), null);
+    assert.equal(YTF.normalizeEmojis('こんばんは'), null);
+    assert.equal(YTF.normalizeEmojis({}), null);
+    // 短縮名の形をしていないキーと、http / javascript: のURL
+    assert.equal(YTF.normalizeEmojis({ hearts: 'https://yt3.ggpht.com/E' }), null);
+    assert.equal(YTF.normalizeEmojis({ ':_a:': 'http://yt3.ggpht.com/E' }), null);
+    assert.equal(YTF.normalizeEmojis({ ':_a:': 'javascript:alert(1)' }), null);
+    assert.equal(YTF.normalizeEmojis({ ':_a:': 1 }), null);
+  });
+
+  test('1件に載る種類数には上限がある（履歴の大きさを抑えるため）', () => {
+    const many = {};
+    for (let i = 0; i < 40; i++) many[`:_e${i}:`] = `https://yt3.ggpht.com/${i}`;
+
+    assert.equal(Object.keys(YTF.normalizeEmojis(many)).length, 16);
+  });
+
+  test('isEmojiShortcut は短縮名の形だけを通す', () => {
+    assert.equal(YTF.isEmojiShortcut(':_hearts:'), true);
+    assert.equal(YTF.isEmojiShortcut(':yt:'), true);
+    // Unicode の絵文字（img の alt が絵文字そのもの）は対象外
+    assert.equal(YTF.isEmojiShortcut('\u{1F389}'), false);
+    assert.equal(YTF.isEmojiShortcut('19:30 から'), false);
+    assert.equal(YTF.isEmojiShortcut('::'), false);
+    assert.equal(YTF.isEmojiShortcut(null), false);
+  });
+});

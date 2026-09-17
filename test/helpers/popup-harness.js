@@ -204,6 +204,14 @@ function createFakeDocument({ ids = idsInPopupHtml(), strictIds = true } = {}) {
       return createElement(tagName, { ownerDocument: doc });
     },
 
+    /**
+     * 本文に混ざる文字。要素ではないので、中身と親だけを持つ最小の節点にする
+     * （絵文字画像を挟んだ本文は、文字と img が交互に並ぶ）
+     */
+    createTextNode(text) {
+      return { nodeType: 3, tagName: '#text', textContent: String(text), parentNode: null };
+    },
+
     /** 新着行をまとめて1回で足すための入れ物（appendChild が中身だけ移す） */
     createDocumentFragment() {
       doc.calls.createDocumentFragment.push(true);
@@ -461,6 +469,18 @@ function loadPopup({
   return context;
 }
 
+/**
+ * 本文の見た目を文字列にする。textContent への代入1回で済んでいる行はその値、
+ * 絵文字画像を挟んだ行は文字と img の alt（短縮名）をつなげて返す
+ */
+function messageTextOf(node) {
+  if (!node) return null;
+  if (node.textContent) return node.textContent;
+  return (node.children || [])
+    .map(child => (child.nodeType === 3 ? child.textContent : child.getAttribute?.('alt') || ''))
+    .join('');
+}
+
 /** 行の中からクラス名で1つ探す（偽DOMには本物のセレクタが無い） */
 function findByClass(element, className) {
   for (const child of element.children || []) {
@@ -492,7 +512,8 @@ function readCommentRows(commentsList) {
       authorText: author ? author.textContent : null,
       author,
       avatar,
-      message: message ? message.textContent : null,
+      message: messageTextOf(message),
+      messageNode: message,
       classes: element.classList._names.slice()
     };
   });
@@ -505,5 +526,5 @@ function visibleUsernames(commentsList) {
 
 module.exports = {
   loadPopup, createFakeDocument, createChromeMock, createElement, idsInPopupHtml,
-  readCommentRows, visibleUsernames, findByClass
+  readCommentRows, visibleUsernames, findByClass, messageTextOf
 };

@@ -126,6 +126,11 @@ const KIND_ICONS = {
 // ステッカーは dom-chat.js が組み立てるURLと1対1なので完全一致のままにする
 const AVATAR_IMAGE_HOSTS = ['.ggpht.com', '.googleusercontent.com'];
 const STICKER_IMAGE_HOSTS = ['lh3.googleusercontent.com', 'yt3.ggpht.com'];
+// メンバー限定絵文字の画像。YouTube 標準の :shortcut: 絵文字は youtube.com から来る
+const EMOJI_IMAGE_HOSTS = ['lh3.googleusercontent.com', 'yt3.ggpht.com', 'www.youtube.com'];
+// 本文から短縮名（:_hearts:）を切り出すための区切り。捕捉にしているのは
+// split の結果に短縮名そのものを残すため（文字と絵文字が交互に並ぶ）
+const EMOJI_SHORTCUT_SPLIT = /(:[^\s:]{1,64}:)/g;
 
 // DOMモードで「チャットを読み取れているか」（フェーズ7）。
 // dom-chat.js が持っている状態の語と1対1で対応させる。
@@ -964,6 +969,9 @@ class PopupController {
         } else if (image.classList.contains('comment-sticker')) {
             // ステッカーは取り除く。ステッカー名の行はそのまま残る
             image.remove();
+        } else if (image.classList.contains('comment-emoji')) {
+            // 絵文字は短縮名の文字に戻す。本文の一部なので、消すと文が欠ける
+            image.replaceWith(document.createTextNode(image.getAttribute('alt') || ''));
         }
     }
     
@@ -1577,6 +1585,10 @@ class PopupController {
         return this.safeImageUrl(url, STICKER_IMAGE_HOSTS);
     }
 
+    safeEmojiUrl(url) {
+        return this.safeImageUrl(url, EMOJI_IMAGE_HOSTS);
+    }
+
     // 要素を1つ作る小道具。文字列HTMLを組まないので、
     // 属性のエスケープ漏れ（#25）という種類の欠陥がそもそも成立しない
     createNode(tag, className, text) {
@@ -1626,6 +1638,54 @@ class PopupController {
         img.setAttribute('decoding', 'async');
         img.setAttribute('width', '96');
         img.setAttribute('height', '96');
+        return img;
+    }
+
+    // 本文1行ぶん。メンバー限定絵文字は本文に短縮名（:_hearts:）で入っているので、
+    // 画像URLが分かっているものだけを img に差し替える。差し替えないものは
+    // 短縮名の文字のまま残す（APIモードや、更新前に保存した履歴がこれに当たる）。
+    //
+    // 検索が見るのは取り込み時に作った searchText なので、ここでの差し替えは
+    // 検索にも件数にも影響しない
+    messageNode(comment) {
+        const emojis = comment.emojis;
+        if (!emojis) return this.createNode('div', 'comment-message', comment.message);
+
+        const div = this.createNode('div', 'comment-message');
+        // 続いた文字はまとめて1つの節点にする（1文字ずつ足すと節点が増えるだけ）
+        let text = '';
+        const flushText = () => {
+            if (!text) return;
+            div.appendChild(document.createTextNode(text));
+            text = '';
+        };
+
+        for (const part of String(comment.message).split(EMOJI_SHORTCUT_SPLIT)) {
+            if (!part) continue;
+            // 対応表に無い短縮名（他の配信の絵文字など）は文字のまま
+            const url = Object.prototype.hasOwnProperty.call(emojis, part)
+                ? this.safeEmojiUrl(emojis[part]) : null;
+            if (!url) {
+                text += part;
+                continue;
+            }
+            flushText();
+            div.appendChild(this.emojiNode(part, url));
+        }
+        flushText();
+        return div;
+    }
+
+    // 絵文字1つぶん。読み込めなかったときに短縮名の文字へ戻せるよう、alt に短縮名を残す
+    emojiNode(shortcut, url) {
+        const img = this.createNode('img', 'comment-emoji');
+        img.setAttribute('src', url);
+        img.setAttribute('alt', shortcut);
+        img.setAttribute('title', shortcut);
+        img.setAttribute('loading', 'lazy');
+        img.setAttribute('decoding', 'async');
+        img.setAttribute('width', '24');
+        img.setAttribute('height', '24');
         return img;
     }
 
@@ -1754,7 +1814,7 @@ class PopupController {
 
         // 金額だけのスパチャやギフト告知は本文が無いので、空の行を作らない
         if (comment.message) {
-            row.appendChild(this.createNode('div', 'comment-message', comment.message));
+            row.appendChild(this.messageNode(comment));
         }
 
         return { element: row, author, displayName: comment.displayName };

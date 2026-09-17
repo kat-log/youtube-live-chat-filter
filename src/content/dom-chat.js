@@ -13,7 +13,7 @@ window.__domChatInitialized = true;
 
 // IDの作り方は shared/comment.js に集約している（再設計の決定7）。
 // manifest の js 配列で、このファイルより先に読み込まれる
-const { commentKeyOf, commentIdFor, legacyCommentIdFor } = self.YTF;
+const { commentKeyOf, commentIdFor, legacyCommentIdFor, isEmojiShortcut } = self.YTF;
 
 // 送信済みのID。上限に達したら古い方から捨てる（全消しにすると、直後の
 // 再スキャンで全件を送り直すことになる）
@@ -394,22 +394,28 @@ function extractMessage(el, kind, useDomTimestamp = false, receivedAt = null) {
     if (detail.stickerUrl) result.stickerUrl = detail.stickerUrl;
   }
 
+  // メンバー限定絵文字の対応表。通常のコメントにも付く（本文に混ざるのはこちらが主）。
+  // 使われていない行には生やさない —— 1件あたりのバイト数が全件ぶん積み上がるため。
+  // ステッカーと同じく、IDの元になるキーには混ぜない
+  if (detail.emojis) result.emojis = detail.emojis;
+
   return result;
 }
 
 // 本文・金額・イベント文言の取り出し
 function extractDetail(el, kind) {
   const messageEl = el.querySelector(SELECTORS.message);
-  const message = extractText(messageEl);
+  // 本文と、そこに混ざっていたメンバー限定絵文字（短縮名 → 画像URL）
+  const { text: message, emojis } = extractMessageContent(messageEl);
 
   if (kind === 'text') {
     // 本文の器そのものが無い＝想定外の形なので取り込まない（従来どおり）
-    return messageEl ? { message, amountText: null, eventText: null } : null;
+    return messageEl ? { message, emojis, amountText: null, eventText: null } : null;
   }
 
   if (kind === 'superchat') {
     // 金額だけで本文なしのスパチャも普通にある
-    return { message, amountText: extractAmount(el), eventText: null };
+    return { message, emojis, amountText: extractAmount(el), eventText: null };
   }
 
   if (kind === 'supersticker') {
@@ -431,7 +437,7 @@ function extractDetail(el, kind) {
     const subtext = textOf(el.querySelector(SELECTORS.membershipSubtext));
     const eventText = [primary, subtext].filter(Boolean).join(' · ');
     if (!eventText && !message) return null;
-    return { message, amountText: null, eventText };
+    return { message, emojis, amountText: null, eventText };
   }
 
   // gift:「◯◯さんがメンバーシップギフトを贈りました」の一文が本体
@@ -469,6 +475,30 @@ function extractStickerUrl(img) {
   if (!STICKER_IMAGE_HOSTS.includes(url.hostname)) return null;
   // パスは「/<ID>=s40-rp」の形。ID部分に = は入らないので、最初の = 以降を捨てて付け直す
   return `${url.origin}${url.pathname.split('=')[0]}${STICKER_IMAGE_SIZE}`;
+}
+
+// メンバー限定絵文字の画像URL。表示は24pxなので、ステッカーと同じ考えで2倍を要求する。
+// YouTube 標準の :shortcut: 絵文字（:yt: など）は youtube.com の静的ファイルで、
+// サイズ指定を受け付けないのでパスをそのまま使う
+const EMOJI_IMAGE_HOSTS = ['lh3.googleusercontent.com', 'yt3.ggpht.com', 'www.youtube.com'];
+const EMOJI_IMAGE_SIZE = '=w48-h48-c-k-nd';
+
+function extractEmojiUrl(img) {
+  if (!img?.src) return null;
+  let url;
+  try {
+    url = new URL(img.src);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:') return null;
+  if (!EMOJI_IMAGE_HOSTS.includes(url.hostname)) return null;
+  if (url.hostname === 'www.youtube.com') {
+    // 静的ファイルの置き場だけを通す（/s/gaming/emoji/... など）
+    return url.pathname.startsWith('/s/') ? `${url.origin}${url.pathname}` : null;
+  }
+  // ステッカーと同じ「/<ID>=<サイズ>」の形
+  return `${url.origin}${url.pathname.split('=')[0]}${EMOJI_IMAGE_SIZE}`;
 }
 
 // 「¥500」「$5.00」などの金額表記。DOM変更で別物を拾ったときのために長さで足切りする
@@ -574,15 +604,35 @@ function textOf(el) {
   return el?.textContent?.trim() || '';
 }
 
-function extractText(el) {
-  if (!el) return '';
+// 本文（#message）の中身。文字とインライン画像が混ざっているので、
+// 表示に使う文字列と、画像として出せる絵文字を1回の走査で取り出す。
+//
+// 絵文字は img で入っていて、文字としては alt しか残らない。
+// メンバー限定絵文字の alt は「:_hearts:」のような短縮名なので、そのまま出すと
+// 本文に短縮名が並ぶ。画像URLを別に持たせて、表示側で画像に戻す。
+// Unicode の絵文字も img で来るが、alt が絵文字そのものなので対応表には載せない
+function extractMessageContent(el) {
+  if (!el) return { text: '', emojis: null };
   let text = '';
+  let emojis = null;
   for (const node of el.childNodes) {
-    if (node.nodeType === Node.TEXT_NODE) text += node.textContent;
-    else if (node.tagName === 'IMG') text += node.getAttribute('alt') || '';
-    else text += node.textContent;
+    if (node.nodeType === Node.TEXT_NODE) {
+      text += node.textContent;
+      continue;
+    }
+    if (node.tagName !== 'IMG') {
+      text += node.textContent;
+      continue;
+    }
+    const alt = node.getAttribute('alt') || '';
+    text += alt;
+    if (!isEmojiShortcut(alt) || (emojis && alt in emojis)) continue;
+    const url = extractEmojiUrl(node);
+    if (!url) continue;
+    if (!emojis) emojis = {};
+    emojis[alt] = url;
   }
-  return text.trim();
+  return { text: text.trim(), emojis };
 }
 
 // Service Worker への片道の送信。コメントもヘルスもここを通る

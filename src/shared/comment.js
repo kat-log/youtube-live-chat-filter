@@ -177,6 +177,43 @@
     return { message: fallback, amountText: null, eventText: null };
   }
 
+  // === メンバー限定絵文字 ==================================================
+  // メンバー限定絵文字は本文に画像として混ざっており、文字としては
+  // 「:_hearts:」のような短縮名でしか残らない。短縮名 → 画像URL の対応表を
+  // コメントに持たせて、表示側でだけ画像に戻す（本文の文字列は変えない）。
+  //
+  // 本文を書き換えないのは、IDの元になるキー（commentKeyOf）と検索対象
+  // （searchText）が本文から作られているため。画像URLは配信ごと・絵文字ごとに
+  // 変わりうるので、混ぜると同じコメントのIDがぶれる（ステッカーと同じ理由）。
+  //
+  // Unicode の絵文字も img で入ってくるが、そちらは alt が絵文字そのもの
+  // （文字としてそのまま読める）なので、短縮名の形のものだけを対象にする
+  const EMOJI_SHORTCUT = /^:[^\s:]{1,64}:$/;
+
+  function isEmojiShortcut(text) {
+    return typeof text === 'string' && EMOJI_SHORTCUT.test(text);
+  }
+
+  // 1件が持てる絵文字の種類数。履歴は1動画で数万件になりうるので、
+  // 保存に載る値には上限を置く（同じ絵文字の連投は対応表1つで足りる）
+  const MAX_EMOJI_PER_COMMENT = 16;
+
+  // 保存にも表示にも回る値なので、形をここで揃える。
+  // URLのホストまで見るのは表示側（popup の EMOJI_IMAGE_HOSTS）の仕事
+  function normalizeEmojis(emojis) {
+    if (!emojis || typeof emojis !== 'object') return null;
+    const normalized = {};
+    let count = 0;
+    for (const [shortcut, url] of Object.entries(emojis)) {
+      if (count >= MAX_EMOJI_PER_COMMENT) break;
+      if (!isEmojiShortcut(shortcut)) continue;
+      if (typeof url !== 'string' || !url.startsWith('https://')) continue;
+      normalized[shortcut] = url;
+      count++;
+    }
+    return count > 0 ? normalized : null;
+  }
+
   // === 検索用の正規化 ======================================================
   // 目に見えないのに検索を外す文字。YouTubeのライブチャットからコメントを
   // コピーすると、先頭などにゼロ幅スペースや方向制御文字が紛れ込む。
@@ -276,7 +313,7 @@
   // === 正準形 =============================================================
   // {
   //   v, id, bucket, kind, role, displayName, message,
-  //   amountText, eventText, stickerUrl, avatarUrl, publishedAt, searchText
+  //   amountText, eventText, stickerUrl, emojis, avatarUrl, publishedAt, searchText
   // }
   const SCHEMA_VERSION = 1;
 
@@ -299,6 +336,7 @@
       amountText: fields.amountText,
       eventText: fields.eventText,
       stickerUrl: fields.stickerUrl,
+      emojis: fields.emojis,
       avatarUrl: fields.avatarUrl,
       publishedAt: fields.publishedAt,
       searchText: ''
@@ -322,6 +360,9 @@
       eventText: detail.eventText,
       // APIモードにステッカー画像は無い（URLが返ってこない）
       stickerUrl: null,
+      // 絵文字も同じ。displayMessage には短縮名しか入らないので、
+      // APIモードのメンバー限定絵文字は「:_hearts:」のまま表示される
+      emojis: null,
       avatarUrl: item.authorDetails?.profileImageUrl || null,
       publishedAt: snippet.publishedAt || null
     };
@@ -337,6 +378,7 @@
       amountText: msg.amountText || null,
       eventText: msg.eventText || null,
       stickerUrl: msg.stickerUrl || null,
+      emojis: normalizeEmojis(msg.emojis),
       avatarUrl: msg.avatarUrl || null,
       publishedAt: msg.publishedAt || null
     };
@@ -366,6 +408,8 @@
     apiCommentRole,
     apiDetailOf,
     normalizeComment,
+    isEmojiShortcut,
+    normalizeEmojis,
     normalizeForSearch,
     buildSearchText,
     searchTextOf,

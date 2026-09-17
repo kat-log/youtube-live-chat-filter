@@ -9,7 +9,7 @@ const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  loadDomChat, element, stickerImage, avatarImage, stickerRow, textRow, added
+  loadDomChat, element, stickerImage, avatarImage, emojiImage, stickerRow, textRow, added
 } = require('./helpers/dom-chat-harness');
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -548,5 +548,110 @@ describe('ハーネスのセレクタ', () => {
     assert.throws(() => row.querySelector('#autor-name'), /知らないセレクタ/);
     // 既知のセレクタで、その行に無いものは null（例外にしない）
     assert.equal(row.querySelector('#purchase-amount'), null);
+  });
+});
+
+describe('メンバー限定絵文字', () => {
+  // 本文に混ざる絵文字は img で入っていて、文字としては alt にしか残らない。
+  // メンバー限定絵文字の alt は「:_hearts:」のような短縮名なので、
+  // 対応表を持たせないと画面に短縮名が並ぶ
+  test('本文は短縮名のまま、画像URLを対応表で持つ', () => {
+    const h = loadDomChat();
+    const row = textRow({
+      messageParts: ['おめでとう', emojiImage({ alt: ':_hearts:' }), '！']
+    });
+
+    h.domChat.handleMutations(added(row));
+
+    const [message] = h.messages();
+    assert.equal(message.message, 'おめでとう:_hearts:！');
+    // vm コンテキスト側の Object を Node 側のものに写してから比べる
+    assert.deepEqual({ ...message.emojis }, {
+      ':_hearts:': 'https://yt3.ggpht.com/EMOJI=w48-h48-c-k-nd'
+    });
+  });
+
+  test('同じ絵文字を連投しても対応表は1つ', () => {
+    const h = loadDomChat();
+    const row = textRow({
+      messageParts: [
+        emojiImage({ alt: ':_clap:' }),
+        emojiImage({ alt: ':_clap:' }),
+        emojiImage({ alt: ':_clap:' })
+      ]
+    });
+
+    h.domChat.handleMutations(added(row));
+
+    const [message] = h.messages();
+    assert.equal(message.message, ':_clap::_clap::_clap:');
+    assert.deepEqual(Object.keys(message.emojis), [':_clap:']);
+  });
+
+  test('Unicode の絵文字は対応表に載せない（alt が絵文字そのもので読める）', () => {
+    const h = loadDomChat();
+    const row = textRow({
+      messageParts: ['やった', emojiImage({ alt: '\u{1F389}', src: '//www.youtube.com/s/gaming/emoji/x/emoji_u1f389.svg' })]
+    });
+
+    h.domChat.handleMutations(added(row));
+
+    const [message] = h.messages();
+    assert.equal(message.message, 'やった\u{1F389}');
+    assert.equal(message.emojis, undefined, '画像に差し替える必要が無いものまで持っている');
+  });
+
+  test('YouTube 標準の :shortcut: 絵文字は静的ファイルのパスをそのまま使う', () => {
+    const h = loadDomChat();
+    const row = textRow({
+      messageParts: [emojiImage({ alt: ':yt:', src: '//www.youtube.com/s/gaming/emoji/abc/yt.svg' })]
+    });
+
+    h.domChat.handleMutations(added(row));
+
+    assert.deepEqual({ ...h.messages()[0].emojis }, {
+      ':yt:': 'https://www.youtube.com/s/gaming/emoji/abc/yt.svg'
+    });
+  });
+
+  test('配信ホスト以外のURLは載せない（本文の短縮名は残す）', () => {
+    for (const src of ['https://evil.example.com/e=w24-h24', 'javascript:alert(1)',
+      'https://www.youtube.com/watch?v=x']) {
+      const h = loadDomChat();
+      const image = emojiImage({ alt: ':_ng:', src });
+      image.src = src; // プロトコル相対の解決を挟まず、そのままの値を見せる
+      const row = textRow({ messageParts: ['ねえ', image] });
+
+      h.domChat.handleMutations(added(row));
+
+      const [message] = h.messages();
+      assert.equal(message.emojis, undefined, `${src} を通してしまっている`);
+      assert.equal(message.message, 'ねえ:_ng:', '画像が読めなくても本文は残す');
+    }
+  });
+
+  test('絵文字を含まない普通のコメントには対応表を生やさない', () => {
+    const h = loadDomChat();
+
+    h.domChat.handleMutations(added(textRow({ message: 'こんばんは' })));
+
+    assert.equal(h.messages()[0].emojis, undefined,
+      '全件に生やすと1件あたりのバイト数が全部に効く');
+  });
+
+  test('画像URLが変わってもIDは変わらない（履歴と二重にならない）', () => {
+    const parts = alt => ['やあ', emojiImage({ alt, src: `//yt3.ggpht.com/${alt}=w24-h24-c-k-nd` })];
+
+    const first = loadDomChat();
+    first.domChat.handleMutations(added(textRow({ messageParts: parts(':_wave:') })));
+
+    // 同じコメントだが、YouTube が別のサイズ・別のIDで画像を出した場合
+    const second = loadDomChat();
+    const image = emojiImage({ alt: ':_wave:', src: '//yt3.ggpht.com/OTHER=w96-h96-c-k-nd' });
+    second.domChat.handleMutations(added(textRow({ messageParts: ['やあ', image] })));
+
+    assert.equal(second.messages()[0].id, first.messages()[0].id);
+    assert.notEqual(second.messages()[0].emojis[':_wave:'],
+      first.messages()[0].emojis[':_wave:'], '前提が崩れている（同じURLになっている）');
   });
 });

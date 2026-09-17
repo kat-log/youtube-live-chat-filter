@@ -100,6 +100,61 @@ describe('行の組み立て（#25 #26）', () => {
     assert.equal(findByClass(rows[1].element, 'comment-sticker'), null);
   });
 
+  test('メンバー限定絵文字は img になり、短縮名は alt に残る', () => {
+    const c = controller();
+    c.setComments([{
+      ...comment({ message: 'おめでとう:_hearts:！', displayName: 'ok' }),
+      id: 'a',
+      emojis: { ':_hearts:': 'https://yt3.ggpht.com/E=w48-h48-c-k-nd' }
+    }]);
+    c.renderComments();
+
+    const [row] = readCommentRows(c.elements.commentsList);
+    const emoji = findByClass(row.messageNode, 'comment-emoji');
+    assert.equal(emoji.tagName, 'IMG');
+    assert.equal(emoji.getAttribute('src'), 'https://yt3.ggpht.com/E=w48-h48-c-k-nd');
+    assert.equal(emoji.getAttribute('alt'), ':_hearts:');
+    // 前後の文字は文字のまま残る（本文が絵文字だけになっていない）
+    assert.deepEqual(
+      row.messageNode.children.map(
+        child => (child.nodeType === 3 ? child.textContent : child.getAttribute('alt'))),
+      ['おめでとう', ':_hearts:', '！']);
+  });
+
+  test('対応表に無い短縮名と、許可していないホストは文字のまま出す', () => {
+    const c = controller();
+    c.setComments([
+      // 対応表そのものが無い（APIモード・更新前に保存した履歴）
+      { ...comment({ message: 'やった:_clap:', displayName: 'none' }), id: 'a' },
+      // 対応表にはあるが、配信ホストのURLではない
+      { ...comment({ message: 'やった:_clap:', displayName: 'ng' }), id: 'b',
+        emojis: { ':_clap:': 'https://evil.example.com/e.png' } }
+    ]);
+    c.renderComments();
+
+    for (const row of readCommentRows(c.elements.commentsList)) {
+      assert.equal(findByClass(row.messageNode, 'comment-emoji'), null);
+      assert.equal(row.message, 'やった:_clap:');
+    }
+  });
+
+  test('絵文字の画像が読めなかったら短縮名の文字に戻す（本文を欠けさせない）', () => {
+    const c = controller();
+    c.setComments([{
+      ...comment({ message: 'おめでとう:_hearts:', displayName: 'ok' }),
+      id: 'a',
+      emojis: { ':_hearts:': 'https://yt3.ggpht.com/E=w48-h48-c-k-nd' }
+    }]);
+    c.renderComments();
+
+    const [row] = readCommentRows(c.elements.commentsList);
+    // 画像の error は委譲したリスナーが受ける（インラインの onerror は MV3 で使えない）
+    c.onCommentsListError({ target: findByClass(row.messageNode, 'comment-emoji') });
+
+    assert.equal(findByClass(row.messageNode, 'comment-emoji'), null);
+    assert.equal(readCommentRows(c.elements.commentsList)[0].message, 'おめでとう:_hearts:');
+  });
+
   test('CSS が頼りにしている構造とクラス名は変わっていない', () => {
     // popup.css:1005-1008 の :has(.role-owner) と kind-* は DOM 構造に依存する。
     // 描画の方式だけを変えるフェーズなので、ここが変わったら見た目が変わっている

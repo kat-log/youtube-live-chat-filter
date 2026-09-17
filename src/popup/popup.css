@@ -1237,6 +1237,15 @@ body {
     object-fit: contain;
 }
 
+/* メンバー限定絵文字。本文の文字と同じ流れに並ぶので、行の高さが跳ねないよう
+   寸法を固定しておく（読み込み前・失敗時も同じ幅を占める） */
+.comment-emoji {
+    width: 24px;
+    height: 24px;
+    vertical-align: -6px;
+    object-fit: contain;
+}
+
 .comment-message {
     font-size: 14px;
     font-weight: 500;
