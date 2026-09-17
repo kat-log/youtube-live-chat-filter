@@ -209,8 +209,13 @@ ESLint の `sourceType` を `module` にするのも同じ理由で不可。
 
 このスクリプトが持つのは「この画面はどの配信か」と「その配信のチャットIDは何か」
 だけで、**コメントは1件も持たない**（APIモードの残骸だった控えはフェーズ9で撤去した。
-popup は SW から直接もらう）。やることは3つ。
+popup は SW から直接もらう）。やることは4つ。
 
+- SW の起床待ち（`waitForServiceWorkerAndInit`）。`ping` を最大10回・指数バックオフで
+  投げてから `init()` に入る。**`setupMessageListener()` だけは待たずに先に張る** ——
+  待っているあいだに popup の `ping` が来ると「未注入」と誤判定され、
+  要らない再注入を招く。**popup ↔ SW のポート化（フェーズ6b）で消えたのは popup 側の
+  待ちだけで、こちらは `sendMessage` のままなので残っている**
 - 配信の特定（`extractVideoId` / `extractLiveChatId`）
 - 自動開始の要求（`tryDomModeAutoStart` / `tryAutoStart`）
 - SW からの要求への応答（`ping` / `startMonitoring` / `stopMonitoring` /
@@ -234,8 +239,8 @@ APIキーの要らない既定の構成で「API key not found」だけが返る
 ### DOMモードの読み取り（`content/dom-chat.js`）
 
 **YouTube の DOM に依存する文字列は `SELECTORS` レジストリに集約している**
-（フェーズ7）。セレクタ14個・行のタグ名5個（`KIND_BY_TAG`）・属性名で計19個が
-1か所にあるので、YouTube 側の変更で直す場所は1つ。
+（フェーズ7）。セレクタ15個・行のタグ名5個（`KIND_BY_TAG`）・属性名1個（`AUTHOR_TYPE_ATTR`）の
+計21個が1か所にあるので、YouTube 側の変更で直す場所は1つ。
 **ここ以外に生の文字列を書かないこと。** ハーネスは「知らないセレクタを
 引かれたら例外」なので、足したら `test/helpers/dom-chat-harness.js` の
 許可リストにも足す。
@@ -354,7 +359,7 @@ Service Worker が取り込み口で見るのは `isDisplayableKind()`
   `img` のリクエストが飛ぶ（#26）
 
 **CSS のクラス名と DOM 構造は描画方式を変えても維持すること**
-（`popup.css:1009-1012` が `:has()` で構造に依存している）。
+（`popup.css` の `.comment-item:has(.role-*)` が構造に依存している）。
 `hidden` で隠した行は `:last-child` のままなので、区切り線を消す
 「最後に見えている行」には JS が `comment-item--last` を付ける。
 
