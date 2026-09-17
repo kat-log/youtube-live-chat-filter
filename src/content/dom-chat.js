@@ -78,6 +78,9 @@ const SELECTORS = {
   purchaseAmount: '#purchase-amount',
   purchaseAmountChip: '#purchase-amount-chip',
   authorPhoto: '#author-photo img',
+  // アバターの器。img は yt-img-shadow があとから作るので、器だけが先にある
+  // 状態が普通にある（「まだ生えていない」と「そもそも無い」の見分けに使う）
+  authorPhotoHost: '#author-photo',
   // 有料メッセージの行はアバターの器が違う
   authorPhotoFallback: 'img#img',
   moderatorBadge: 'yt-live-chat-author-badge-renderer[type="moderator"]',
@@ -150,7 +153,7 @@ function noteUnreadable() {
 function doInitialSweep(force = false) {
   const itemList = document.querySelector(SELECTORS.itemList);
   if (!itemList) return;
-  const existingMessages = [];
+  const rows = [];
   // 「行はあるのに、既知のタグが1つも無い」= 行のタグ名ごと変わった疑い。
   // 新着（handleMutations）からは判定できない —— そこへ来る未知のタグは
   // お知らせ行など普通に混ざるため、全件を数えられるここでだけ見る
@@ -163,18 +166,12 @@ function doInitialSweep(force = false) {
     knownRows++;
 
     // 過去分は投稿時刻が「今」ではないので、DOMのタイムスタンプがあればそれを使う。
-    // ステッカーはチャットを開いた直後だと画像がまだ読み込まれていないことがあるので、
-    // 新着と同じく生えるまで待つ
-    if (kind === 'supersticker' && !isStickerImageReady(node)) {
-      waitForStickerImage(node, { useDomTimestamp: true, force });
-      continue;
-    }
-
-    const msg = takeMessage(node, kind, { useDomTimestamp: true, force });
-    if (msg) existingMessages.push(msg);
+    // 画像（ステッカー・アバター）はチャットを開いた直後だとまだ読み込まれて
+    // いないことがあるので、新着と同じく生えるまで待つ
+    rows.push(pendingRow(node, kind, { useDomTimestamp: true, force }));
   }
   if (knownRows === 0 && totalRows >= UNKNOWN_ROW_LIMIT) setHealthState(HEALTH.UNREADABLE);
-  if (existingMessages.length > 0) sendMessages(existingMessages);
+  queueRows(rows);
 }
 
 // #items はフレームの読み込み直後にはまだ無いことがあるので待つ。ただし無限には
@@ -298,25 +295,16 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 });
 
 function handleMutations(mutations) {
-  const messages = [];
+  const rows = [];
   for (const mutation of mutations) {
     for (const node of mutation.addedNodes) {
       const kind = kindOf(node);
       if (!kind) continue;
-
-      // ステッカーの画像は行がDOMに入った直後にはまだ無い。yt-img-shadow が
-      // あとから img を作るため、その場で読むと画像もステッカー名（alt）も空になる。
-      // 生えるまで待ってから取り込む
-      if (kind === 'supersticker' && !isStickerImageReady(node)) {
-        waitForStickerImage(node, { receivedAt: new Date() });
-        continue;
-      }
-
-      const msg = takeMessage(node, kind);
-      if (msg) messages.push(msg);
+      // 画像が生えるのを待つことがあるので、受信時刻はここで控える
+      rows.push(pendingRow(node, kind, { receivedAt: new Date() }));
     }
   }
-  if (messages.length > 0) sendMessages(messages);
+  queueRows(rows);
 }
 
 // 1件取り込む。既に送った行なら null を返す（force のときは送り直す）
@@ -337,19 +325,75 @@ function takeMessage(node, kind, { receivedAt = null, useDomTimestamp = false, f
   return msg;
 }
 
-// ステッカーの画像が生えるのを待って取り込む。待っている間に投稿時刻が
-// ずれないよう、受信時刻は行を見つけた時点のものを持ち回る。
-// 生えてこなくても打ち切って取り込む（画像なしで従来どおりの表示になる）
-const STICKER_IMAGE_POLL_MS = 100;
-const STICKER_IMAGE_MAX_POLLS = 15; // 最長で約1.5秒
+// === 画像が生えるのを待つ待ち行列 ==========================================
+//
+// 行がDOMに入った直後は、中の img がまだ無い。yt-img-shadow があとから作るため、
+// その場で読むと空になる。空振りするのは2か所:
+//
+//  - ステッカー: 画像URLもステッカー名（alt）も取れない
+//  - アバター: URLが取れず、popup では頭文字（@）のままになる。こちらは
+//    ほとんどの行で起きる（間に合うのは画像が手元にある一部の行だけ）
+//
+// どちらも生えるまで待ってから取り込む。生えてこなくても打ち切って取り込む
+// （画像なしで従来どおりの表示になる）。待っている間に投稿時刻がずれないよう、
+// 受信時刻は行を見つけた時点のものを持ち回る。
+//
+// 待ちは1本の列にまとめ、先頭から順に出す。行ごとに待たせると、あとから来た
+// 行が待っている行を追い越し、popup の並びが前後する（popup は届いた順に積む）。
+const PENDING_POLL_MS = 100;
+// 打ち切りまでの回数。ステッカーは本文そのものが画像に載っているので長めに待つ。
+// アバターは欠けても本文は出るので短く切る（待つあいだ後続の行も止まるため）
+const PENDING_MAX_POLLS = { supersticker: 15, default: 5 }; // 最長で約1.5秒 / 0.5秒
 
-function waitForStickerImage(node, options, remaining = STICKER_IMAGE_MAX_POLLS) {
-  if (remaining > 0 && !isStickerImageReady(node)) {
-    setTimeout(() => waitForStickerImage(node, options, remaining - 1), STICKER_IMAGE_POLL_MS);
-    return;
+const pendingRows = [];
+let pendingPollScheduled = false;
+
+// 打ち切りは回数と経過時間の両方で見る。背面タブのタイマーは間引かれる
+// （1秒に1回、5分を超えると1分に1回）ので、回数だけだと打ち切りがそのぶん
+// 後ろへ延びる。時間でも見ておけば、間引かれた1回で追い付ける
+function pendingRow(node, kind, options) {
+  const polls = PENDING_MAX_POLLS[kind] || PENDING_MAX_POLLS.default;
+  return { node, kind, options, polls, deadline: Date.now() + polls * PENDING_POLL_MS };
+}
+
+function isPendingRowExpired(row) {
+  return row.polls <= 0 || Date.now() >= row.deadline;
+}
+
+// 行に要る画像がすべて揃っているか。揃っていなければ待つ
+function isRowReady({ node, kind }) {
+  if (kind === 'supersticker' && !isStickerImageReady(node)) return false;
+  return isAvatarImageReady(node);
+}
+
+function queueRows(rows) {
+  for (const row of rows) pendingRows.push(row);
+  flushPendingRows();
+}
+
+// 揃った行を先頭から順に取り込んで送る。まだ待っている行に当たったらそこで止める
+// （後ろの行に追い越させない）
+function flushPendingRows() {
+  const messages = [];
+  while (pendingRows.length > 0) {
+    const row = pendingRows[0];
+    if (!isRowReady(row) && !isPendingRowExpired(row)) break;
+    pendingRows.shift();
+    const msg = takeMessage(row.node, row.kind, row.options);
+    if (msg) messages.push(msg);
   }
-  const msg = takeMessage(node, 'supersticker', options);
-  if (msg) sendMessages([msg]);
+  if (messages.length > 0) sendMessages(messages);
+  schedulePendingPoll();
+}
+
+function schedulePendingPoll() {
+  if (pendingPollScheduled || pendingRows.length === 0) return;
+  pendingPollScheduled = true;
+  setTimeout(() => {
+    pendingPollScheduled = false;
+    for (const row of pendingRows) row.polls--;
+    flushPendingRows();
+  }, PENDING_POLL_MS);
 }
 
 function extractMessage(el, kind, useDomTimestamp = false, receivedAt = null) {
@@ -600,8 +644,7 @@ function parseTimestampText(text) {
 // アバターだけが黙って落ちる）。ステッカー側は同じ罠を先に回避していたのに、
 // こちらに反映されていなかった（#28）
 function extractAvatarUrl(el) {
-  const img = el.querySelector(SELECTORS.authorPhoto) ||
-              el.querySelector(SELECTORS.authorPhotoFallback);
+  const img = avatarImgOf(el);
   if (!img?.src) return null;
   // YouTubeのDOM由来＝外部入力。javascript: や data: を弾く
   // （配信ホストの確認は popup 側の AVATAR_IMAGE_HOSTS が担当する。#26）
@@ -614,6 +657,27 @@ function extractAvatarUrl(el) {
   if (url.protocol !== 'https:') return null;
   // 末尾の "=s32-..." はサイズ指定。高DPI向けに2倍で要求する
   return url.href.replace(/=s\d+-/, '=s64-');
+}
+
+// アバターの img。有料メッセージの行は器が違うので id だけで拾い直すが、
+// そちらは行の中の別の画像（ステッカー）にも当たる。ステッカーの img を
+// アバターとして返すと、スパチャの行に自分の投げたステッカーが顔として並ぶので外す
+function avatarImgOf(el) {
+  const img = el.querySelector(SELECTORS.authorPhoto);
+  if (img) return img;
+  const fallback = el.querySelector(SELECTORS.authorPhotoFallback);
+  return fallback && fallback !== stickerImgOf(el) ? fallback : null;
+}
+
+// アバターを読める状態か。見るのは「URLとして取れるか」で、img の有無ではない
+// （YouTube は src を空のまま、あるいは仮の値で先に img を作ることがある）。
+//
+// 取れないときに「まだ生えていない」のか「そもそも無い行」なのかは、
+// 器（yt-img-shadow#author-photo）と img の有無で見分ける。どちらも無い行は
+// 待っても出てこないので、待たずに取り込む
+function isAvatarImageReady(el) {
+  if (extractAvatarUrl(el)) return true;
+  return !avatarImgOf(el) && !el.querySelector(SELECTORS.authorPhotoHost);
 }
 
 function textOf(el) {

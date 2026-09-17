@@ -41,6 +41,7 @@ const ROW_SELECTORS = new Set([
   '#purchase-amount',
   '#purchase-amount-chip',
   '#author-photo img',
+  '#author-photo',
   'img#img',
   'yt-live-chat-author-badge-renderer[type="moderator"]',
   'yt-live-chat-author-badge-renderer[type="member"]'
@@ -325,11 +326,27 @@ function textRow({ displayName = '@viewer', message = 'こんばんは', timesta
   return row;
 }
 
+/**
+ * アバターの器（yt-img-shadow#author-photo）を行に付ける。
+ *
+ * 実物は「器が先にあり、img は yt-img-shadow があとから作る」という順序で、
+ * 行がDOMに入った直後に読むとアバターURLが取れない。その状態を再現する。
+ * `attachAvatar()` で img を生やせる
+ */
+function withAvatarHost(row) {
+  row.children['#author-photo'] = element('');
+  row.attachAvatar = (image = avatarImage()) => {
+    row.children['#author-photo img'] = image;
+    return image;
+  };
+  return row;
+}
+
 /** MutationObserver のコールバックに渡される形 */
 const added = (...nodes) => [{ addedNodes: nodes }];
 
 module.exports = {
   loadDomChat, element, stickerImage, avatarImage, emojiImage, messageElement,
-  stickerRow, textRow, added,
+  stickerRow, textRow, withAvatarHost, added,
   ITEM_LIST_SELECTOR, ITEM_HOST_SELECTOR, ROW_SELECTORS
 };
