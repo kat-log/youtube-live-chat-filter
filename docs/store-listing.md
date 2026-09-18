@@ -26,6 +26,10 @@ v1.12.4 / v1.12.5 では検索の取りこぼしを直し、全角・半角、�
 名前の文字ではなく画像で出すようになった（DOMモードのみ）。見た目が変わる変更なので、
 絵文字が写っているスクリーンショットがあれば差し替え対象。
 
+**v2.2.0** で、YouTube のチャット欄で発言者を Alt+クリックすると、その人で絞り込んだ状態で
+ポップアップが開くようになった（両モード）。ポップアップ自体の見た目は変わらないので、
+スクリーンショットの差し替えは要らない。
+
 ---
 
 ## 短い説明（132文字以内）
@@ -82,6 +86,7 @@ YouTubeのライブ配信では大量のコメントが流れるため、重要�
 	•	メンバー限定絵文字やYouTubeの絵文字も、名前の文字ではなく画像で表示。チャット欄と同じ見た目で読めます
 	•	種別ごとの件数を表示。その配信でスパチャや加入が何件あったかがひと目でわかります
 	•	ユーザー名クリックで、その人のコメントだけを表示
+	•	YouTubeのチャット欄でも、名前かアイコンを Alt+クリック（Mac は Option+クリック）すると、その人で絞り込んだ状態でポップアップが開きます
 	•	キーワード検索で、流れていったコメントをあとから絞り込み。チャットからコピーした語や全角・半角の違いもそのまま引けます
 	•	アイコン画像つき表示で、誰の発言かひと目でわかる
 	•	配信ごとにコメントを保存。ポップアップを閉じても消えません（直近5配信ぶん）
@@ -257,6 +262,7 @@ chrome.alarms は Service Worker が終了していても拡張機能を起こ�
 | 金額・件数を表示 | 金額チップは `shared/comment.js` の正準形の `amountText` / `dom-chat.js` の `extractDetail()`、件数バッジは `superchat-count` / `membership-count` |
 | ステッカーの画像を表示 | `dom-chat.js` が `#sticker img` から `stickerUrl` を拾い（新着も全件スキャンも `waitForStickerImage()` で `src` が入るまで待つ）、`popup.js` の `stickerHtml()` が `img` で描く。**DOMモードのみ**で、APIモードは画像URLを返さないため出ない。URLは `safeStickerUrl()` が `STICKER_IMAGE_HOSTS` のホストだけ通す。画像が出せなくてもステッカー名は本文として残る |
 | 絵文字を画像で表示 | `dom-chat.js` の `extractMessageContent()` が本文中の `img` の `alt`（`shared/comment.js` の `isEmojiLabel()` で名前らしいものだけ）と URL を拾い、`extractEmojiUrl()` が YouTube の画像ホスト（`*.ggpht.com` / `*.googleusercontent.com` / `www.youtube.com` の静的ファイル）だけを通す。**DOMモードのみ**で、APIモードは画像URLを返さないため名前の文字のまま。画像が出せないときも名前の文字が残る。コロンで囲まれていない名前（`2BROOtojya` など）も対象（v2.1.1） |
+| チャット欄の Alt+クリックで絞り込める | `dom-chat.js` の `onAuthorClick()`（修飾キーは `USER_FILTER_MODIFIER = 'altKey'`。Mac の Option も `altKey` になる）が表示名を送り、`service-worker.js` が `pendingUserFilter` に置いて `chrome.action.openPopup()` で開く。popup は `takePendingUserFilter` で受け取る。**両モードで効く**（`dom-chat.js` はモードに関係なくチャット欄に入る）。自動で開くのは Chrome 127 以降だけで、開けなくても置いたぶんは10分間残り、次に手で開いたときに効く。**素のクリックは YouTube のメニューのまま**なので、「クリックで絞り込み」とは書かない（v2.2.0） |
 | チャットを読み取れているかが出る | `popup.html` の `#chat-health`（DOMモードで監視中だけ出る。読めていれば緑の点）。状態は `dom-chat.js` が返す `health` を Service Worker 経由で受ける |
 | Tabキーだけで操作できる | フィルターとテーマの操作要素がフォーカス可能で、フォーカスリングを消していない（フェーズ8）。**「すべての操作ができる」とは書かない**。到達性を上げただけで、全機能のキーボード操作を保証してはいない |
 | 設定画面もダークテーマになる | `options.html` が `shared/theme.js` を読み、`storage.onChanged` でポップアップ側の切り替えにも追従する |
