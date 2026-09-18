@@ -458,6 +458,12 @@ IndexedDB から直接読む（Service Worker のメッセージで数万件を�
 Service Worker が渡すのは `readCommentsForPopup(videoId, 'primary')` の結果で、
 `MAX_COMMENTS_TO_POPUP` はメモリの上限として popup 側でも効き続ける。
 
+起動時の復元（`restoreCommentHistory`）は、**`primary` の件数で分岐しない**。
+`primary` が0件でも `loadBulkCount()` までは必ず通す —— 数えた未読み込み件数
+（`unloadedBulk`）が `shouldLoadBulk()` の入口になっているので、数え損ねると
+その配信では `bulk` を二度と読まない。配信者・モデレーターの発言もスパチャも
+無い配信では `primary` は0件のままなので、これは普通に起きる。
+
 > popup は `store.migrateFromLocal()` を**呼ばない**。移行は片道で、
 > Service Worker と同時に走らせると履歴が二重に積まれる。
 

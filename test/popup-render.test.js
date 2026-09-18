@@ -592,6 +592,66 @@ describe('bulk 枠の遅延読み込み（決定4）', () => {
     assert.equal(c.elements.normalCount.textContent, '一般: ?');
   });
 
+  // 起動時の復元そのもの（restoreCommentHistory）。上の withStoredComments は
+  // その手順を写しただけなので、本物の分岐はここでしか通らない
+  //
+  // 「保存済みの bulk を読むかどうか」を primary の件数で決めていたのが、この不具合。
+  // 配信者・モデレーターの発言もスパチャも無い配信（珍しくない）では
+  // primary が0件のまま増えないので、popup を開くたびに
+  // 「メンバー・一般の履歴が1件も無い」ことになり、開いている間に届いた
+  // ぶんだけが並ぶ。閉じて開き直すとまた0件に戻る
+  async function restoreWith(stored, filters = {}) {
+    const popup = loadPopup();
+    await popup.YTFStore.append('vid1', stored);
+
+    const c = new popup.__popup.PopupController();
+    c.popup = popup;
+    c.commentFilters = { ...ALL_ON, ...filters };
+    c.currentVideoId = 'vid1';
+    // 履歴の読み出しは Service Worker 経由（getCommentsHistory）。
+    // ここでは同じ IndexedDB から、頼まれた枠だけを返す役をさせる
+    // 他の問い合わせには答えない（ポートの応答が来ないのと同じ形）。
+    // 答えてしまうと、走り出している初期化が this.commentFilters などを
+    // 上書きして、このテストが見たい復元の手順と混ざる
+    c.requestBackground = ({ action, videoId, bucket }) => {
+      if (action !== 'getCommentsHistory') return new Promise(() => {});
+      return popup.YTFStore.read(videoId, { bucket })
+        .then(comments => ({ success: true, comments, avatars: {} }));
+    };
+
+    await c.restoreCommentHistory('vid1');
+    return c;
+  }
+
+  test('primary が1件も無くても、保存済みのメンバー・一般を復元する', async () => {
+    const c = await restoreWith([bulkComment(1), bulkComment(2)]);
+
+    assert.deepEqual(visibleUsernames(c.elements.commentsList), ['一般1', '一般2'],
+      '保存済みの bulk を読まずに空で描いている');
+    assert.equal(c.unloadedBulk, 0);
+  });
+
+  test('primary が1件も無いときも、bulk の件数は数えておく', async () => {
+    // 数えていないと「メンバー」「一般」をあとからONにしても読みにいかない
+    // （shouldLoadBulk が unloadedBulk を見るため）
+    const c = await restoreWith([bulkComment(1)], { sponsor: false, normal: false });
+
+    assert.equal(c.unloadedBulk, 1, '未読み込みの件数を 0 と言っている');
+    assert.equal(c.comments.length, 0, '要らない bulk を先に読んでいる');
+
+    c.commentFilters.normal = true;
+    await c.renderWithBulk();
+    assert.deepEqual(visibleUsernames(c.elements.commentsList), ['一般1']);
+  });
+
+  test('primary があるときは、これまで通り primary だけを載せる', async () => {
+    const c = await restoreWith([primaryComment(1), bulkComment(1)],
+      { sponsor: false, normal: false });
+
+    assert.deepEqual(visibleUsernames(c.elements.commentsList), ['モデ1']);
+    assert.equal(c.unloadedBulk, 1);
+  });
+
   test('popup は storage.local からの移行を走らせない', async () => {
     // 移行は片道で、Service Worker と同時に走らせると履歴が二重に積まれる
     // （フェーズ3の制約）。popup が IndexedDB を開くのはフェーズ5からなので、

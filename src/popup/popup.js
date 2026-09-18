@@ -1239,14 +1239,22 @@ class PopupController {
                 commentsCount: historyResponse?.comments?.length || 0
             });
             
-            if (historyResponse?.success && historyResponse.comments && historyResponse.comments.length > 0) {
+            // **件数では分岐しない。** primary が0件でも bulk は読みにいく。
+            // 「primary が1件でもあれば bulk を数える」にしていたので、
+            // 配信者・モデレーターの発言もスパチャも無い配信では primary が
+            // 0件のまま増えず、保存済みのメンバー・一般が丸ごと素通りしていた。
+            // その結果 unloadedBulk も 0 のままになり（shouldLoadBulk がこれを見る）、
+            // あとからトグルをONにしても読み込まれない。popup を開くたびに
+            // 「開いている間に届いたぶん」だけが並ぶ形になる
+            if (historyResponse?.success) {
                 Object.assign(this.avatarsByAuthor, historyResponse.avatars || {});
-                const formattedComments = this.formatHistoryComments(historyResponse.comments);
+                const formattedComments = this.formatHistoryComments(historyResponse.comments || []);
                 this.setComments(formattedComments);
                 // 保存済みの bulk 件数を控えてから、要るときだけ読む
                 await this.loadBulkCount(targetVideoId);
                 await this.renderWithBulk();
-                debugLog('[YouTube Special Comments] Successfully restored', formattedComments.length, 'comments');
+                debugLog('[YouTube Special Comments] Successfully restored', formattedComments.length,
+                    'primary comments (bulk:', this.unloadedBulk, 'unloaded)');
                 historyLoaded = true;
             }
         } catch (error) {
@@ -1257,9 +1265,10 @@ class PopupController {
         // あった。その控え（specialComments）はAPIモードの残骸で、フェーズ9 で
         // 消している。履歴の正は IndexedDB ただ1つ（決定2）
 
-        // 最終フォールバック: 空の状態で表示
+        // 最終フォールバック: 空の状態で表示。
+        // ここに来るのは読み出しそのものが失敗したときだけ（0件は失敗ではない）
         if (!historyLoaded) {
-            debugLog('[YouTube Special Comments] === All fallbacks failed, starting with empty comments ===');
+            debugLog('[YouTube Special Comments] === History read failed, starting with empty comments ===');
             this.setComments([]);
             this.renderComments();
             
