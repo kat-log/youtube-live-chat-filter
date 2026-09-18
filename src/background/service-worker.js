@@ -902,6 +902,74 @@ function notifyPopup(message) {
   for (const port of popupPorts) postToPort(port, message);
 }
 
+// === YouTube 側のクリックからの絞り込み（チャットの名前を Alt+クリック）=====
+//
+// ツールバーの popup は、ページをクリックした時点でもう閉じている
+// （フォーカスが外れると必ず閉じる Chrome の仕様）。つまり
+// 「クリック → その人で絞り込んだ popup が出る」は、popup を開き直す話になる。
+//
+//  1. 誰を選んだかを storage.local に1件だけ置く（PENDING_USER_FILTER_KEY）
+//  2. popup を開く。開いていれば「置いた」ことだけ知らせる
+//
+// 置くのは**まだ届けていないクリック1件**で、絞り込みの状態そのものではない
+// （絞り込みの正は popup の selectedUser のまま）。取り出した側が消すので、
+// 同じクリックが二度効くことはない。
+//
+// session には持たせない。popup を開くまでは Service Worker が終了してよく、
+// 永続化できないものを session に入れないため（PERSISTED_SESSION_KEYS）
+const PENDING_USER_FILTER_KEY = 'pendingUserFilter';
+// 置きっぱなしのクリックが有効な時間。popup を開けないまま時間が経ったとき、
+// 忘れたころに絞り込まれた状態で開かないようにする
+const PENDING_USER_FILTER_TTL_MS = 10 * 60 * 1000;
+
+/** dom-chat.js が拾ったクリック。置いてから popup を開く */
+async function openUserFilter(displayName, sender) {
+  const name = typeof displayName === 'string' ? displayName.trim() : '';
+  if (!name) return { success: false, error: '発言者名が空です' };
+
+  await chrome.storage.local.set({
+    [PENDING_USER_FILTER_KEY]: { displayName: name, at: Date.now() }
+  });
+
+  // 開いている popup があれば知らせる。受け取り口は popup 側で1つ
+  // （takePendingUserFilter）にしてあるので、伝えるのは「置いた」ことだけでよい。
+  // クリックで popup が閉じる瞬間との競争になるため、知らせたうえで開きにもいく
+  notifyPopup({ action: 'pendingUserFilter' });
+
+  const opened = await openActionPopup(sender);
+  return { success: true, opened };
+}
+
+/**
+ * ツールバーの popup を開く。chrome.action.openPopup() は Chrome 127 以降にしか
+ * 無く、開けない状況（既に開いている・対象のウィンドウが前面に無い）もある。
+ * 開けなくても置いたぶんは残るので、次に手で開いたときに効く
+ */
+async function openActionPopup(sender) {
+  if (typeof chrome.action?.openPopup !== 'function') return false;
+  const windowId = sender?.tab?.windowId;
+  try {
+    await (windowId === undefined
+      ? chrome.action.openPopup()
+      : chrome.action.openPopup({ windowId }));
+    return true;
+  } catch (error) {
+    debugLog('[Background] openPopup failed:', error?.message ?? String(error));
+    return false;
+  }
+}
+
+/** popup が受け取りに来た。渡したら消す（同じクリックは一度しか効かない） */
+async function takePendingUserFilter() {
+  const stored = (await chrome.storage.local.get(PENDING_USER_FILTER_KEY))[PENDING_USER_FILTER_KEY];
+  if (!stored) return { success: true, displayName: null };
+
+  await chrome.storage.local.remove(PENDING_USER_FILTER_KEY);
+  const fresh = typeof stored.at === 'number' &&
+                Date.now() - stored.at <= PENDING_USER_FILTER_TTL_MS;
+  return { success: true, displayName: fresh ? (stored.displayName || null) : null };
+}
+
 // === dom-chat.js のヘルス（フェーズ7）=======================================
 //
 // DOMモードの壊れ方は「無言で0件になる」で、静かな配信と区別が付かない
@@ -1104,6 +1172,17 @@ function handleRequest(request, sender) {
     // ここで直列化しないとバッチ同士が互いの状態更新を踏む（#5）
     enqueueDomChatMessages(request.messages, sender);
     return Promise.resolve({ success: true });
+  }
+
+  // YouTube のチャットで発言者を Alt+クリックした（dom-chat.js）。
+  // 置いてから popup を開く
+  if (action === 'openUserFilter') {
+    return openUserFilter(request.displayName, sender);
+  }
+
+  // popup が起動時と通知のときに受け取りに来る
+  if (action === 'takePendingUserFilter') {
+    return takePendingUserFilter();
   }
 
   if (action === 'domChatAvatars') {

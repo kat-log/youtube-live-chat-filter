@@ -305,6 +305,10 @@ class PopupController {
         // （決定4）、履歴復元と並列にすると、順番次第で要らない bulk を読み込む
         await this.loadCommentFilters();
 
+        // YouTube 側で Alt+クリックされた発言者。これも描画より先に確定させる。
+        // あとから当てると、一度全件を描いてから絞り込み直すことになる
+        await this.applyPendingUserFilter();
+
         // 初期状態設定
         this.updateMonitoringButtons(false);
         this.updateMonitoringButtonStates();
@@ -432,6 +436,12 @@ class PopupController {
             // アバターだけの便（あとから生えたぶん）はコメントが空で来る
             if (request.comments?.length) this.addNewComments(request.comments);
             if (updatedAuthors.size > 0) this.fillInAvatars(updatedAuthors);
+        } else if (request.action === 'pendingUserFilter') {
+            // YouTube 側でクリックされた（Service Worker が置いた）。
+            // 中身は聞きに行く —— 受け取り口を1つにしておくと、popup を開いた
+            // ときとクリックされたときで経路が割れない
+            this.applyPendingUserFilter({ render: true })
+                .catch(error => debugError('[Popup] Failed to apply user filter:', error));
         } else if (request.action === 'domChatHealth') {
             this.updateChatHealth(request.health);
         } else if (request.action === 'monitoringAutoStopped') {
@@ -2574,6 +2584,35 @@ class PopupController {
             .catch(error => debugError('[Popup] Failed to render for user filter:', error));
     }
     
+    /**
+     * YouTube のチャットで Alt+クリックされた発言者を受け取って当てる。
+     * 置き場（storage.local）を持っているのは Service Worker で、渡すと消える
+     * ので、同じクリックが二度効くことはない。
+     *
+     * @param {object}  [options]
+     * @param {boolean} [options.render] 描き直すかどうか。初期化の途中では
+     *   このあと履歴の復元が描くので、状態を入れるだけにする
+     */
+    async applyPendingUserFilter({ render = false } = {}) {
+        let displayName = null;
+        try {
+            const response = await this.requestBackground({ action: 'takePendingUserFilter' });
+            displayName = response?.displayName || null;
+        } catch (error) {
+            debugLog('[Popup] Could not take pending user filter:', error.message);
+            return;
+        }
+        if (!displayName) return;
+
+        debugLog('[YouTube Special Comments] Pending user filter from chat:', displayName);
+        if (render) {
+            this.filterByUser(displayName);
+        } else {
+            this.selectedUser = displayName;
+            this.updateUserFilterStatus();
+        }
+    }
+
     clearUserFilter() {
         debugLog('[YouTube Special Comments] Clearing user filter');
         this.selectedUser = null;

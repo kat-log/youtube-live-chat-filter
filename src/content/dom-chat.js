@@ -80,12 +80,18 @@ const SELECTORS = {
   authorPhoto: '#author-photo img',
   // 有料メッセージの行はアバターの器が違う
   authorPhotoFallback: 'img#img',
+  // チャット側から popup を絞り込むときに、クリックを受け付ける範囲（名前とアイコン）
+  authorClickTarget: '#author-name, #author-photo',
   moderatorBadge: 'yt-live-chat-author-badge-renderer[type="moderator"]',
   memberBadge: 'yt-live-chat-author-badge-renderer[type="member"]'
 };
 
 // 行に付く属性も YouTube 由来。roleOf が読む
 const AUTHOR_TYPE_ATTR = 'author-type';
+
+// チャット行そのものを指すセレクタ。クリックされた要素から行へ遡るのに使う。
+// KIND_BY_TAG から組み立てるので、監視対象の行が増えればここも自動で追従する
+const ROW_SELECTOR = Object.keys(KIND_BY_TAG).join(',');
 
 function kindOf(node) {
   return KIND_BY_TAG[node.tagName?.toLowerCase()] || null;
@@ -819,6 +825,39 @@ function sendMessages(messages) {
 function sendAvatars(avatars) {
   sendToBackground({ action: 'domChatAvatars', avatars });
 }
+
+// === YouTube 側のクリックで popup を絞り込む ================================
+//
+// チャットの名前・アイコンの**素のクリックは YouTube 自身が使っている**
+// （「ブロック」「報告」のメニューが開く）。奪うと本体の機能が壊れるので、
+// こちらが受け取るのは修飾キー付きのクリックだけにして、そのときだけ
+// YouTube へ渡さない（捕捉フェーズで止める）。
+//
+// 送るのは「誰を選んだか」1つだけ。popup を開くのも、絞り込みを当てるのも
+// Service Worker と popup の側の仕事（ツールバーの popup は、ページを
+// クリックした時点でもう閉じているため、ここから直接は触れない）
+const USER_FILTER_MODIFIER = 'altKey';
+
+function onAuthorClick(event) {
+  // 素のクリックには触れない。YouTube のメニューはこれまで通り開く
+  if (!event[USER_FILTER_MODIFIER]) return;
+  const target = event.target?.closest?.(SELECTORS.authorClickTarget);
+  if (!target) return;
+  const row = target.closest(ROW_SELECTOR);
+  if (!row) return;
+
+  // 表示名は取り込みと同じ経路（#author-name のテキスト）で読む。
+  // ここだけ別の読み方をすると、popup 側の突き合わせ（displayName の一致）が
+  // 無言で外れて「0件」になる
+  const displayName = textOf(row.querySelector(SELECTORS.authorName));
+  if (!displayName) return;
+
+  event.preventDefault();
+  event.stopPropagation();
+  sendToBackground({ action: 'openUserFilter', displayName });
+}
+
+document.addEventListener('click', onAuthorClick, true);
 
 attachObserver();
 } // end guard

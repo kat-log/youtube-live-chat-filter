@@ -310,7 +310,7 @@ ping 8回の起床待ち（`waitForServiceWorker`）とタイムアウト付き�
   （永続化できないうえ、popup が開いているかはセッションの持ち物ではない。
   `PERSISTED_SESSION_KEYS` を増やさないこと）
 - popup へ片道で流すのは `notifyPopup()` だけ。新着・`showDetailedError`・
-  `monitoringAutoStopped`・`domChatHealth` の4つが通る。開いていなければ何も起きない
+  `monitoringAutoStopped`・`domChatHealth`・`pendingUserFilter` の5つが通る。開いていなければ何も起きない
   （あとから届いたアバターは、新着と同じ `newSpecialComments` を
   `comments: []` で流す）
 - **content script との通信は `tabs.sendMessage` / `onMessage` のまま。**
@@ -342,6 +342,41 @@ ping 8回の起床待ち（`waitForServiceWorker`）とタイムアウト付き�
 
 **「いま監視しているのは同じ配信か」を popup が自前で比べないこと。**
 `reconcileSession` を SW に聞き、返ってきた4語で決める（正は `reconcile` 1つ）。
+
+### チャット側のクリックでの絞り込み（Alt+クリック）
+
+YouTube のチャットで発言者を **Alt+クリック**すると、その人で絞り込んだ状態で
+popup が開く。経路は dom-chat.js → SW → popup の3区間になる。
+
+**なぜ2手（置く・開く）に分かれるか。** ツールバーの popup は、ページを
+クリックした時点でもう閉じている —— フォーカスが外れると必ず閉じる Chrome の
+仕様で、これは回避できない。つまり「開いている popup を切り替える」ことはできず、
+**誰を選んだかを置いてから popup を開き直す**形になる。
+
+- **拾うのは `dom-chat.js`**（`live_chat` フレーム。watch ページのチャットも
+  中身は `live_chat`）。`document` の捕捉フェーズに1つだけリスナーを張り、
+  `SELECTORS.authorClickTarget`（`#author-name, #author-photo`）から行へ遡って
+  `#author-name` のテキストを読む。**表示名は取り込みと同じ経路で読むこと** ——
+  popup 側の突き合わせは `displayName` の一致なので、別の場所から読むと
+  無言で0件になる
+- **素のクリックは奪わない。** 名前とアイコンのクリックは YouTube 自身が使っていて
+  「ブロック」「報告」のメニューが開く。受け取るのは修飾キー付き
+  （`USER_FILTER_MODIFIER = 'altKey'`）だけで、そのときだけ `preventDefault()` と
+  `stopPropagation()` で YouTube へ渡さない
+- **SW は置いてから開く**（`openUserFilter`）。置き場は `storage.local` の
+  `pendingUserFilter`（`{ displayName, at }`）1件で、**絞り込みの状態そのものでは
+  なく「まだ届けていないクリック」**。絞り込みの正は popup の `selectedUser` のまま。
+  `session` には持たせない（永続化できないものを入れないため）
+- popup を開くのは `chrome.action.openPopup()`。**Chrome 127 以降にしか無く**、
+  あっても開けない状況（前面にウィンドウが無い等）がある。開けなくても置いたぶんは
+  残るので、次に手で開いたときに効く
+- **受け取り口は popup 側で1つ**（`takePendingUserFilter`）。popup を開いたときも、
+  `pendingUserFilter` の通知が来たときも同じ口を通る。渡すと置き場から消えるので、
+  同じクリックが二度効くことはない。古くなったもの（10分）は渡さずに捨てる
+  —— popup を開けないまま時間が経ったとき、忘れたころに絞り込まれた状態で
+  開かないようにするため
+- popup 側は初期化の**履歴を描く前**に受け取る（`applyPendingUserFilter()`）。
+  あとから当てると、一度全件を描いてから絞り込み直すことになる
 
 ### 番人（`chrome.alarms`、1分周期）
 
@@ -504,7 +539,10 @@ Service Worker が渡すのは `readCommentsForPopup(videoId, 'primary')` の結
   `document.contains()` の答えもそれに追随する。
   Service Worker からの要求は `deliver(request)`、
   ヘルスの報告は `healthState()` / `healthReports()` で見る
-  （`sendCount()` と `messages()` は**コメントの送信だけ**を数える）
+  （`sendCount()` と `messages()` は**コメントの送信だけ**を数える）。
+  チャット側のクリックは `click(target, { altKey })` で流し、送られた名前は
+  `userFilterClicks()` で見る。`closest()` が受け付けるのも
+  **`#id` とタグ名だけ**で、それ以外の形は例外にする（同じ理由）
 - `test/helpers/popup-harness.js` — chrome API と偽 document をモックして
   `popup.js` を読み込む。偽 document が引ける id の正は `popup.html` の実物で、
   そこに無い id を引かれたら例外にする。

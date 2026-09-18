@@ -26,6 +26,9 @@ const SW_PATH = path.join(__dirname, '..', '..', 'src', 'background', 'service-w
  * @param {Function}[options.onTabMessage]   tabs.sendMessage の応答を作る。
  *                                           throw すると「応答なし」を再現できる
  * @param {number}  [options.idbQuotaBytes]  IndexedDB の容量上限（超えると put が失敗）
+ * @param {boolean} [options.hasOpenPopup]   chrome.action.openPopup があるか
+ *                                           （Chrome 127 より前には無い）
+ * @param {boolean} [options.openPopupFails] openPopup() が失敗する状況を作る
  */
 function createChromeMock({
   quotaBytes = Infinity,
@@ -33,11 +36,15 @@ function createChromeMock({
   contentScripts = [],
   queryTabs = [],
   onTabMessage = () => undefined,
-  idbQuotaBytes = Infinity
+  idbQuotaBytes = Infinity,
+  hasOpenPopup = true,
+  openPopupFails = false
 } = {}) {
   const store = {};
   const calls = {
     badge: [], executeScript: [], tabMessages: [], runtimeMessages: [], alarms: [],
+    // chrome.action.openPopup() の呼び出し（引数そのまま。無引数は null）
+    openPopup: [],
     // popup へポートで送ったもの（フェーズ6b）。開いている popup が無ければ空のまま
     portMessages: []
   };
@@ -112,7 +119,15 @@ function createChromeMock({
     },
     action: {
       setBadgeText: ({ text }) => calls.badge.push(text),
-      setBadgeBackgroundColor: () => {}
+      setBadgeBackgroundColor: () => {},
+      // Chrome 127 以降にしかない（hasOpenPopup: false で「無い」を再現する）。
+      // 開けない状況（前面にウィンドウが無い等）は openPopupFails: true で作る
+      ...(hasOpenPopup ? {
+        async openPopup(options) {
+          calls.openPopup.push(options ?? null);
+          if (openPopupFails) throw new Error('Could not find an active browser window.');
+        }
+      } : {})
     }
   };
 
@@ -213,6 +228,8 @@ function loadServiceWorker(chrome, idb = chrome.__idb || createIndexedDBMock()) 
       // popup が開いているか（ポートがあるか）。フェーズ6b
       isPopupOpen,
       notifyPopup,
+      // チャット側のクリックの置き場（popup が受け取りに来ると消える）
+      takePendingUserFilter,
       loadSession,
       saveSession,
       runWatchdog,
