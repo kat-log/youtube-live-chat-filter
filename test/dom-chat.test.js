@@ -676,6 +676,16 @@ describe('ハーネスのセレクタ', () => {
     // 既知のセレクタで、その行に無いものは null（例外にしない）
     assert.equal(row.querySelector('#purchase-amount'), null);
   });
+
+  test('closest も、解釈できないセレクタは例外にする', () => {
+    // 受け付けるのは `#id` とタグ名だけ（dom-chat.js が実際に使う2つの形）。
+    // 黙って null を返すと、クリックの当たり判定が外れたことに気付けない
+    const row = textRow();
+
+    assert.throws(() => row.closest('[author-type="owner"]'), /closest が解釈できない/);
+    assert.equal(row.closest('yt-live-chat-text-message-renderer'), row);
+    assert.equal(row.closest('#author-name'), null, '祖先側を引いてしまっている');
+  });
 });
 
 describe('本文の絵文字', () => {
@@ -834,5 +844,69 @@ describe('本文の絵文字', () => {
     assert.equal(second.messages()[0].id, first.messages()[0].id);
     assert.notEqual(second.messages()[0].emojis['2BROOtojya'],
       first.messages()[0].emojis['2BROOtojya'], '前提が崩れている（同じURLになっている）');
+  });
+});
+
+// チャット側から popup を絞り込む入口（YouTube のチャットで発言者を Alt+クリック）。
+//
+// ここで守りたいのは2つ。
+//  - **素のクリックを奪わないこと。** 名前とアイコンのクリックは YouTube 自身が
+//    使っている（「ブロック」「報告」のメニューが開く）。奪うと本体の機能が壊れる
+//  - **送る名前が取り込みと同じ読み方であること。** popup 側の突き合わせは
+//    displayName の一致なので、ここだけ別の場所から読むと無言で0件になる
+describe('チャット側のクリックでの絞り込み', () => {
+  test('Alt+クリックで発言者名を送り、YouTube のメニューは開かせない', () => {
+    const h = loadDomChat();
+    const row = textRow({ displayName: 'にゃんこ' });
+
+    const result = h.click(row.children['#author-name']);
+
+    assert.deepEqual(h.userFilterClicks(), ['にゃんこ']);
+    assert.ok(result.prevented && result.stopped, 'YouTube 側へクリックが渡っている');
+  });
+
+  test('素のクリックは YouTube のもの（送らないし、止めもしない）', () => {
+    const h = loadDomChat();
+    const row = textRow({ displayName: 'にゃんこ' });
+
+    const result = h.click(row.children['#author-name'], { altKey: false });
+
+    assert.deepEqual(h.userFilterClicks(), []);
+    assert.equal(result.prevented, false, '素のクリックを奪っている（メニューが開かなくなる）');
+    assert.equal(result.stopped, false, '素のクリックを止めている');
+  });
+
+  test('アイコンを Alt+クリックしても、同じ行の発言者名を送る', () => {
+    const h = loadDomChat();
+    const row = withLateAvatar(textRow({ displayName: 'にゃんこ' }));
+    const avatar = row.attachAvatar();
+
+    h.click(avatar);
+
+    assert.deepEqual(h.userFilterClicks(), ['にゃんこ']);
+  });
+
+  test('名前でもアイコンでもない場所の Alt+クリックは無視する', () => {
+    const h = loadDomChat();
+    const row = textRow({ displayName: 'にゃんこ' });
+
+    const result = h.click(row.children['#message']);
+
+    assert.deepEqual(h.userFilterClicks(), []);
+    assert.equal(result.prevented, false);
+  });
+
+  test('名前が読めない行では何も送らない（空の絞り込みを作らない）', () => {
+    const h = loadDomChat();
+    const row = element('', { '#message': element('こんばんは') });
+    row.tagName = 'yt-live-chat-text-message-renderer';
+    // 名前の器だけあって中身が空、という壊れ方（セレクタ変更時に起きる形）
+    row.children['#author-name'] = element('');
+    row.children['#author-name'].id = 'author-name';
+    row.children['#author-name'].parentElement = row;
+
+    h.click(row.children['#author-name']);
+
+    assert.deepEqual(h.userFilterClicks(), []);
   });
 });

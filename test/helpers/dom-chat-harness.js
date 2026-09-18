@@ -102,6 +102,9 @@ function loadDomChat({ rows = [], hasItemList = true, pathname = '/live_chat' } 
     }
   }
 
+  // document に張られたリスナー（クリックを拾う経路。click() で叩く）
+  const documentListeners = [];
+
   const context = vm.createContext({
     window: {},
     // dom-chat.js は読み込み時に location.pathname を見て、チャットのフレームか
@@ -124,7 +127,11 @@ function loadDomChat({ rows = [], hasItemList = true, pathname = '/live_chat' } 
         throw unknownSelector(selector, 'ITEM_LIST_SELECTOR / ITEM_HOST_SELECTOR');
       },
       // 張り直しの判定（#2）に使う。差し替えられた古い #items は false になる
-      contains(node) { return !!node?.attached; }
+      contains(node) { return !!node?.attached; },
+      // YouTube 側のクリックを拾う経路。捕捉フェーズで張られる
+      addEventListener(type, listener, options) {
+        documentListeners.push({ type, listener, options });
+      }
     },
     MutationObserver: RecordingMutationObserver,
     setTimeout: fn => timers.push(fn),
@@ -172,6 +179,9 @@ function loadDomChat({ rows = [], hasItemList = true, pathname = '/live_chat' } 
     /** あとから生えたアバターの便（action: 'domChatAvatars'）。古い順 */
     avatarUpdates: () => avatarPayloads().flatMap(payload => payload.avatars || []),
     avatarSendCount: () => avatarPayloads().length,
+    /** チャット側のクリックで送った発言者名（action: 'openUserFilter'）。古い順 */
+    userFilterClicks: () =>
+      sent.filter(p => p.action === 'openUserFilter').map(p => p.displayName),
     /** ヘルス状態の報告（action: 'domChatHealth'）。古い順 */
     healthReports: () => sent.filter(p => p.action === 'domChatHealth').map(p => p.health),
     /** いま報告されている状態（まだ1度も送っていなければ null） */
@@ -179,6 +189,27 @@ function loadDomChat({ rows = [], hasItemList = true, pathname = '/live_chat' } 
       const reports = sent.filter(p => p.action === 'domChatHealth');
       return reports.length ? reports[reports.length - 1].health.state : null;
     },
+    /**
+     * 要素のクリックを流す（本物の click イベントの代わり）。
+     * 既定は Alt+クリック —— 素のクリックは YouTube 自身が使っているため、
+     * dom-chat.js が受け取るのは修飾キー付きだけになっている。
+     *
+     * @returns {{prevented: boolean, stopped: boolean, listeners: number}}
+     *   YouTube 側へ渡らなかったか（prevented / stopped）と、叩いたリスナーの数
+     */
+    click(target, { altKey = true } = {}) {
+      const state = { prevented: false, stopped: false };
+      const event = {
+        target,
+        altKey,
+        preventDefault() { state.prevented = true; },
+        stopPropagation() { state.stopped = true; }
+      };
+      const listeners = documentListeners.filter(entry => entry.type === 'click');
+      for (const { listener } of listeners) listener(event);
+      return { ...state, listeners: listeners.length };
+    },
+
     /** Service Worker から content script へのメッセージを流す */
     deliver(request) {
       let response;
@@ -238,7 +269,7 @@ function element(textContent = '', children = {}, attributes = {}) {
   for (const selector of Object.keys(children)) {
     if (!ROW_SELECTORS.has(selector)) throw unknownSelector(selector, 'ROW_SELECTORS');
   }
-  return {
+  const el = {
     textContent,
     children,
     attributes,
@@ -251,8 +282,61 @@ function element(textContent = '', children = {}, attributes = {}) {
       if (!ROW_SELECTORS.has(selector)) throw unknownSelector(selector, 'ROW_SELECTORS');
       return this.children[selector] || null;
     },
-    getAttribute(name) { return this.attributes[name] ?? null; }
+    getAttribute(name) { return this.attributes[name] ?? null; },
+    // クリックされた要素から行へ遡る経路。本物と同じく自分自身も対象になる
+    closest(selector) { return closestFrom(this, selector); }
   };
+  linkChildren(el);
+  return el;
+}
+
+/**
+ * closest() のための親子の配線。
+ *
+ * 対応表のキー（'#author-name' / '#author-photo img'）から id を作り、
+ * 子に親を持たせる。`#foo bar` の形は、本物と同じく間に器（id=foo）を1枚挟む
+ */
+function linkChildren(parent) {
+  for (const [selector, child] of Object.entries(parent.children)) {
+    if (!child || typeof child !== 'object') continue;
+    const [first, ...rest] = selector.split(/\s+/);
+    if (!first.startsWith('#')) continue;
+    if (rest.length === 0) {
+      child.id = first.slice(1);
+      child.parentElement = parent;
+      continue;
+    }
+    // 器を挟む（#author-photo > img など）。器は closest の通り道にしかならない
+    const box = {
+      id: first.slice(1),
+      parentElement: parent,
+      closest(sel) { return closestFrom(this, sel); }
+    };
+    child.parentElement = box;
+  }
+}
+
+/**
+ * closest() の実装。受け付けるのは `#id` とタグ名だけで、カンマ区切りで並べられる
+ * （dom-chat.js が実際に使う2つの形）。それ以外は例外にする —— 黙って null を
+ * 返すと、セレクタの書き間違いがテストを素通りする（#T1 / #T2 と同じ理由）
+ */
+function closestFrom(start, selector) {
+  const parts = String(selector).split(',').map(part => part.trim()).filter(Boolean);
+  for (const part of parts) {
+    if (!part.startsWith('#') && !/^[a-z][a-z0-9-]*$/.test(part)) {
+      throw new Error(
+        `ハーネスの closest が解釈できないセレクタ: ${JSON.stringify(selector)}\n` +
+        'closestFrom が受け付けるのは `#id` とタグ名だけ（dom-chat-harness.js）');
+    }
+  }
+  for (let node = start; node; node = node.parentElement) {
+    for (const part of parts) {
+      if (part.startsWith('#') ? node.id === part.slice(1)
+        : node.tagName?.toLowerCase() === part) return node;
+    }
+  }
+  return null;
 }
 
 /** ステッカー画像の img。src はYouTubeの実物と同じくプロトコル相対で持たせる */
@@ -286,6 +370,7 @@ function stickerRow({ displayName = '@viewer', timestamp = '23:02', amount = '¥
   row.tagName = 'yt-live-chat-paid-sticker-renderer';
   row.attachSticker = (image = stickerImage()) => {
     row.children['#sticker img'] = image;
+    linkChildren(row); // あとから生えたぶんも closest の通り道に載せる
     return image;
   };
   return row;
@@ -343,6 +428,7 @@ function textRow({ displayName = '@viewer', message = 'こんばんは', timesta
 function withLateAvatar(row) {
   row.attachAvatar = (image = avatarImage()) => {
     row.children['#author-photo img'] = image;
+    linkChildren(row); // あとから生えたぶんも closest の通り道に載せる
     return image;
   };
   return row;

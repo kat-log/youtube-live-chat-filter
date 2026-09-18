@@ -1796,3 +1796,102 @@ describe('SPA遷移の検知（#24）', () => {
     assert.equal(calls.tabMessages.filter(m => m.message.action === 'newSpecialComments').length, 0);
   });
 });
+
+// YouTube のチャットで発言者を Alt+クリックしたときの経路。
+//
+// ツールバーの popup は、ページをクリックした時点でもう閉じている（Chrome の仕様）。
+// だから「クリック → その人で絞り込んだ popup が出る」は、
+// **置いてから開き直す**という2手になる。ここで固定するのはその段取りと、
+// 置いたクリックが二度効かないこと
+describe('チャット側のクリックからの絞り込み', () => {
+  const chatSender = (tabId = 3, windowId = 11) => ({
+    ...senderFor(tabId, 'V'),
+    tab: { id: tabId, windowId, url: 'https://www.youtube.com/watch?v=V' }
+  });
+  /** dom-chat.js から届くメッセージを、本物と同じ onMessage の口に流す */
+  const click = (chrome, displayName, sender = chatSender()) =>
+    new Promise(resolve =>
+      chrome.__onMessage({ action: 'openUserFilter', displayName }, sender, resolve));
+
+  test('誰を選んだかを置いてから、クリックされたウィンドウの popup を開く', async () => {
+    const { chrome, store, calls } = createChromeMock();
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    const result = await click(chrome, 'にゃんこ');
+
+    assert.equal(result.success, true);
+    assert.equal(result.opened, true);
+    assert.equal(store.pendingUserFilter.displayName, 'にゃんこ');
+    // vm コンテキスト側で作られたオブジェクトは prototype が別realmになる
+    assert.deepEqual(calls.openPopup.map(o => ({ ...o })), [{ windowId: 11 }]);
+    assert.ok(sw.session); // 監視していなくても受け取れる（絞り込みはセッションの外）
+  });
+
+  test('popup が開いていれば、置いたことも知らせる', async () => {
+    // クリックで popup が閉じる瞬間との競争になるので、知らせたうえで開きにもいく。
+    // 受け取り口は popup 側で1つ（takePendingUserFilter）なので、渡すのは合図だけ
+    const { chrome } = createChromeMock();
+    loadServiceWorker(chrome);
+    await settle();
+    const popup = chrome.__connectPopup();
+
+    await click(chrome, 'にゃんこ');
+
+    assert.deepEqual(popup.notifications().map(m => m.action), ['pendingUserFilter']);
+  });
+
+  test('popup へ渡したら消す（同じクリックが二度効かない）', async () => {
+    const { chrome, store } = createChromeMock();
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    await click(chrome, 'にゃんこ');
+
+    assert.equal((await sw.takePendingUserFilter()).displayName, 'にゃんこ');
+    assert.equal(store.pendingUserFilter, undefined, '渡したのに置き場に残っている');
+    assert.equal((await sw.takePendingUserFilter()).displayName, null);
+  });
+
+  test('置きっぱなしのまま時間が経ったクリックは渡さない', async () => {
+    // popup を開けないまま放置されたとき、忘れたころに絞り込まれた状態で
+    // 開かないようにする。古いものも取り出しで消える
+    const { chrome, store } = createChromeMock();
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    await chrome.storage.local.set({
+      pendingUserFilter: { displayName: 'にゃんこ', at: Date.now() - 60 * 60 * 1000 }
+    });
+
+    assert.equal((await sw.takePendingUserFilter()).displayName, null);
+    assert.equal(store.pendingUserFilter, undefined);
+  });
+
+  test('popup を開けなくても、置いたぶんは残る（次に手で開いたときに効く）', async () => {
+    // chrome.action.openPopup() は Chrome 127 以降にしか無く、
+    // あっても開けない状況（前面にウィンドウが無い等）がある
+    for (const options of [{ hasOpenPopup: false }, { openPopupFails: true }]) {
+      const { chrome, store } = createChromeMock(options);
+      loadServiceWorker(chrome);
+      await settle();
+
+      const result = await click(chrome, 'にゃんこ');
+
+      assert.equal(result.success, true);
+      assert.equal(result.opened, false);
+      assert.equal(store.pendingUserFilter.displayName, 'にゃんこ',
+        `置いたクリックが消えている（${JSON.stringify(options)}）`);
+    }
+  });
+
+  test('名前が空のクリックは置かない', async () => {
+    const { chrome, store, calls } = createChromeMock();
+    loadServiceWorker(chrome);
+    await settle();
+
+    const result = await click(chrome, '   ');
+
+    assert.equal(result.success, false);
+    assert.equal(store.pendingUserFilter, undefined);
+    assert.deepEqual(calls.openPopup, [], '空のまま popup を開いている');
+  });
+});

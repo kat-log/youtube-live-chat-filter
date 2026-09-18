@@ -11,7 +11,7 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { loadPopup, readCommentRows } = require('./helpers/popup-harness');
+const { loadPopup, readCommentRows, visibleUsernames } = require('./helpers/popup-harness');
 
 const ALL_ON = {
   owner: true, moderator: true, sponsor: true,
@@ -289,5 +289,78 @@ describe('チャットの読み取り状態', () => {
     await c.refreshChatHealth();
 
     assert.match(label(c).textContent, /読み取れません/);
+  });
+});
+
+// YouTube のチャットで発言者を Alt+クリックしたときの受け取り口。
+//
+// 置き場を持っているのは Service Worker で、popup は**受け取りに行く側**。
+// 口を1つ（takePendingUserFilter）にしてあるので、popup を開いたときと
+// クリックの通知が来たときで経路が割れない
+describe('チャット側のクリックからの絞り込み', () => {
+  /** takePendingUserFilter にだけ答える SW を作る。ほかの要求は成功を返す */
+  const answer = (payload, displayName) => {
+    if (payload.action === 'takePendingUserFilter') return { success: true, displayName };
+    if (payload.action === 'getCommentFilters') return { success: true, filters: { ...ALL_ON } };
+    return { success: true };
+  };
+  const pending = displayName => ({ onRequest: payload => answer(payload, displayName) });
+
+  /** 積まれた描画（タイマー・IndexedDB の読み）が落ち着くまで回す */
+  const drain = async c => {
+    for (let i = 0; i < 10; i++) {
+      while (c.popup.__popup.tick());
+      await settle();
+    }
+  };
+
+  test('初期化の途中で受け取り、履歴を描く前に絞り込みが決まっている', async () => {
+    const asked = [];
+    const c = controller({
+      onRequest: payload => {
+        asked.push(payload.action);
+        return answer(payload, 'にゃんこ');
+      }
+    });
+
+    await c.completeBasicInitialization();
+
+    assert.ok(asked.includes('takePendingUserFilter'), '受け取りに行っていない');
+    assert.equal(c.selectedUser, 'にゃんこ');
+    assert.equal(c.elements.filteredUsername.textContent, 'にゃんこ');
+  });
+
+  test('クリックの通知が来たら、受け取って描き直す', async () => {
+    const c = controller(pending('にゃんこ'));
+    c.setComments([
+      { ...comment({ displayName: 'にゃんこ' }), id: 'a' },
+      { ...comment({ displayName: 'わんこ' }), id: 'b' }
+    ]);
+    c.renderComments();
+
+    c.popup.chrome.__deliver({ action: 'pendingUserFilter' });
+    await drain(c);
+
+    assert.equal(c.selectedUser, 'にゃんこ');
+    assert.deepEqual(visibleUsernames(c.elements.commentsList), ['にゃんこ']);
+  });
+
+  test('置かれていなければ、いまの絞り込みに触らない', async () => {
+    const c = controller(pending(null));
+    c.filterByUser('わんこ');
+
+    await c.applyPendingUserFilter({ render: true });
+
+    assert.equal(c.selectedUser, 'わんこ', '置かれていないのに絞り込みを変えている');
+  });
+
+  test('応答が来ないまま切れても、初期化は止まらない', async () => {
+    // 受け取りは初期化の途中にある。ここで待ちが宙に浮くと popup が開かない
+    const c = controller();
+    const applied = c.applyPendingUserFilter();
+    c.popup.chrome.__disconnect();
+
+    await applied; // reject が漏れていればここで落ちる
+    assert.equal(c.selectedUser, null);
   });
 });
