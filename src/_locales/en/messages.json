@@ -1,0 +1,10 @@
+{
+  "extName": {
+    "message": "YouTube Special Comments Filter",
+    "description": "拡張機能の名前。manifest の name / action.default_title とストアの掲載名に使われる（75文字以内）"
+  },
+  "extDescription": {
+    "message": "No API key needed. Shows streamer, moderator and member comments, Super Chats and memberships from YouTube live chat, with search.",
+    "description": "manifest の description。ストアの「短い説明」として検索結果とカードに出る（132文字以内）。docs/store-listing.md と同一文字列"
+  }
+}

@@ -1,5 +1,7 @@
 # 英語対応（i18n）計画
 
+> 進み具合は末尾の「実施記録」。
+
 ## Context
 
 `docs/redesign-plan.md` の「残っている宿題 1. i18n」を独立計画として実施する。
@@ -112,3 +114,24 @@
   **420px の popup で英語の長い文言がトップバー・件数バッジで折り返し崩れしないか**を偽 YouTube で目視
   （`docs/release-checklist.md` の偽YouTube段に項目追加）
 - 既存履歴（日本語 `eventText` 入り）を持ったまま英語表示にして、二重積み・ID 変化が無いこと
+
+## 実施記録
+
+### 段階1: 土台（2026-09-30）
+
+- `src/_locales/{en,ja}/messages.json` を新設。キーはまだ `extName` / `extDescription` の2つだけ
+  （使われていないキーは `test/i18n.test.js` が落とすので、文言は段階2以降で使う側と一緒に足す）
+- `manifest.json`: `default_locale: "en"`、`name` / `description` / `action.default_title` を `__MSG_` に。
+  日本語の短い説明は従来と同一文字列。英語の短い説明は
+  「No API key needed. Shows streamer, moderator and member comments, Super Chats and memberships from YouTube live chat, with search.」（130文字）
+- `src/shared/i18n.js`（`self.YTFi18n`）: `t()` / `loadOverride()` / `applyTo()` / `currentLanguage()` /
+  `formatMessage()`。popup と options の `<head>` で `theme.js` の次に読むが、**まだ誰も呼んでいない**
+  （呼び出しと `data-i18n*` は段階2・4）。`API_ERROR_KEYS` は使う段階4で足す
+- テスト: `test/helpers/i18n-mock.js`（本物の messages.json を読む `chrome.i18n`。既定 `ja`）を
+  popup / options のハーネスに差した。SW のハーネスには差していない（SW は文言を作らない設計なので、
+  段階3で要ると分かったときに足す）。`test/i18n.test.js` を新設、`test/manifest.test.js` の説明文の突き合わせを
+  `_locales` 経由に変更。`docs/store-listing.md` に「短い説明・英語」の節を追加
+- 計画からの変更: 「日本語リテラルが残っていない」テストは、残っているうちは書けないので段階2〜4の最後に入れる
+- 実ブラウザ（Chromium 1194、`--load-extension`）で確認: manifest が読み込めること、
+  `--lang=en-US` → 「YouTube Special Comments Filter」、`--lang=ja` → 「YouTube特別コメントフィルター」、
+  `--lang=ko`（_locales に無い言語）→ 英語に落ちること。ストアの表示は提出後にしか確かめられない

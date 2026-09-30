@@ -97,15 +97,28 @@ describe('manifest.json', () => {
     assert.deepEqual(chatEntry.js, ['shared/comment.js', 'content/dom-chat.js']);
   });
 
-  test('description は docs/store-listing.md の「短い説明」と同一（ストアがこれを使う）', () => {
-    // ストアのカードに出るのは manifest の description。掲載文の正は store-listing.md なので、
-    // 片方だけ直すと「掲載文を直したのにストアの表示が変わらない」が起きる
+  test('名前と説明は _locales から引く（ストアが言語ごとに出し分ける）', () => {
+    // 直書きするとストアの掲載名・短い説明が全言語で同じ文字列になる（docs/i18n-plan.md）
+    assert.equal(manifest.default_locale, 'en');
+    assert.equal(manifest.name, '__MSG_extName__');
+    assert.equal(manifest.description, '__MSG_extDescription__');
+    assert.equal(manifest.action.default_title, '__MSG_extName__');
+  });
+
+  test('短い説明は docs/store-listing.md の「短い説明」と同一（ストアがこれを使う）', () => {
+    // ストアのカードに出るのは manifest の description（= _locales の extDescription）。
+    // 掲載文の正は store-listing.md なので、片方だけ直すと
+    // 「掲載文を直したのにストアの表示が変わらない」が起きる
     const listing = fs.readFileSync(path.join(__dirname, '..', 'docs', 'store-listing.md'), 'utf8');
-    const block = listing.match(/## 短い説明[^\n]*\n[\s\S]*?```\n([\s\S]*?)\n```/);
-    assert.ok(block, 'store-listing.md の「短い説明」のコードブロックが読めない');
-    assert.equal(manifest.description, block[1]);
-    assert.ok(manifest.description.length <= 132,
-      `短い説明が132文字を超えている: ${manifest.description.length}`);
+    for (const [locale, heading] of [['ja', '## 短い説明（132文字以内）'],
+                                     ['en', '## 短い説明・英語（132文字以内）']]) {
+      const at = listing.indexOf(`${heading}\n`);
+      assert.ok(at >= 0, `store-listing.md に「${heading}」の見出しが無い`);
+      const block = listing.slice(at).match(/```\n([\s\S]*?)\n```/);
+      assert.ok(block, `store-listing.md の「${heading}」のコードブロックが読めない`);
+      const messages = JSON.parse(fs.readFileSync(path.join(SRC, '_locales', locale, 'messages.json'), 'utf8'));
+      assert.equal(messages.extDescription.message, block[1], `${locale} の短い説明が掲載文とずれている`);
+    }
   });
 
   test('version は README の冒頭と揃っている（#44）', () => {

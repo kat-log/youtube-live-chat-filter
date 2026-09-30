@@ -520,6 +520,23 @@ Service Worker が渡すのは `readCommentsForPopup(videoId, 'primary')` の結
 - **コメント一覧の行には `tabindex` を配らない**（行が数千あれば Tab も数千回）。
   役割での絞り込みは件数バッジ（`role="button" tabindex="0"`）から届く
 
+### 表示言語（i18n）
+
+**文言の正は Chrome 標準の `src/_locales/<lang>/messages.json` ただ1つ**（`en` と `ja`。
+`default_locale` は `en` なので、日英以外の言語のブラウザには英語で出る）。
+計画と進み具合は [`i18n-plan.md`](i18n-plan.md)。
+
+- manifest の `name` / `description` / `action.default_title` は `__MSG_extName__` などで引く。
+  **ストアの掲載名と短い説明もこれを言語別に使う**ので、直書きに戻さない
+- ページの文言は `src/shared/i18n.js`（`self.YTFi18n`）の `t(key, substitutions)` で引く。
+  ふだんは `chrome.i18n.getMessage()`（ブラウザの言語）。**利用者が言語を選んだときだけ**
+  （`storage.local` の `uiLanguage` が `en` / `ja`）、同じ messages.json を `fetch` で読み、
+  Chrome と同じ規則で組み立てる（`loadOverride()`）。manifest 由来の名前は選んだ言語に追従しない
+- HTML の中に `__MSG_` は効かない。静的な文言は `data-i18n` / `data-i18n-title` /
+  `data-i18n-placeholder` / `data-i18n-aria-label` を付け、`applyTo(document)` で流し込む
+- CSS の `__MSG_` は効くが、手動切替に追従しないので使わない
+- `i18n.js` は `theme.js` の次に**両ページの `<head>`** で読む（読み込み時には何も描かない）
+
 ---
 
 ## テストの仕組み
@@ -576,14 +593,18 @@ Service Worker が渡すのは `readCommentsForPopup(videoId, 'primary')` の結
   偽 document を借り、**引ける id の正だけ `options.html` の実物**に差し替える。
   `storage.local.set` が `onChanged` を発火するので、
   「保存 → 通知 → 塗り直し」の往復がそのまま見える
+- `test/helpers/i18n-mock.js` — `chrome.i18n` の偽物。**本物の `_locales/<locale>/messages.json`
+  を読む**（既定 `ja`）ので、文言を messages.json へ移しても既存の日本語のアサーションが
+  そのまま通る。popup / options のハーネスは `createChromeMock({ locale: 'en' })` で英語にもできる。
+  組み立ての規則は `i18n.js` とは別に書いてあり、`test/i18n.test.js` が全キーで突き合わせる
 - `test/helpers/theme-harness.js` — `shared/theme.js` を単体で評価する。
   `localStorage` は「無い」「例外を投げる」も作れる（写しが取れない環境で
   ページが死なないことを見るため）
 
 service-worker / dom-chat / popup / options のハーネスはいずれも、対象スクリプトより先に
 `src/shared/comment.js` を同じコンテキストで評価する（本番の読み込み順を再現するため）。
-popup ハーネスはさらに `theme.js`（`popup.html` の `<head>`）→ `comment.js` → `store.js`、
-options ハーネスは `theme.js` → `comment.js` の順に評価する（どちらも HTML と同じ順番）。
+popup ハーネスはさらに `theme.js` → `i18n.js`（`popup.html` の `<head>`）→ `comment.js` → `store.js`、
+options ハーネスは `theme.js` → `i18n.js` → `comment.js` の順に評価する（どちらも HTML と同じ順番）。
 
 
 Service Worker の状態は `session` 1つに畳んである（フェーズ6a）。`beginSession()` の

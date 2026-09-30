@@ -46,6 +46,21 @@ npm test
 - **`theme.js` は両ページの `<head>` から読み込む。** body の末尾に置くと、
   ライトテーマの利用者が起動直後に真っ黒な画面を見る（#15）。
 
+### 表示言語（i18n）
+
+- **文言の正は `src/_locales/<lang>/messages.json` だけ。** manifest の名前と説明は
+  `__MSG_extName__` / `__MSG_extDescription__` で引く（ストアが言語別に出し分けるのはこれ）。
+  直書きに戻すとストアの掲載名が全言語で同じになる。
+- **HTML に `__MSG_` は効かない**（効くのは manifest と CSS だけ）。`data-i18n*` を付けて
+  `YTFi18n.applyTo()` で流し込む。**CSS の `__MSG_` は使わない**（手動の言語切替に追従しない）。
+- **キーはソースにそのまま書く**（`t('key')` / `data-i18n="key"`）。文字列で組み立てると
+  `test/i18n.test.js` の「誰も引かないキー」に引っかかる。キーを足したら en と ja の両方に足す。
+- **コメントの ID に入る文字列を訳さない。** DOMモードの `eventText: 'スーパーステッカー'` は
+  `commentKeyOf()` でキーに混ざる。訳すと言語ごとに ID が変わり、履歴が二重に積まれる。
+  訳すのは popup の描画時だけ。
+- **表示文言で分岐しない**（`status.includes('取得中')` のような書き方）。言語が変わると壊れる。
+  状態はキーで持ち、文言は表示するときだけ引く。
+
 ### YouTube の DOM
 
 - **YouTube に依存する文字列は `SELECTORS` レジストリ以外に書かない**
@@ -201,7 +216,8 @@ npm test
 | [`docs/redesign-plan.md`](docs/redesign-plan.md) | 決定事項・目指す設計・フェーズ0〜9の実施記録。末尾に**残っている宿題** |
 | [`docs/audit-2026-09.md`](docs/audit-2026-09.md) | 2026-09-07 の全体監査。**凍結された記録**で行番号はいまのコードと対応しない。欠陥番号（#1〜#46 / #T1〜#T11）を引く索引として読む |
 | [`docs/release-checklist.md`](docs/release-checklist.md) | リリース手順と確認項目（機械／偽YouTube／実配信の3段）、各リリースの実施記録 |
-| [`docs/store-listing.md`](docs/store-listing.md) | ストア掲載文の正。短い説明は `manifest.json` の `description` と同一文字列 |
+| [`docs/store-listing.md`](docs/store-listing.md) | ストア掲載文の正。短い説明は `_locales/<lang>/messages.json` の `extDescription` と同一文字列 |
+| [`docs/i18n-plan.md`](docs/i18n-plan.md) | 英語対応の計画と段階ごとの進み具合 |
 | [`CHANGELOG.md`](CHANGELOG.md) | 利用者から見える変更だけ。2.0.0 から |
 
 `docs/` のこれ以外（`requirements.md` / `comment-display-design.md` /
@@ -211,7 +227,9 @@ npm test
 ### ソースの構成
 
 - `src/shared/` — 3環境から読む共有部分。`comment.js`（型・正規化・ID・枠と軸の判定）、
-  `store.js`（履歴＝IndexedDB。SW と popup が読む）、`theme.js`（テーマ。2ページが読む）
+  `store.js`（履歴＝IndexedDB。SW と popup が読む）、`theme.js`（テーマ。2ページが読む）、
+  `i18n.js`（文言の引き当て。2ページが読む）
+- `src/_locales/` — 表示文言の正（`en` / `ja`。Chrome 標準の messages.json）
 - `src/background/service-worker.js` — セッション、取り込み、番人、popup とのポート
 - `src/content/` — `content-script.js`（watch ページ。配信の特定と自動開始）、
   `dom-chat.js`（`live_chat` フレーム。DOMの読み取り）
