@@ -548,6 +548,22 @@ popup がコメントを取り込むたびに正準形へ通すので、メン�
 - **APIモードのメンバーイベント**（新規メンバー・連続・アップグレード・ギフト）は
   `shared/comment.js` が `eventKey` + `eventArgs` のコードで返し、popup が描画時に訳す（`EVENT_LABELS`）。
   ID に入る DOMモードの `eventText`（`'スーパーステッカー'` など）は訳さずに持ち、訳すのは描画時だけ
+- **手動切替**: options の言語セレクト（`#ui-language`）は `uiLanguage` を保存するだけで、描き直しは
+  テーマと同じく `storage.onChanged` の1本から（別のタブで変えても追従する）。続けて切り替えたときに
+  古い読み込みが後から勝たないよう、options の `applyLanguage()` は1本の列で順に流す。popup は開くたびに読む。
+  選択肢の「English」「日本語」はどの表示言語でもその言語自身の名前で出す（訳さない）
+- **JS があとから書き換える要素には `data-i18n` を付けない**（件数バッジ・ボタンの状態表示など）。
+  `applyTo()` が後から走ると JS の書いた値を消す。文言は状態（キーやフラグ）から描き、`textContent` で分岐しない
+- **API のエラー説明の対訳**は `shared/i18n.js` の `API_ERROR_KEYS`（`[パターン, () => t('apiErr…')]` を上から当てる）。
+  options の接続テストと、popup の unknown エラーの `detail` が使う。SW は使わない（自分の分類表が英語のまま突き合わせる）
+- **開発者向けの文字列は固定の英語**（`debugLog` / `console.*` / 表示しない理由や `error`）。`t()` は通さず、
+  messages.json にも足さない。コードコメントは日本語のまま
+- **日本語のリテラルは機械で止める**: `test/i18n.test.js` が `src/` の `_locales` 以外の .js / .html / .css の
+  非コメント行を見て、許可リストに無い日本語を落とす。許可は ID に入る `'スーパーステッカー'`、
+  YouTube の時刻表示を読む「午前/午後」、言語セレクトの「日本語」だけ。使われなくなった許可もテストが落とす
+- **文書**: 英語版は `README.en.md`（`README.md` と対。バージョンは `test/manifest.test.js` が突き合わせる）、
+  ストアの英語の掲載文は `docs/store-listing.md` の「・英語」の節、`CHANGELOG.md` は各バージョンに `### English` を併記。
+  それ以外の開発者向け文書（この文書を含む）とコードコメントは日本語のまま
 
 ---
 

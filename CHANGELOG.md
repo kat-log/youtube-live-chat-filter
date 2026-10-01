@@ -8,7 +8,30 @@
 
 1.10.0 以前は git のコミット履歴を参照（このファイルは 2.0.0 から始めた）。
 
+**英語の併記**: 英語対応のリリースから、各バージョンに日本語の項目のあとへ `### English` の節を足し、
+同じ内容を英語で書く（ファイルは分けない。片方だけ古くなるのを防ぐため）。
+用語は popup の英語表示（`src/_locales/en/messages.json`）に揃える。それより前のバージョンは訳さない。
+
+*From the release that adds English, each version has an `### English` section with the same changes in English.
+Earlier versions are in Japanese only.*
+
 ---
+
+## 未リリース
+
+### できるようになったこと
+
+- **英語で使えるようになりました。** ポップアップと設定画面が日本語と英語に対応しました。
+  ふだんはブラウザの言語に従い（日本語のブラウザではこれまでどおり日本語）、
+  設定画面の「言語」で English / 日本語 を選ぶこともできます。
+  拡張機能の名前とツールバーのツールチップは、Chrome の仕様でブラウザの言語のままです
+
+### English
+
+- **The extension is now available in English.** The popup and the settings page support English and Japanese.
+  They follow your browser language by default, and you can also choose English or 日本語 under
+  "Language" on the settings page. The extension name and the toolbar tooltip always follow the browser
+  language (a Chrome limitation)
 
 ## 2.2.1 — 2026-09-18
 

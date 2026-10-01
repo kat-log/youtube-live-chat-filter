@@ -1,5 +1,7 @@
 # YouTube特別コメントフィルター
 
+[English](README.en.md) | 日本語
+
 **バージョン:** v2.2.1（正は [`src/manifest.json`](src/manifest.json) の `version`。
 変更履歴は [`CHANGELOG.md`](CHANGELOG.md)）
 
@@ -51,6 +53,7 @@ YouTubeライブチャットから、**配信者・モデレーター・メン�
 - 時刻表示の切り替え（12/24時間・秒の有無）
 - ライブページでの自動起動、自動スクロール、デバッグモード
 - チャットを読み取れているかの表示（DOMモードで監視中のとき）
+- 表示言語は日本語と英語（ブラウザの言語に従う。設定画面で選ぶこともできる）
 
 ---
 
@@ -118,7 +121,9 @@ src/
 ├── shared/                # 2つ以上の実行環境から読む共通モジュール
 │   ├── comment.js         # コメントの型・正規化・ID（唯一の置き場）
 │   ├── store.js           # コメント履歴の保存（IndexedDB。唯一の置き場）
-│   └── theme.js           # テーマの適用（popup と設定画面が読む）
+│   ├── theme.js           # テーマの適用（popup と設定画面が読む）
+│   └── i18n.js            # 表示文言の引き当てと言語の手動切替（popup と設定画面が読む）
+├── _locales/              # 表示文言の正（en / ja。Chrome 標準の messages.json）
 ├── background/
 │   └── service-worker.js  # セッション管理・API通信・保存・番人（alarms）
 ├── content/
@@ -130,6 +135,8 @@ src/
 
 test/                      # node:test のテスト（拡張機能には同梱されない）
 docs/
+├── architecture.md        # 設計とテストの仕組み（仕組みの説明の正）
+├── i18n-plan.md           # 英語対応の計画と実施記録
 ├── audit-2026-09.md       # 全体監査（46件の欠陥）
 ├── redesign-plan.md       # 再設計計画（フェーズ0〜9）と実施記録
 ├── store-listing.md       # ストア掲載文の正
@@ -162,7 +169,7 @@ docs/
 ```bash
 npm install   # 初回のみ（開発ツールは ESLint だけ）
 npm run lint
-npm test      # node:test。約280件・依存パッケージなし
+npm test      # node:test。約430件・依存パッケージなし
 ```
 
 `npm ci` → `npm run lint` → `npm test` は push と PR で CI が回します
@@ -187,3 +194,6 @@ npm test      # node:test。約280件・依存パッケージなし
 | 6つのトグル | `shared/comment.js` の `DEFAULT_COMMENT_FILTERS`（`owner` / `moderator` / `sponsor` / `normal` / `superchat` / `membership`）と1対1で対応する |
 | 権限は最小限 | `manifest.json` の `permissions` / `host_permissions`。内容は `test/manifest.test.js` が固定している |
 | どこへも送信しない | 外部への通信は APIモードの `https://www.googleapis.com/youtube/v3/*` だけ（`service-worker.js` / `options.js`） |
+| 日本語と英語 | 文言は `src/_locales/{en,ja}/messages.json`。設定画面の言語セレクトが `storage.local.uiLanguage`（`auto` / `en` / `ja`）を保存し、`shared/i18n.js` の `loadOverride()` が読む。拡張機能の名前とツールチップは manifest 由来なのでブラウザの言語のまま |
+
+英語版の [`README.en.md`](README.en.md) と**対で**直す（バージョンの食い違いは `test/manifest.test.js` が落とす）。

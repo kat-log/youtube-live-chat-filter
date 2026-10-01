@@ -3,7 +3,13 @@
 ストアの掲載文はこのファイルを正とする。機能を追加・変更したら、コードと一緒にここも更新すること。
 （ストア側への反映は手動。デベロッパーダッシュボードに貼り付ける）
 
-最終更新: 2026-09-18（v2.2.1 / チャット欄からの発言者の絞り込み）
+最終更新: 2026-10-01（英語対応。名前・詳細な説明・スクリーンショット・告知文の英語版を追加）
+
+**英語版の掲載文**はこのファイルの「・英語」の付いた節にある。ストアは掲載文を言語ごとに持つので、
+ダッシュボードの「ストアの掲載情報」で言語に English を追加し、英語の節を貼る。
+**名前と短い説明だけは貼らない**（manifest の `__MSG_` が `_locales/<lang>/messages.json` から
+言語ごとに引くので、zip をアップロードすれば両方の言語に入る）。日英以外の言語の閲覧者には
+`default_locale` の `en` が出る。
 
 v1.11.0 でスーパーチャット・スーパーステッカーとメンバーシップ（新規加入・継続・ギフト）を
 取り込むようになった。「役割（配信者／モデレーター／メンバー／一般）」とは別に「種別」の軸が増え、
@@ -30,6 +36,29 @@ v1.12.4 / v1.12.5 では検索の取りこぼしを直し、全角・半角、�
 ポップアップが開くようになった（両モード）。ポップアップ自体の見た目は変わらないので、
 スクリーンショットの差し替えは要らない。
 
+**英語対応**（未リリース。`docs/i18n-plan.md`）で、ポップアップと設定画面が英語でも出るようになった。
+表示言語はブラウザに従い、設定画面で English / 日本語 を選ぶこともできる。英語の掲載文とスクリーンショットを
+新たに用意する（下の「・英語」の節）。日本語の見た目は変わっていないので、日本語のスクリーンショットはそのまま使える。
+
+---
+
+## 名前（75文字以内）
+
+`src/_locales/<lang>/messages.json` の `extName`。manifest の `name` と、ツールバーのツールチップ
+（`action.default_title`）にも使われる。ここを直したら messages.json も揃えること（`test/manifest.test.js` が突き合わせる）。
+
+日本語:
+
+```
+YouTube特別コメントフィルター
+```
+
+英語:
+
+```
+YouTube Special Comments Filter
+```
+
 ---
 
 ## 短い説明（132文字以内）
@@ -48,7 +77,7 @@ APIキー不要。YouTubeライブチャットの配信者・モデレーター�
 ## 短い説明・英語（132文字以内）
 
 英語（と、日英以外のすべての言語。`default_locale` が `en`）のストアで出る。`src/_locales/en/messages.json` の
-`extDescription` と同一文字列。英語版の詳細な説明は英語対応の段階6で足す（`docs/i18n-plan.md`）。
+`extDescription` と同一文字列。英語版の詳細な説明は下の「詳細な説明・英語」。
 
 ```
 No API key needed. Shows streamer, moderator and member comments, Super Chats and memberships from YouTube live chat, with search.
@@ -109,6 +138,7 @@ YouTubeのライブ配信では大量のコメントが流れるため、重要�
 	•	チャットを読み取れているかを表示。動いているのに増えないのか、読めていないのかがわかります
 	•	Tabキーだけでフィルターとダークモードを操作できます
 	•	長時間の配信でも軽いまま。数千件たまってもスクロールと検索が引っかかりません
+	•	表示言語は日本語と英語。ブラウザの言語に合わせて切り替わり、設定画面で選ぶこともできます
 
 使い方：
 	1.	YouTubeのライブ配信ページを開く
@@ -119,6 +149,110 @@ YouTubeのライブ配信では大量のコメントが流れるため、重要�
 ※ YouTube Data API v3モードを使う場合のみ、設定画面でAPIキーの登録が必要です。
 
 配信者の方、ライブ配信をよく見る方におすすめの便利ツールです！
+```
+
+---
+
+## 詳細な説明・英語
+
+上の日本語版の訳。**用語は popup の英語表示（`_locales/en/messages.json`）に揃える**:
+役割は Streamer / Moderator / Member / Regular、種別は Super Chat / Joins & gifts、
+プリセットは Special / All / None、ボタンは Start。画面と違う呼び方をすると、説明を読んだ人が画面で見つけられない。
+日本語版にある「YouTubeの絵文字」「Tabキー」などの各項目は、根拠も含めて下の「記載内容の根拠」がそのまま当てはまる。
+
+```
+Never miss the important comments in YouTube live chat!
+
+Live chat on YouTube moves fast, and important messages are easy to miss.
+This extension sorts the live chat into the six groups below, so you can show only what you want to see:
+
+✅ Streamer – messages from the streamer themselves
+✅ Moderator – important notices from the channel's moderators
+✅ Member – messages from fans who support the channel with a membership
+✅ Regular – messages from everyone else
+✅ Super Chat – paid messages and Super Stickers, shown with the amount; stickers are shown as images too
+✅ Joins & gifts – new members, membership milestones and gifted memberships
+
+★ Never lose a Super Chat or a new member again
+Super Chats and membership announcements arrive separately from regular comments,
+so they often scroll away before you notice them. Here they stay, with the amount and the announcement as they were.
+Super Chats can come from any viewer, so you can show or hide them independently of who sent them.
+
+★ No API key needed – it works right after you install it
+The default mode reads the live chat on the page directly. No setup required.
+(A mode that uses the YouTube Data API v3 is also available.)
+
+★ Change the filters later and past comments appear too
+The filters only change what is shown, so when you decide you want regular comments after all,
+everything that was hidden until then shows up at once. Nothing is lost.
+
+★ Only the permissions it needs
+It reads only YouTube live chat. It does not look at the URLs or titles of your other tabs.
+The only outside connection is the YouTube Data API v3, and only when you use API mode.
+
+Features:
+	•	Picks up the past comments still in the chat when you start, so you can catch up on a comment that already scrolled away
+	•	Real-time filtering (Streamer / Moderator / Member / Regular / Super Chat / Joins & gifts, one click each)
+	•	"Special", "All" and "None" presets to switch everything at once
+	•	Super Chats show their amount, and membership events show their announcement as is
+	•	Super Stickers are shown as images, so you can see which sticker was sent
+	•	Member-only emoji and YouTube emoji are shown as images, not as their names – just like in the chat
+	•	Counts for each group, so you can see at a glance how many Super Chats and new members a stream had
+	•	Click a user name to show only that person's comments
+	•	In the YouTube chat itself, Alt+click (Option+click on Mac) a name or avatar to open the popup filtered to that person
+	•	Keyword search to find comments that already scrolled away. Text copied from the chat and full-width/half-width differences still match
+	•	Avatars next to each comment, so you can tell who said what at a glance
+	•	Comments are saved per stream and stay after you close the popup (last 5 streams)
+	•	Dark mode, including the settings page
+	•	24-hour or 12-hour (AM/PM) time, with or without seconds
+	•	Starts automatically when you open a live stream page
+	•	Shows whether the chat is being read, so you can tell "no new comments" from "can't read the chat"
+	•	Filters and dark mode can be operated with the Tab key alone
+	•	Stays fast on long streams – scrolling and search stay smooth with thousands of comments
+	•	English and Japanese. Follows your browser language, or choose one on the settings page
+
+How to use:
+	1.	Open a YouTube live stream page
+	2.	Click the extension icon
+	3.	The important comments are shown
+
+* If it does not start automatically, click "Start".
+* An API key (set on the settings page) is only needed if you use the YouTube Data API v3 mode.
+
+A handy tool for streamers and anyone who watches live streams a lot!
+```
+
+---
+
+## 更新の告知文（英語対応のリリース。バージョン未定）
+
+英語対応を出すときに使う下書き。**バージョンを決めたら見出しと1行目の番号を直す**。
+日本語版は日本語の掲載情報に、英語版は English の掲載情報に貼る。
+英語の利用者にとってはこれが最初の告知なので、英語版は「何が変わったか」ではなく「英語で使えるようになった」だけを書く。
+権限は増えていないので、更新で拡張機能が無効化されることはない。
+
+```
+このバージョンから、英語でも使えるようになりました。
+
+■ 表示言語を選べるようになりました
+ポップアップと設定画面が、日本語と英語に対応しました。
+・ふだんはブラウザの言語に合わせて切り替わります（日本語のブラウザではこれまでどおり日本語です）
+・設定画面の「言語」で、English / 日本語 を選ぶこともできます
+・拡張機能の名前とツールバーのツールチップは、Chrome の仕様でブラウザの言語のままです
+
+・要求する権限は変わっていません
+```
+
+```
+The extension is now available in English.
+
+■ English is now supported
+The popup and the settings page are now available in English and Japanese.
+・They follow your browser language by default
+・You can also choose English or 日本語 under "Language" on the settings page
+・The extension name and the toolbar tooltip always follow the browser language (a Chrome limitation)
+
+・No new permissions are requested
 ```
 
 ---
@@ -281,6 +415,7 @@ chrome.alarms は Service Worker が終了していても拡張機能を起こ�
 | 設定画面もダークテーマになる | `options.html` が `shared/theme.js` を読み、`storage.onChanged` でポップアップ側の切り替えにも追従する |
 | 数千件でも軽い | popup の一覧は新着分だけを足す描画で、`bulk` 枠は検索を始めた時点で読む（決定4・5）。**実測は長時間配信での確認に依存する**ので、断定的な数字は書かない |
 | コピーした語でも検索が引ける | `shared/comment.js` の `normalizeForSearch()` が NFKC 正規化（全角・半角の吸収）＋不可視文字の除去＋ `trim()` を通す。検索対象の文字列（`searchText`）は取り込み時に1件ずつ作る |
+| 日本語と英語。ブラウザに従い、設定画面でも選べる | 文言は `src/_locales/{en,ja}/messages.json`、引くのは `shared/i18n.js` の `t()`。設定画面の言語セレクト（`#ui-language`）が `storage.local.uiLanguage` に `auto` / `en` / `ja` を保存する。**名前とツールバーのツールチップは manifest 由来なのでブラウザの言語のまま**（Chrome の仕様）。だから「すべての表示を選べる」とは書かない。日英以外のブラウザでは英語になる（`default_locale: "en"`） |
 
 ### 過去に古くなっていた記述
 
@@ -307,3 +442,17 @@ v2.0.0 では、DOMモードで監視している間だけトップバーに読�
 「読み取れているかが分かる」を掲載文で謳っているので、**1枚はこの点が写ったものにする**。
 それ以外の見た目（配色・余白・コメント行の構造）は v1.12.x から変えていないため、
 既存のスクリーンショットはそのまま使える。
+
+### スクリーンショット・英語
+
+英語の掲載情報には英語表示のスクリーンショットを別に用意する（日本語のものを流用すると、
+説明の「Streamer」「Super Chat」などが画面に見当たらない）。撮り方:
+
+- Chrome を `--lang=en-US` で起動する（または設定画面の言語で English を選ぶ。popup は次に開いたときに切り替わる）。
+  **ツールバーのツールチップと拡張機能の名前はブラウザの言語に従う**ので、名前が写るカットは `--lang=en-US` で撮る
+- 日本語版と同じ構図にする。最低限そろえるのは次の3枚:
+  1. 監視中のポップアップ（トップバーの読み取り状態の緑の点、件数バッジ、スパチャの金額チップとステッカー画像が写るもの）
+  2. フィルターのドロワーを開いたところ（Streamer / Moderator / Member / Regular / Super Chat / Joins & gifts と Special / All / None）
+  3. キーワード検索で絞り込んだところ（`Matches: N` が写るもの）
+- 配信のコメントそのものは英語の配信を使うと掲載文と噛み合う（日本語の配信でも誤りではない）
+- 420px の popup に英語の文言が収まることは段階2〜4で確認済み（`docs/i18n-plan.md` の実施記録）
