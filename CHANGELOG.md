@@ -17,7 +17,7 @@ Earlier versions are in Japanese only.*
 
 ---
 
-## 未リリース
+## 3.0.0 — 2026-10-01
 
 ### できるようになったこと
 
