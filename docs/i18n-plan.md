@@ -135,3 +135,36 @@
 - 実ブラウザ（Chromium 1194、`--load-extension`）で確認: manifest が読み込めること、
   `--lang=en-US` → 「YouTube Special Comments Filter」、`--lang=ja` → 「YouTube特別コメントフィルター」、
   `--lang=ko`（_locales に無い言語）→ 英語に落ちること。ストアの表示は提出後にしか確かめられない
+
+### 段階2: popup（2026-10-01）
+
+- `popup.html`: 静的な文言に `data-i18n` / `data-i18n-title` / `data-i18n-placeholder` / `data-i18n-aria-label` を付け、
+  直接書く文言は英語に（`<html lang="en">`）。開始・停止ボタンは SVG と並んでいるので、文言だけ `<span>` で包んだ
+  （`applyTo()` は textContent を書き換えるので、包まないとアイコンが消える）。
+  APIキーの案内は語順が言語で違うので「APIキーの取得先: <リンク>」の形に変えた
+- **JS が書き換える要素には `data-i18n` を付けない**（件数バッジ・合計）。`applyTo()` があとから走ると
+  JS が書いた数字を消すため。初期値は英語で書いておき、最初の `renderComments` で JS が書く
+- `popup.js`: 表示文言 109 行を `t('key')` に。キーは 128 個（en / ja 両方）。
+  初期化の冒頭（`runInitialization` の最初）で `applyLanguage()` = `loadOverride()` → `applyTo(document)`。
+  コンストラクタでは待たない（テストが `new PopupController()` を同期で使っている）
+- 文言で分岐していた2か所（罠3）:
+  - `updateStatus()` は文言ではなく状態キー（`STATUS_VIEW` の `'monitoring'` / `'monitoringDom'` / `'stopped'` …）を受け取り、
+    色（`status-online`）はキーから決める。`this.status` にキーを持つ
+  - 修復ボタンを戻すかどうかは `textContent === '修復中...'` ではなく、`fixExtension()` の中の
+    「タブの再読み込みに切り替えたか」のフラグで決める
+- 役割・種別のラベル表（`ROLE_LABELS` / `KIND_ICONS`）と `CHAT_HEALTH_VIEW` は、文言を関数（`() => t('…')`）で持つ。
+  読み込み時に固めると、`loadOverride()` より先に評価されて手動切替（段階4）に追従しない
+- 件数は「名前: 数」「Total: 12」「Matches: 3」のような数に依らない言い回しに（複数形の仕組みが無いため）。
+  ja は従来と同一文字列
+- CSS の `content: '日本語'` 2か所は `attr(data-hint)` / `"💡 " attr(data-label) ": "` にし、`applyLanguage()` が属性を入れる
+- スーパーステッカー（罠1）: 保存値 `'スーパーステッカー'` は popup.js の `SUPER_STICKER_EVENT_TEXT` と突き合わせ、
+  描画時（`eventTextOf()`）だけ `t('kindSuperSticker')` に差し替える。ID と保存値は変わらない
+- SW 由来の文言（`showDetailedError` に届く title/message/solution、自動停止の理由）は受け取ったまま表示。
+  自動停止の枠「取得が自動停止されました: …」だけは popup の文言なので訳した（理由の部分は段階3まで日本語）
+- テスト: `test/popup-i18n.test.js` を新設（en で開いて状態キー・件数・スーパーステッカー・修復ボタン・0件の文言、
+  popup.html の既定文言＝en の messages.json、CSS の `content` に日本語・`__MSG_` が無いこと）。
+  `popup-ui.test.js` の「チップ幅の跳ね（#19）」は、HTML の初期値を英語の JS 出力と突き合わせる形に書き直した。
+  「Service Worker との往復を待たずに塗る」は、冒頭の `storage.local` 読みのぶん待つマイクロタスクを増やした
+- 実ブラウザ（Chromium 1194、`--lang=en-US` / `ja`、420px）で popup を開き、取得中（DOM）・読み取れない表示・
+  4〜5桁の件数・エラー詳細・ドロワー・取得中のモード切替の吹き出しを確認。英語はトップバーにも件数バッジにも収まる。
+  日本語は従来どおり（文言が同じなので見た目も変わらない。長い状態表示のときに動画IDのチップが隠れるのも従来から）

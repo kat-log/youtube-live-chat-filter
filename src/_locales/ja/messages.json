@@ -6,5 +6,643 @@
   "extDescription": {
     "message": "APIキー不要。YouTubeライブチャットの配信者・モデレーター・メンバーのコメントとスーパーチャット・メンバー加入を取り込んで表示。フィルターは過去のコメントにも効き、キーワード検索や発言者での絞り込みにも対応。",
     "description": "manifest の description。ストアの「短い説明」として検索結果とカードに出る（132文字以内）。docs/store-listing.md と同一文字列"
+  },
+  "statusOffline": {
+    "message": "オフライン",
+    "description": "popup: 状態表示（初期値）"
+  },
+  "statusYouTubePage": {
+    "message": "YouTube ページ",
+    "description": "popup: 状態表示。YouTube の動画ページを開いている"
+  },
+  "statusNotYouTube": {
+    "message": "YouTube以外のページ",
+    "description": "popup: 状態表示。YouTube 以外のページ"
+  },
+  "statusError": {
+    "message": "エラー",
+    "description": "popup: 状態表示。エラー"
+  },
+  "statusMonitoring": {
+    "message": "取得中",
+    "description": "popup: 状態表示。APIモードで取得中"
+  },
+  "statusMonitoringDom": {
+    "message": "取得中（DOMモード）",
+    "description": "popup: 状態表示。DOMモードで取得中"
+  },
+  "statusStopped": {
+    "message": "停止済み",
+    "description": "popup: 状態表示。停止している"
+  },
+  "statusLiveChatFound": {
+    "message": "ライブチャット検出済み",
+    "description": "popup: 状態表示。ライブチャットが見つかった（未取得）"
+  },
+  "statusLiveChatNotFound": {
+    "message": "ライブチャット未検出",
+    "description": "popup: 状態表示。ライブチャットが見つからない"
+  },
+  "statusAutoStopped": {
+    "message": "自動停止",
+    "description": "popup: 状態表示。自動停止した"
+  },
+  "videoIdNotFound": {
+    "message": "未検出",
+    "description": "popup: 動画IDのチップ。IDが取れないとき"
+  },
+  "buttonStart": {
+    "message": "開始",
+    "description": "popup: 取得開始ボタン"
+  },
+  "buttonStop": {
+    "message": "停止",
+    "description": "popup: 取得停止ボタン"
+  },
+  "startTitleNeedsApiKey": {
+    "message": "APIキーを入力してください",
+    "description": "popup: 開始ボタンのツールチップ（APIキー未設定）。APIキー保存ボタンの空入力の警告にも使う"
+  },
+  "startTitleUseOnLivePage": {
+    "message": "YouTubeのライブ配信ページで使用してください",
+    "description": "popup: 開始ボタンのツールチップとエラー（ライブ配信ページ以外）"
+  },
+  "startTitleRunning": {
+    "message": "取得中です",
+    "description": "popup: 開始ボタンのツールチップ（取得中）"
+  },
+  "stopTitleNotRunning": {
+    "message": "取得停止中です",
+    "description": "popup: 停止ボタンのツールチップ（停止中）"
+  },
+  "settingsOpen": {
+    "message": "設定を開く",
+    "description": "popup: 歯車ボタンのツールチップ"
+  },
+  "settingsLabel": {
+    "message": "設定",
+    "description": "popup: 歯車ボタンの読み上げ名"
+  },
+  "healthWatchingTitle": {
+    "message": "ライブチャットを監視しています（まだコメントが流れていません）",
+    "description": "popup: DOMモードの読み取り状態のツールチップ（監視中・まだ0件）"
+  },
+  "healthReadingTitle": {
+    "message": "ライブチャットを読み取れています",
+    "description": "popup: DOMモードの読み取り状態のツールチップ（読めている）"
+  },
+  "healthSearching": {
+    "message": "チャットを探しています",
+    "description": "popup: DOMモードの読み取り状態（チャットを探している）"
+  },
+  "healthSearchingTitle": {
+    "message": "ライブチャットの一覧をまだ見つけられていません",
+    "description": "popup: 同上のツールチップ"
+  },
+  "healthNoChat": {
+    "message": "チャットが見つかりません",
+    "description": "popup: DOMモードの読み取り状態（チャットが無い）"
+  },
+  "healthNoChatTitle": {
+    "message": "ライブチャットの一覧が見つかりませんでした。ページを再読み込みしてください",
+    "description": "popup: 同上のツールチップ"
+  },
+  "healthUnreadable": {
+    "message": "チャットを読み取れません",
+    "description": "popup: DOMモードの読み取り状態（行はあるが読めない）"
+  },
+  "healthUnreadableTitle": {
+    "message": "チャットの行はありますが、内容を読み取れていません。YouTube側のDOM変更で拡張機能が対応できていない可能性があります",
+    "description": "popup: 同上のツールチップ"
+  },
+  "chatModeLabel": {
+    "message": "取得モード",
+    "description": "popup: 設定の「取得モード」"
+  },
+  "chatModeApi": {
+    "message": "APIモード",
+    "description": "popup: 取得モードの選択肢"
+  },
+  "chatModeDom": {
+    "message": "DOMモード（APIキー不要）",
+    "description": "popup: 取得モードの選択肢"
+  },
+  "chatModeDomHelp": {
+    "message": "DOMモード：APIキー不要でライブチャットのDOMを直接監視します。",
+    "description": "popup: DOMモードの説明"
+  },
+  "chatModeLockedHint": {
+    "message": "取得中はモードを切り替えられません",
+    "description": "popup: 取得中に取得モードへマウスを載せたときの吹き出し"
+  },
+  "chatModeLocked": {
+    "message": "取得中はモードを切り替えられません。取得を停止してから変更してください。",
+    "description": "popup: 取得中に取得モードを変えようとしたときのトースト"
+  },
+  "apiKeyPlaceholder": {
+    "message": "APIキーを入力...",
+    "description": "popup: APIキーの入力欄"
+  },
+  "buttonSave": {
+    "message": "保存",
+    "description": "popup: APIキーの保存ボタン"
+  },
+  "apiKeyHelp": {
+    "message": "APIキーの取得先:",
+    "description": "popup: APIキーの取得先の案内。直後に「Google Cloud Console」のリンクが続く"
+  },
+  "apiKeySaved": {
+    "message": "APIキーが保存されました",
+    "description": "popup: トースト"
+  },
+  "errApiKeyLoad": {
+    "message": "APIキーの読み込みに失敗しました。ページを再読み込みしてください。",
+    "description": "popup: エラー"
+  },
+  "errApiKeySave": {
+    "message": "APIキーの保存に失敗しました: $ERROR$",
+    "description": "popup: エラー",
+    "placeholders": {
+      "error": {
+        "content": "$1",
+        "example": "timeout"
+      }
+    }
+  },
+  "filtersLabel": {
+    "message": "フィルター",
+    "description": "popup: 設定の「フィルター」"
+  },
+  "presetSpecial": {
+    "message": "特別",
+    "description": "popup: フィルターのプリセット（配信者・モデレーター・スパチャ・加入）"
+  },
+  "presetAll": {
+    "message": "すべて",
+    "description": "popup: フィルターのプリセット"
+  },
+  "presetNone": {
+    "message": "なし",
+    "description": "popup: フィルターのプリセット"
+  },
+  "roleOwner": {
+    "message": "配信者",
+    "description": "popup: 役割の名前（フィルターと役割バッジ）"
+  },
+  "roleModerator": {
+    "message": "モデレーター",
+    "description": "popup: 役割の名前（フィルターと役割バッジ）"
+  },
+  "roleMember": {
+    "message": "メンバー",
+    "description": "popup: 役割の名前（フィルターと役割バッジ）"
+  },
+  "roleNormal": {
+    "message": "一般",
+    "description": "popup: 役割の名前（フィルターと役割バッジ）"
+  },
+  "filterSuperchat": {
+    "message": "スパチャ",
+    "description": "popup: フィルターの名前（スーパーチャット・ステッカー）"
+  },
+  "filterMembership": {
+    "message": "加入・ギフト",
+    "description": "popup: フィルターの名前（メンバー加入・ギフト）"
+  },
+  "darkModeLabel": {
+    "message": "ダークモード",
+    "description": "popup: 設定"
+  },
+  "hour12Label": {
+    "message": "12時間表記（AM/PM）",
+    "description": "popup: 設定"
+  },
+  "showSecondsLabel": {
+    "message": "秒を表示",
+    "description": "popup: 設定"
+  },
+  "buttonClearHistory": {
+    "message": "履歴クリア",
+    "description": "popup: 履歴を消すボタン"
+  },
+  "buttonRepair": {
+    "message": "修復",
+    "description": "popup: 修復ボタン"
+  },
+  "buttonRepairing": {
+    "message": "修復中...",
+    "description": "popup: 修復ボタン（修復中）"
+  },
+  "buttonReloadTab": {
+    "message": "タブを再読み込み",
+    "description": "popup: 修復に失敗したあとの修復ボタン"
+  },
+  "buttonReloadPage": {
+    "message": "ページを再読み込み",
+    "description": "popup: 初回インストール直後の修復ボタン"
+  },
+  "domReloadNotice": {
+    "message": "DOMモードを有効にするにはページのリロードが必要です",
+    "description": "popup: DOMモードに切り替えた直後の案内"
+  },
+  "buttonReload": {
+    "message": "リロード",
+    "description": "popup: DOMモードの案内のリロードボタン"
+  },
+  "searchPlaceholder": {
+    "message": "キーワードで絞り込み...",
+    "description": "popup: 検索欄"
+  },
+  "searchClear": {
+    "message": "検索をクリア",
+    "description": "popup: 検索欄の×ボタンのツールチップ"
+  },
+  "searchSearching": {
+    "message": "検索中…",
+    "description": "popup: 検索の件数欄（未読み込みを読んでいる間）"
+  },
+  "searchMatches": {
+    "message": "$COUNT$件一致",
+    "description": "popup: 検索の件数欄。数に依らない言い回しにする（複数形が無いため）",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "commentsTitle": {
+    "message": "コメント",
+    "description": "popup: コメント一覧の見出し"
+  },
+  "countTotal": {
+    "message": "$COUNT$件",
+    "description": "popup: いま表示している件数。数に依らない言い回しにする",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "countOwner": {
+    "message": "配信者: $COUNT$",
+    "description": "popup: 件数バッジ。役割名は roleOwner と同じにする",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "countModerator": {
+    "message": "モデレーター: $COUNT$",
+    "description": "popup: 件数バッジ",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "countMember": {
+    "message": "メンバー: $COUNT$",
+    "description": "popup: 件数バッジ。数えられないときは ? が入る",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "countNormal": {
+    "message": "一般: $COUNT$",
+    "description": "popup: 件数バッジ。数えられないときは ? が入る",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "countSuperchat": {
+    "message": "スパチャ: $COUNT$",
+    "description": "popup: 件数バッジ",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "countMembership": {
+    "message": "加入・ギフト: $COUNT$",
+    "description": "popup: 件数バッジ",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "countTitleLoad": {
+    "message": "クリックで読み込んで表示する（未読み込み$COUNT$件）",
+    "description": "popup: 件数バッジのツールチップ（まだ読み込んでいない件数がある）",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "countTitleHide": {
+    "message": "クリックで非表示にする（現在: 表示中）",
+    "description": "popup: 件数バッジのツールチップ（表示中）"
+  },
+  "countTitleShow": {
+    "message": "クリックで表示する（現在: 非表示）",
+    "description": "popup: 件数バッジのツールチップ（非表示）"
+  },
+  "userFilterSuffix": {
+    "message": "のコメントを表示中",
+    "description": "popup: 発言者で絞り込んでいるときのバー。発言者名のあとに続く"
+  },
+  "noCommentsYet": {
+    "message": "まだコメントがありません",
+    "description": "popup: 一覧が空（まだ1件も無い）"
+  },
+  "emptyScopePartial": {
+    "message": "$LOADED$件を検索・$UNLOADED$件は未読み込み",
+    "description": "popup: 検索で0件のときに添える「検索した範囲」（一部が未読み込み）",
+    "placeholders": {
+      "loaded": {
+        "content": "$1",
+        "example": "100"
+      },
+      "unloaded": {
+        "content": "$2",
+        "example": "20"
+      }
+    }
+  },
+  "emptyScopeAll": {
+    "message": "取得済み$TOTAL$件すべてを検索",
+    "description": "popup: 検索で0件のときに添える「検索した範囲」（全件）",
+    "placeholders": {
+      "total": {
+        "content": "$1",
+        "example": "120"
+      }
+    }
+  },
+  "emptyKeywordFiltered": {
+    "message": "「$KEYWORD$」に一致する$HITS$件は、いまのフィルターで非表示です",
+    "description": "popup: キーワードには一致するがフィルターで隠れている",
+    "placeholders": {
+      "keyword": {
+        "content": "$1",
+        "example": "hello"
+      },
+      "hits": {
+        "content": "$2",
+        "example": "3"
+      }
+    }
+  },
+  "emptyKeywordNoMatch": {
+    "message": "「$KEYWORD$」に一致するコメントはありません（$SCOPE$）",
+    "description": "popup: キーワードに一致するコメントが無い。SCOPE は emptyScope*",
+    "placeholders": {
+      "keyword": {
+        "content": "$1",
+        "example": "hello"
+      },
+      "scope": {
+        "content": "$2",
+        "example": "..."
+      }
+    }
+  },
+  "emptyAllFiltered": {
+    "message": "表示できるコメントがありません（取得済み$TOTAL$件はフィルターで非表示です）",
+    "description": "popup: コメントはあるが全部フィルターで隠れている",
+    "placeholders": {
+      "total": {
+        "content": "$1",
+        "example": "120"
+      }
+    }
+  },
+  "loading": {
+    "message": "読み込み中...",
+    "description": "popup: 読み込み中の表示"
+  },
+  "kindSuperChat": {
+    "message": "スーパーチャット",
+    "description": "popup: 種別バッジの名前"
+  },
+  "kindSuperSticker": {
+    "message": "スーパーステッカー",
+    "description": "popup: 種別バッジの名前と、スーパーステッカーの行の一行（保存値は日本語のまま。表示時に訳す）"
+  },
+  "kindMembership": {
+    "message": "メンバーシップ",
+    "description": "popup: 種別バッジの名前"
+  },
+  "kindGift": {
+    "message": "メンバーシップギフト",
+    "description": "popup: 種別バッジの名前"
+  },
+  "initStep1": {
+    "message": "Step 1/2: 設定を読み込み中...",
+    "description": "popup: 初期化の進み具合"
+  },
+  "initStep2": {
+    "message": "Step 2/2: Content Script通信テスト...",
+    "description": "popup: 初期化の進み具合"
+  },
+  "initDone": {
+    "message": "初期化完了！",
+    "description": "popup: 初期化の進み具合"
+  },
+  "initError": {
+    "message": "初期化エラーが発生しました",
+    "description": "popup: 初期化の進み具合"
+  },
+  "errInitFailed": {
+    "message": "拡張機能の初期化に失敗しました。ブラウザを再起動してください。",
+    "description": "popup: エラー"
+  },
+  "errCannotConnect": {
+    "message": "拡張機能に接続できません: $ERROR$",
+    "description": "popup: エラー（Service Worker に繋がらない）",
+    "placeholders": {
+      "error": {
+        "content": "$1",
+        "example": "timeout"
+      }
+    }
+  },
+  "errPortDisconnected": {
+    "message": "Service Worker との接続が切れました",
+    "description": "popup: エラー（Service Worker との接続が切れた）"
+  },
+  "errConnectionLost": {
+    "message": "拡張機能の接続が失われました。ポップアップを開き直してください。",
+    "description": "popup: エラー"
+  },
+  "repairContentScript": {
+    "message": "Content Scriptを修復中...",
+    "description": "popup: 修復の進み具合"
+  },
+  "repairExtension": {
+    "message": "拡張機能を修復中...",
+    "description": "popup: 修復の進み具合"
+  },
+  "repairReinjecting": {
+    "message": "Content Scriptを再注入中...",
+    "description": "popup: 修復の進み具合"
+  },
+  "repairWaiting": {
+    "message": "注入完了を待機中...",
+    "description": "popup: 修復の進み具合"
+  },
+  "repairTesting": {
+    "message": "通信をテスト中...",
+    "description": "popup: 修復の進み具合"
+  },
+  "repairDone": {
+    "message": "修復完了！",
+    "description": "popup: 修復の進み具合"
+  },
+  "repairSucceeded": {
+    "message": "拡張機能を修復しました！",
+    "description": "popup: トースト"
+  },
+  "repairFailed": {
+    "message": "修復失敗",
+    "description": "popup: 修復の進み具合とエラーの見出し"
+  },
+  "repairFailedMessage": {
+    "message": "自動修復に失敗しました",
+    "description": "popup: エラーの本文"
+  },
+  "repairFailedSolution": {
+    "message": "このタブを手動で再読み込みしてください。Ctrl+F5 または Cmd+R を押してください。",
+    "description": "popup: エラーの解決方法"
+  },
+  "errReloadTabFailed": {
+    "message": "タブの再読み込みに失敗しました。手動でページを更新してください。",
+    "description": "popup: エラー"
+  },
+  "errReloadAfterInstall": {
+    "message": "初回インストール後はページのリロードが必要です。以下のボタンで再読み込みしてください。",
+    "description": "popup: エラー（初回インストール直後）"
+  },
+  "reloadAfterInstallTitle": {
+    "message": "初回インストール後のリロードが必要です",
+    "description": "popup: エラーの見出し（初回インストール直後）"
+  },
+  "reloadAfterInstallMessage": {
+    "message": "インストール直後は既存のタブにContent Scriptが読み込まれていません",
+    "description": "popup: エラーの本文（初回インストール直後）"
+  },
+  "reloadAfterInstallSolution": {
+    "message": "「ページを再読み込み」ボタンで現在のタブを更新すると解決します。2回目以降は自動的に動作します。",
+    "description": "popup: エラーの解決方法（初回インストール直後）"
+  },
+  "errHistoryLoad": {
+    "message": "コメント履歴の読み込みに失敗しました。",
+    "description": "popup: エラー"
+  },
+  "errDomStartFailed": {
+    "message": "DOMモードでの取得開始に失敗しました。",
+    "description": "popup: エラー"
+  },
+  "errApiKeyMissing": {
+    "message": "YouTube Data APIキーが設定されていません。オプション画面で設定してください。",
+    "description": "popup: エラー"
+  },
+  "errStartNoChat": {
+    "message": "取得を開始できませんでした。ライブチャットが見つからない可能性があります。",
+    "description": "popup: エラー"
+  },
+  "errApiKeyNotSet": {
+    "message": "APIキーが設定されていません。オプション画面で設定してください。",
+    "description": "popup: エラー"
+  },
+  "errNotLive": {
+    "message": "このビデオはライブ配信ではないか、チャットが無効になっています。",
+    "description": "popup: エラー"
+  },
+  "errQuota": {
+    "message": "YouTube API の使用量制限に達しました。しばらく待ってから再試行してください。",
+    "description": "popup: エラー"
+  },
+  "errStartFailed": {
+    "message": "取得の開始に失敗しました: $ERROR$",
+    "description": "popup: エラー",
+    "placeholders": {
+      "error": {
+        "content": "$1",
+        "example": "timeout"
+      }
+    }
+  },
+  "errStopFailed": {
+    "message": "取得を停止できませんでした",
+    "description": "popup: エラー"
+  },
+  "errStopNoContentScript": {
+    "message": "ページを再読み込みしてみてください。（Content scriptが読み込まれていません...）",
+    "description": "popup: エラー"
+  },
+  "errStopFailedDetail": {
+    "message": "取得の停止に失敗しました: $ERROR$",
+    "description": "popup: エラー",
+    "placeholders": {
+      "error": {
+        "content": "$1",
+        "example": "timeout"
+      }
+    }
+  },
+  "autoStopped": {
+    "message": "取得が自動停止されました: $REASON$",
+    "description": "popup: 自動停止の通知。REASON は Service Worker が送ってくる文言",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "stream ended"
+      }
+    }
+  },
+  "errorDefaultTitle": {
+    "message": "エラーが発生しました",
+    "description": "popup: エラーの見出し（既定）"
+  },
+  "errorDefaultSolution": {
+    "message": "設定を確認してください",
+    "description": "popup: エラーの解決方法（既定）"
+  },
+  "errorSolutionLabel": {
+    "message": "解決方法",
+    "description": "popup: エラーの解決方法の前に付く見出し"
+  },
+  "buttonRetry": {
+    "message": "再試行",
+    "description": "popup: エラーのボタン（取得をやり直す）"
+  },
+  "buttonOptions": {
+    "message": "設定画面",
+    "description": "popup: エラーのボタン（設定画面を開く）"
+  },
+  "buttonApiKeySettings": {
+    "message": "APIキー設定",
+    "description": "popup: エラーのボタン（設定画面を開く。APIキーのエラー）"
+  },
+  "buttonReloadPageShort": {
+    "message": "ページ再読込",
+    "description": "popup: エラーのボタン（タブを再読み込みする）"
   }
 }

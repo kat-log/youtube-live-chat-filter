@@ -413,7 +413,8 @@ body {
 }
 
 .mode-select-wrapper.monitoring:hover::after {
-    content: '取得中はモードを切り替えられません';
+    /* 文言は popup.js が t() で data-hint に入れる（CSS の __MSG_ は手動の言語切替に追従しない） */
+    content: attr(data-hint);
     position: absolute;
     bottom: 100%;
     left: 50%;
@@ -1348,7 +1349,8 @@ body {
 }
 
 .error-solution::before {
-    content: "💡 解決方法: ";
+    /* 見出しは popup.js が t() で data-label に入れる */
+    content: "💡 " attr(data-label) ": ";
     font-weight: 700;
     color: var(--text-primary);
 }
