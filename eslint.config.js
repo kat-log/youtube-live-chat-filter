@@ -81,6 +81,13 @@ const SHARED_PAGE_GLOBALS = {
   localStorage: 'readonly'
 };
 
+// shared/i18n.js は手動で選ばれた言語の messages.json を fetch で読む。
+// fetch は Service Worker・popup・options のどこにでも在る（content script からは読まない）
+const SHARED_I18N_GLOBALS = {
+  ...SHARED_GLOBALS,
+  fetch: 'readonly'
+};
+
 // Service Worker（MV3）が触るグローバル。window も document も無い
 const WORKER_GLOBALS = {
   ...ES_TIMERS,
@@ -153,6 +160,16 @@ module.exports = [
       ecmaVersion: 2022,
       sourceType: 'script',
       globals: SHARED_PAGE_GLOBALS
+    },
+    rules: RULES
+  },
+  {
+    // messages.json を fetch する shared（これも src/shared/**/*.js の後に置く）
+    files: ['src/shared/i18n.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'script',
+      globals: SHARED_I18N_GLOBALS
     },
     rules: RULES
   },

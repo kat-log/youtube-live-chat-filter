@@ -17,12 +17,14 @@ const vm = require('node:vm');
 const path = require('node:path');
 
 const { createFakeDocument } = require('./popup-harness');
+const { createI18nMock } = require('./i18n-mock');
 
 const SRC_DIR = path.join(__dirname, '..', '..', 'src');
 const OPTIONS_PATH = path.join(SRC_DIR, 'options', 'options.js');
 const OPTIONS_HTML_PATH = path.join(SRC_DIR, 'options', 'options.html');
-// options.html の <script> の並び。theme.js は <head>、comment.js は body の末尾
+// options.html の <script> の並び。theme.js と i18n.js は <head>、comment.js は body の末尾
 const THEME_PATH = path.join(SRC_DIR, 'shared', 'theme.js');
+const I18N_PATH = path.join(SRC_DIR, 'shared', 'i18n.js');
 const SHARED_PATH = path.join(SRC_DIR, 'shared', 'comment.js');
 
 /** options.html に書かれている id を全部拾う。偽 document が引ける id の正はこれ */
@@ -37,8 +39,9 @@ function idsInOptionsHtml() {
  * @param {object} [options]
  * @param {object} [options.storage]   storage.local の中身
  * @param {object} [options.responses] runtime.sendMessage の action -> 応答
+ * @param {string} [options.locale]    chrome.i18n が引く言語（既定 'ja'）
  */
-function createChromeMock({ storage = {}, responses = {} } = {}) {
+function createChromeMock({ storage = {}, responses = {}, locale = 'ja' } = {}) {
   const calls = { runtimeMessages: [], storageWrites: [] };
   const storageListeners = [];
 
@@ -72,6 +75,7 @@ function createChromeMock({ storage = {}, responses = {} } = {}) {
       },
       onChanged: { addListener: fn => storageListeners.push(fn) }
     },
+    i18n: createI18nMock({ locale }),
     /** テストから storage の変更を流す（別のページで変えられた状況） */
     __emitStorageChange(changes) {
       for (const fn of storageListeners) fn(changes, 'local');
@@ -108,6 +112,7 @@ function loadOptions({ storage = {}, responses = {}, chrome = createChromeMock({
   const expose = ';globalThis.__options = { OptionsController };';
 
   vm.runInContext(fs.readFileSync(THEME_PATH, 'utf8'), context, { filename: THEME_PATH });
+  vm.runInContext(fs.readFileSync(I18N_PATH, 'utf8'), context, { filename: I18N_PATH });
   vm.runInContext(fs.readFileSync(SHARED_PATH, 'utf8'), context, { filename: SHARED_PATH });
   vm.runInContext(fs.readFileSync(OPTIONS_PATH, 'utf8') + expose, context, { filename: OPTIONS_PATH });
 

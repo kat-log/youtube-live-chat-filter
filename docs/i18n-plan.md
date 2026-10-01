@@ -1,0 +1,137 @@
+# 英語対応（i18n）計画
+
+> 進み具合は末尾の「実施記録」。
+
+## Context
+
+`docs/redesign-plan.md` の「残っている宿題 1. i18n」を独立計画として実施する。
+ストアはグローバル公開で日本語・英語の掲載があり、**Chrome 標準の `_locales/` 仕様**で作れば
+ストアの拡張機能名・短い説明が閲覧者の言語ごとに自動で切り替わる（利用者の狙いはここ）。
+加えて、オプション画面で表示言語を手動で切り替えたい。
+
+決まったこと（利用者回答）:
+- 仕組みは **Chrome 標準の `_locales/<lang>/messages.json` を唯一の正**にする。
+  手動切替は同じ messages.json を自前で読むだけの薄い上乗せで、独自形式は作らない
+- `default_locale` は **`en`**（日英以外のブラウザは英語。日本語 Chrome の既存利用者は変化なし）
+- スコープ: UI 全部 + ストア掲載文の英語版 + README/CHANGELOG の英語版 + コンソールログの英語化
+
+### 標準仕様でどこまで行けるか（調査結果）
+| 対象 | 標準の `chrome.i18n` | 手動切替 |
+| --- | --- | --- |
+| manifest の `name` / `description` / `default_title`（`__MSG_x__`） | ○ ストアもこれを言語別に使う | ✕（ブラウザ言語固定。仕様上変えられない） |
+| popup / options / SW の文言 | ○ `chrome.i18n.getMessage()` | △ `getMessage` は上書き不可 → 同じ messages.json を `fetch(chrome.runtime.getURL(...))` して引く |
+| HTML 内の `__MSG_` | ✕ 非対応（manifest と CSS のみ） | — |
+| CSS 内の `__MSG_` | ○ だが手動切替に追従しない → **使わない** | — |
+| 複数形 | ✕ 仕組みなし → 「件数: 3」型の数に依らない言い回しにする | — |
+
+## 調査で分かった現状
+
+日本語リテラル（コメント除く行数）: `popup.js` 109 / `service-worker.js` 52 / `options.html` 51 /
+`popup.html` 48 / `options.js` 25 / `dom-chat.js` 5 / `comment.js` 4 / CSS の `content:` 2（`popup.css:416`, `:1351`）/
+`manifest.json` 2。`content-script.js`・`store.js`・`theme.js` は 0。
+**DOM の読み取り（`SELECTORS` / `KIND_BY_TAG` / `AUTHOR_TYPE_ATTR`）はタグと id だけで、YouTube の表示言語に依存しない。**
+`parseTimestampText()`（`dom-chat.js:703`）は「午前/午後」と「AM/PM」の両方を既に読める。
+
+### 罠（設計に効くもの）
+1. **ID に入る文字列を訳さない。** DOMモードの `eventText: 'スーパーステッカー'`（`dom-chat.js:559`）は
+   `commentKeyOf()`（`comment.js:276`）でキーに混ざる。訳すとロケールごとに ID が変わり履歴が二重に積まれる。
+   → **保存値は正準トークンのまま据え置き、popup の描画時に訳す**（`kind === 'supersticker'` の既定文言は表示側で差し替え）。
+2. **APIモードの `eventText`（`comment.js:146-173`）** は ID に入らない（API の `id` を使う）が IndexedDB に保存される。
+   → 構造化データ（`eventKey` + 引数）として持ち、表示時に訳す。旧履歴の日本語 `eventText` はそのまま表示（移行しない）。
+   `searchText` は取り込み時に作るので、検索は「保存時の言語」で当たる — 許容し docs に明記。
+3. **文言で分岐しているコード**: `popup.js:2198` `status.includes('取得中')`、`popup.js:739` `textContent === '修復中...'`。
+   → 状態キー（`'monitoring'` 等）で分岐し、文言は表示だけにする。
+4. **SW が表示文言を作って popup に送っている**: `ERROR_TYPES`（`service-worker.js:63-134`）、
+   `cleanErrorMessage` の対訳表（`:146-155`、`options.js:35-41` と重複）、`autoStopMonitoring(reason)`（`:1761`, `:2083`）、
+   ストレージ上限エラー（`:450`）、`reconcile` の理由（`:591-603`, デバッグ用）。
+   → **SW はコード（`errorType` / `reasonKey`）だけを送り、文言は popup / options が引く。**
+   手動切替を SW に同期させずに済み、「正は1か所」にも合う。重複する対訳表は `shared/i18n.js` に1つにまとめる。
+
+## 設計
+
+### ファイル
+- `src/_locales/en/messages.json`, `src/_locales/ja/messages.json` — 唯一の正。キーは `camelCase`、
+  `description` 欄に使われる場所を書く。置換は Chrome 標準の `placeholders`（`$COUNT$`）。
+- `src/shared/i18n.js`（新規）— `self.YTFi18n`。`shared/` の流儀どおり即時関数で包み、ガードで包まない。
+  - `t(key, subs)`: 上書き辞書があればそこから、無ければ `chrome.i18n.getMessage(key, subs)`、それも空ならキー自身
+    （欠落が画面で目に見える）。上書き辞書の置換は Chrome と同じ `$1`/名前付き placeholder 規則を自前で解決。
+  - `loadOverride()`: `storage.local.uiLanguage`（`'auto' | 'en' | 'ja'`、既定 `'auto'`）を読み、`auto` 以外なら
+    `fetch(chrome.runtime.getURL('_locales/<lang>/messages.json'))` して辞書に。
+  - `applyTo(root)`: `data-i18n`（textContent）/ `data-i18n-title` / `data-i18n-placeholder` / `data-i18n-aria-label` を走査、
+    `document.documentElement.lang` も設定。
+  - `API_ERROR_KEYS`: `'exceeded your quota' → 'errQuota'` などの対訳表（SW と options の重複を統合）。
+- 読み込み: popup / options は `theme.js` の次に `<head>` で読み、`popup.js` / `options.js` の初期化冒頭で
+  `await loadOverride(); applyTo(document)`。HTML の静的文言は **en の文言をそのまま書いておく**（JS が走る前の既定）。
+  SW は表示文言を持たなくなるので `i18n.js` を読まない（`API_ERROR_KEYS` が要るなら `importScripts`）。
+- CSS の `content: '日本語'` 2箇所 → `content: attr(data-hint)` にし、JS が `t()` で属性を入れる。
+
+### 手動切替
+- options に「言語: 自動（ブラウザに従う）/ English / 日本語」のセレクトを追加（`uiLanguage`）。
+- popup は開くたびに読むので即反映。options はその場で `loadOverride(); applyTo(document)` し直す。
+- manifest 由来の名前・ツールバーのツールチップはブラウザ言語のまま（仕様上の制約として options に注記）。
+
+### manifest
+- `"default_locale": "en"`、`name` / `description` / `action.default_title` を `__MSG_extName__` 等に。
+- `description` は各言語 132 文字以内。ja は現行文字列をそのまま移す（`docs/store-listing.md` と同一の原則を維持）。
+
+## 実施フェーズ（各フェーズ単独でリリース可能・テスト緑を保つ）
+
+1. **土台**: `_locales/{en,ja}`、`shared/i18n.js`、manifest の `__MSG_`、テストハーネスに `chrome.i18n` モック
+   （**実際の `_locales/ja/messages.json` を読んで置換まで再現**するので既存の日本語アサーション約390件はそのまま通る。
+   ロケールは引数で `en` にも切替可）。`eslint.config.js` の globals 追加。
+2. **popup**: `popup.html` に `data-i18n*`、`popup.js` の 109 行を `t()` に。状態分岐をキー化（罠3）、
+   役割・種別ラベル表（`popup.js:112-123`）をキー参照に、件数表示を複数形不要の言い回しに、
+   スーパーステッカーの表示時翻訳（罠1）、CSS `content` の置換。
+3. **SW → コード化**: `ERROR_TYPES` を `errorType` だけ送る形に、自動停止理由を `reasonKey` に、
+   APIモードの `eventText` を構造化（罠2）。popup 側で引く。
+4. **options**: `options.html` / `options.js`、`API_ERROR_KEYS` への統合、言語セレクト（手動切替）。
+5. **コンソールログの英語化**: `debugLog` / `console.warn` の日本語を英語に（`t()` は通さない。開発者向け固定英語）。
+   コードコメントは日本語のまま。
+6. **文書**: `docs/store-listing.md` に英語版（名前・短い説明＝`_locales/en` と同一文字列・詳細説明・スクショ文言）、
+   `README.en.md`、`CHANGELOG` の英語併記方針、`docs/architecture.md` に i18n の節、
+   `CLAUDE.md` に罠（ID に入る文字列を訳さない／文言で分岐しない／SW は文言を作らない／HTML に `__MSG_` は効かない／
+   CSS の `__MSG_` は手動切替に追従しない）、`docs/redesign-plan.md` の宿題1を完了扱いに。
+   リリース時はストアのデベロッパーダッシュボードで英語の詳細説明・スクショを別途登録（**提出は要確認操作**）。
+
+## 機械で防ぐもの（新規テスト `test/i18n.test.js`）
+- en と ja のキー集合・placeholder 名が一致する
+- ソース中の `t('...')` / `data-i18n*="..."` / `__MSG_...__` が全部 messages.json に存在する（逆に未使用キーも検出）
+- `description` が各ロケール 132 文字以内、`extName` が 75 文字以内
+- **popup / options / SW の非コメント行に日本語リテラルが残っていない**（許可リスト: `parseTimestampText` の「午前/午後」、
+  ID に入る正準トークン `'スーパーステッカー'`）
+- `t()` の上書き辞書の置換が `chrome.i18n.getMessage` と同じ結果になる
+- `manifest.test.js`: description と `docs/store-listing.md` の突き合わせを `_locales/*/messages.json` 経由に変更
+
+## 重要ファイル
+`src/manifest.json`, `src/shared/i18n.js`（新）, `src/_locales/*/messages.json`（新）, `src/popup/popup.{html,js,css}`,
+`src/options/options.{html,js}`, `src/background/service-worker.js`, `src/shared/comment.js`,
+`test/helpers/*-harness.js`, `test/manifest.test.js`, `test/i18n.test.js`（新）, `eslint.config.js`, `CLAUDE.md`, `docs/*`
+
+## 検証
+- `npm run lint` / `npm test`（既存は ja モックで緑、追加の en ケースで英語表示を確認）
+- 実ブラウザ: `src/` を読み込み、Chrome の言語を英語／日本語で起動
+  （`--lang=en` / `--lang=ja`）、および options の手動切替で popup・options・エラー表示・自動停止の文言を確認。
+  **420px の popup で英語の長い文言がトップバー・件数バッジで折り返し崩れしないか**を偽 YouTube で目視
+  （`docs/release-checklist.md` の偽YouTube段に項目追加）
+- 既存履歴（日本語 `eventText` 入り）を持ったまま英語表示にして、二重積み・ID 変化が無いこと
+
+## 実施記録
+
+### 段階1: 土台（2026-09-30）
+
+- `src/_locales/{en,ja}/messages.json` を新設。キーはまだ `extName` / `extDescription` の2つだけ
+  （使われていないキーは `test/i18n.test.js` が落とすので、文言は段階2以降で使う側と一緒に足す）
+- `manifest.json`: `default_locale: "en"`、`name` / `description` / `action.default_title` を `__MSG_` に。
+  日本語の短い説明は従来と同一文字列。英語の短い説明は
+  「No API key needed. Shows streamer, moderator and member comments, Super Chats and memberships from YouTube live chat, with search.」（130文字）
+- `src/shared/i18n.js`（`self.YTFi18n`）: `t()` / `loadOverride()` / `applyTo()` / `currentLanguage()` /
+  `formatMessage()`。popup と options の `<head>` で `theme.js` の次に読むが、**まだ誰も呼んでいない**
+  （呼び出しと `data-i18n*` は段階2・4）。`API_ERROR_KEYS` は使う段階4で足す
+- テスト: `test/helpers/i18n-mock.js`（本物の messages.json を読む `chrome.i18n`。既定 `ja`）を
+  popup / options のハーネスに差した。SW のハーネスには差していない（SW は文言を作らない設計なので、
+  段階3で要ると分かったときに足す）。`test/i18n.test.js` を新設、`test/manifest.test.js` の説明文の突き合わせを
+  `_locales` 経由に変更。`docs/store-listing.md` に「短い説明・英語」の節を追加
+- 計画からの変更: 「日本語リテラルが残っていない」テストは、残っているうちは書けないので段階2〜4の最後に入れる
+- 実ブラウザ（Chromium 1194、`--load-extension`）で確認: manifest が読み込めること、
+  `--lang=en-US` → 「YouTube Special Comments Filter」、`--lang=ja` → 「YouTube特別コメントフィルター」、
+  `--lang=ko`（_locales に無い言語）→ 英語に落ちること。ストアの表示は提出後にしか確かめられない

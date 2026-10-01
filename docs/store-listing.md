@@ -34,14 +34,27 @@ v1.12.4 / v1.12.5 では検索の取りこぼしを直し、全角・半角、�
 
 ## 短い説明（132文字以内）
 
-ストアの検索結果とカード表示に出る。**`src/manifest.json` の `description` がそのまま使われる**ので、
-ここを直したら manifest も同じ文言に揃えること。
+ストアの検索結果とカード表示に出る。**`src/manifest.json` の `description`（= `__MSG_extDescription__`）が
+言語ごとに `src/_locales/<lang>/messages.json` の `extDescription` から引かれる**ので、
+ここを直したら messages.json も同じ文言に揃えること（`test/manifest.test.js` が突き合わせる）。
+日本語は `_locales/ja`、英語は `_locales/en`。
 
 ```
 APIキー不要。YouTubeライブチャットの配信者・モデレーター・メンバーのコメントとスーパーチャット・メンバー加入を取り込んで表示。フィルターは過去のコメントにも効き、キーワード検索や発言者での絞り込みにも対応。
 ```
 
 （108文字）
+
+## 短い説明・英語（132文字以内）
+
+英語（と、日英以外のすべての言語。`default_locale` が `en`）のストアで出る。`src/_locales/en/messages.json` の
+`extDescription` と同一文字列。英語版の詳細な説明は英語対応の段階6で足す（`docs/i18n-plan.md`）。
+
+```
+No API key needed. Shows streamer, moderator and member comments, Super Chats and memberships from YouTube live chat, with search.
+```
+
+（130文字）
 
 ---
 

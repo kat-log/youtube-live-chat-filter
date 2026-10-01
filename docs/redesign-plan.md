@@ -2472,6 +2472,8 @@ host_permissions のパスは通信の可否には効かない（「権限は宣
 
 ### 1. i18n（英語対応）
 
+**→ 独立した計画 [`i18n-plan.md`](i18n-plan.md) で着手した（2026-09-30、段階1 完了）。**
+
 約125個の日本語リテラルが `popup.js` / `options.js` / `content-script.js` /
 `dom-chat.js` と `manifest.json` に散っている。`chrome.i18n` + `_locales/` へ
 移すのは独立した計画にすべき（「やらないこと」に挙げたまま）。
