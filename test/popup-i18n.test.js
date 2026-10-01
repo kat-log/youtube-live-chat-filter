@@ -1,10 +1,12 @@
-// popup の英語対応（docs/i18n-plan.md の段階2）のテスト。
+// popup の英語対応（docs/i18n-plan.md の段階2・3）のテスト。
 //
 // 既存の popup のテストは chrome.i18n のモックが ja で動いている（日本語の
 // アサーションをそのまま通すため）。ここでは en で開いて、
 //   - 文言で分岐していた箇所（罠3）が、英語でも同じように動くこと
 //   - ID に入る文字列を訳していないこと（罠1）
 //   - popup.html に直接書いた英語が、en の messages.json と食い違っていないこと
+//   - Service Worker がコードだけで送るもの（エラー詳細・自動停止の理由）と、
+//     APIモードのメンバーイベント（eventKey）を、popup が英語で引くこと（段階3）
 // を見る。
 
 const fs = require('node:fs');
@@ -141,15 +143,18 @@ describe('英語で開いた popup', () => {
     assert.equal(c.comments[0].eventText, 'スーパーステッカー');
   });
 
-  test('スーパーステッカー以外の eventText は受け取ったまま出す（段階3まで）', () => {
+  test('コードを持たない eventText（DOMモード・旧履歴の日本語）は受け取ったまま出す', () => {
+    // DOMモードの eventText は YouTube の表示そのもの（ID のキーにも混ざる）。
+    // 旧履歴の日本語も移行しない（罠2）
     const c = controller();
     c.setComments([{
-      id: 'api_member', kind: 'membership', role: 'member', displayName: 'Bob',
+      id: 'old_member', kind: 'membership', role: 'member', displayName: 'Bob',
       message: '', eventText: '新規メンバー', publishedAt: '2026-09-07T13:02:00.000Z'
     }]);
     c.renderComments();
     const [row] = readCommentRows(c.elements.commentsList);
     assert.equal(findByClass(row.element, 'comment-event').textContent, '新規メンバー');
+    assert.equal(c.comments[0].eventText, '新規メンバー');
   });
 
   test('役割バッジの名前も英語になる', () => {
@@ -197,10 +202,156 @@ describe('英語で開いた popup', () => {
     assert.equal(c.elements.fixExtensionBtn.dataset.action, 'reload');
   });
 
-  test('自動停止の理由（SW が作った文言）は、そのまま英語の枠に入れる', () => {
+});
+
+// Service Worker は文言を作らない（段階3）。届くのはコードだけで、popup が引く
+describe('英語で開いた popup: Service Worker から届くコード', () => {
+  const errorView = c => ({
+    title: c.elements.errorTitle.textContent,
+    message: c.elements.errorDescription.textContent,
+    solution: c.elements.errorSolution.textContent
+  });
+
+  test('エラー詳細は errorType から英語の見出し・説明・解決方法を引く', () => {
     const c = controller();
-    c.showAutoStopNotification('配信が終了しました');
+    c.popup.chrome.__deliver({
+      action: 'showDetailedError',
+      errorInfo: { errorType: 'quotaExceeded', action: 'waitOrUpgrade', severity: 'medium',
+        originalError: 'exceeded your quota', pattern: 'exceeded your quota' }
+    });
+    assert.deepEqual(errorView(c), {
+      title: EN.errQuotaTitle.message,
+      message: EN.errQuotaMessage.message,
+      solution: EN.errQuotaSolution.message
+    });
+    assert.equal(c.elements.errorTitle.textContent, 'API quota reached');
+    assert.equal(c.elements.errorDetails.style.display, 'block');
+    assert.equal(c.elements.errorDetails.className, 'error-details severity-medium');
+    assert.equal(c.elements.optionsButton.textContent, 'Cloud Console');
+  });
+
+  test('SW が送る errorType は全部 en と ja の文言を持つ', () => {
+    const types = ['apiKeyInvalid', 'apiKeyMissing', 'quotaExceeded', 'rateLimited', 'liveChatDisabled',
+      'liveChatNotFound', 'videoNotLive', 'network', 'forbidden', 'storageQuota', 'unknown'];
+    for (const locale of ['en', 'ja']) {
+      const c = controller(locale);
+      for (const errorType of types) {
+        const { title, message, solution } = c.errorTextOf({ errorType });
+        for (const text of [title, message, solution]) {
+          assert.ok(text && !/^err[A-Z]/.test(text), `${locale}: ${errorType} の文言が引けない（${text}）`);
+        }
+      }
+    }
+  });
+
+  test('保存領域の上限も英語になる', () => {
+    const c = controller();
+    c.showDetailedError({ errorType: 'storageQuota', action: 'clearHistory', severity: 'medium' });
+    assert.equal(c.elements.errorTitle.textContent, 'Storage is full');
+    assert.equal(c.elements.errorDescription.textContent, 'Saving the comment history is failing');
+  });
+
+  test('分類できないエラーは API の説明（訳さない）を出し、無ければ既定の説明', () => {
+    const c = controller();
+    c.showDetailedError({ errorType: 'unknown', detail: 'YouTube API Error: Bad Request', severity: 'medium' });
+    assert.equal(c.elements.errorTitle.textContent, 'Connection error');
+    assert.equal(c.elements.errorDescription.textContent, 'YouTube API Error: Bad Request');
+
+    c.showDetailedError({ errorType: 'unknown', detail: '', severity: 'medium' });
+    assert.equal(c.elements.errorDescription.textContent, EN.errUnknownMessage.message);
+
+    // popup より新しい SW が知らない errorType を送ってきても、unknown として出す
+    c.showDetailedError({ errorType: 'somethingNew', severity: 'low' });
+    assert.equal(c.elements.errorTitle.textContent, 'Connection error');
+  });
+
+  test('popup 自身が出すエラー（errorType なし）は渡した文言のまま', () => {
+    const c = controller();
+    c.showDetailedError({ title: 'T', message: 'M', solution: 'S', action: 'reload', severity: 'high' });
+    assert.deepEqual(errorView(c), { title: 'T', message: 'M', solution: 'S' });
+  });
+
+  test('日本語では従来と同じ文言になる', () => {
+    // 文言を SW から messages.json に移しただけで、日本語の表示は変わらない
+    const c = controller('ja');
+    c.showDetailedError({ errorType: 'quotaExceeded', action: 'waitOrUpgrade', severity: 'medium' });
+    assert.deepEqual(errorView(c), {
+      title: 'API使用量制限に達しました',
+      message: '1日のYouTube Data API使用量制限に達しました（1日10,000リクエスト制限）',
+      solution: '明日の00:00（太平洋標準時）にリセットされます。今すぐ使いたい場合はGoogle Cloud Consoleで制限を増やしてください'
+    });
+  });
+
+  test('自動停止の理由は reasonKey から英語で引く', () => {
+    const c = controller();
+    c.isMonitoring = true;
+    c.popup.chrome.__deliver({ action: 'monitoringAutoStopped', reasonKey: 'tabClosed' });
+    assert.equal(c.isMonitoring, false);
     assert.equal(c.elements.errorMessage.textContent,
-      'ℹ️ Collecting stopped automatically: 配信が終了しました');
+      'ℹ️ Collecting stopped automatically: The YouTube tab was closed');
+    assert.equal(c.elements.statusIndicator.textContent, EN.statusAutoStopped.message);
+  });
+
+  test('知らない reasonKey は理由を伏せる（コードをそのまま見せない）', () => {
+    const c = controller();
+    c.showAutoStopNotification('somethingNew');
+    assert.equal(c.elements.errorMessage.textContent, 'ℹ️ Collecting stopped automatically');
+  });
+});
+
+describe('英語で開いた popup: APIモードのメンバーイベント', () => {
+  const apiItem = (id, type, details) => ({
+    id,
+    snippet: { type, publishedAt: '2026-09-07T13:02:00.000Z', ...details },
+    authorDetails: { displayName: `fan-${id}`, isChatSponsor: true }
+  });
+  const items = [
+    apiItem('new', 'newSponsorEvent', { newSponsorDetails: { memberLevelName: 'Gold' } }),
+    apiItem('upgrade', 'newSponsorEvent', { newSponsorDetails: { isUpgrade: true } }),
+    apiItem('milestone', 'memberMilestoneChatEvent', { memberMilestoneChatDetails: { memberMonth: 12, userComment: 'thanks' } }),
+    apiItem('gift', 'membershipGiftingEvent', { membershipGiftingDetails: { giftMembershipsCount: 5, giftMembershipsLevelName: 'Gold' } }),
+    apiItem('gift0', 'membershipGiftingEvent', {})
+  ];
+  // 履歴の読み込みと同じく formatComment（正準形への変換）を通してから載せる
+  const load = c => c.setComments(items.map(item => c.formatComment(item)));
+  const eventTexts = c => {
+    load(c);
+    c.renderComments();
+    return Object.fromEntries(readCommentRows(c.elements.commentsList)
+      .map(row => [row.id, findByClass(row.element, 'comment-event').textContent]));
+  };
+
+  test('描画するときに eventKey を英語で引く（レベル名は訳さずに添える）', () => {
+    assert.deepEqual(eventTexts(controller()), {
+      new: 'New member · Gold',
+      upgrade: 'Upgraded membership',
+      milestone: 'Member for 12 mo',
+      gift: 'Gifted memberships: 5 · Gold',
+      gift0: 'Gifted memberships'
+    });
+  });
+
+  test('日本語では従来と同じ文言になる', () => {
+    assert.deepEqual(eventTexts(controller('ja')), {
+      new: '新規メンバー · Gold',
+      upgrade: 'メンバーシップをアップグレード',
+      milestone: '12か月連続のメンバー',
+      gift: 'メンバーシップギフト 5個 · Gold',
+      gift0: 'メンバーシップギフト'
+    });
+  });
+
+  test('検索は popup の表示言語の文言で当たる', () => {
+    const c = controller();
+    load(c);
+    c.searchKeyword = 'New member';
+    c.searchQuery = 'new member';
+    c.renderComments();
+    const shown = readCommentRows(c.elements.commentsList).filter(row => !row.hidden).map(row => row.id);
+    assert.deepEqual(shown, ['new']);
+    // 保存値はコードのまま（文言は焼き付けない）
+    const stored = c.comments.find(comment => comment.id === 'new');
+    assert.equal(stored.eventKey, 'newMember');
+    assert.equal(stored.eventText, null);
   });
 });

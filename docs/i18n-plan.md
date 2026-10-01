@@ -168,3 +168,66 @@
 - 実ブラウザ（Chromium 1194、`--lang=en-US` / `ja`、420px）で popup を開き、取得中（DOM）・読み取れない表示・
   4〜5桁の件数・エラー詳細・ドロワー・取得中のモード切替の吹き出しを確認。英語はトップバーにも件数バッジにも収まる。
   日本語は従来どおり（文言が同じなので見た目も変わらない。長い状態表示のときに動画IDのチップが隠れるのも従来から）
+
+### 段階3: SW → コード化（2026-10-01）
+
+- **エラー**: `service-worker.js` の `ERROR_SOLUTIONS` から文言を抜き、`errorType` / `action` / `severity` だけの
+  分類表にした。`analyzeError()` が返すのも同じ形（＋ `originalError` / `pattern`）。errorType は
+  `apiKeyInvalid` / `apiKeyMissing` / `quotaExceeded` / `rateLimited` / `liveChatDisabled` / `liveChatNotFound` /
+  `videoNotLive` / `network` / `forbidden` / `storageQuota` / `unknown`。
+  popup は `ERROR_TEXT`（errorType → 見出し・説明・解決方法の `t()`）から引く（`errorTextOf()`）。
+  知らない errorType（SW だけ新しい版など）は `unknown` 扱い。errorType を持たない errorInfo は
+  popup 自身が出すエラー（再読み込みの案内など。すでに `t()` 済み）なので渡された文言のまま。
+  キー名は `err<種類>Title` / `Message` / `Solution`（33個）。日本語は従来の SW の文言と同一
+- **分類できないエラー**（`unknown`）は、API が返した説明をタグだけ除いて `detail` で送り、popup は
+  それを説明欄にそのまま出す（こちらの文言ではないので訳さない。無ければ `errUnknownMessage`）
+- **`cleanErrorMessage` の対訳表（`improveErrorMessage`）は SW から消した。** 突き合わせは分類表が英語のまま
+  行うので、日本語への置き換えは表示のためだけにあった。分類表に無い `Access denied` / `Bad Request` の2つだけは
+  以前は `unknown` の説明欄に日本語で出ていたが、いまは API の英語の説明がそのまま出る（見出しと解決方法は訳される）。
+  **段階4の `API_ERROR_KEYS` は options の対訳表だけを置き換えればよい**（SW 側の重複はもう無い）。
+  popup の `detail` にも同じ表を当てたくなったら、そのとき popup から引く
+- **ストレージ上限**: `notifyStorageQuotaError()` は `errorType: 'storageQuota'` を送るだけにした
+- **自動停止**: `autoStopMonitoring(reasonKey)`。呼び出しは1か所（タブが閉じられた = `'tabClosed'`）。
+  popup は `AUTO_STOP_REASONS[reasonKey]` を `t('autoStopped', …)` に入れる。知らない reasonKey は
+  コードを見せずに `autoStoppedNoReason`（「取得が自動停止されました」）
+- **対象外にしたもの**: `staleSessionReason()` の理由（「タブ情報なし」など）と `discardSession()` の引数は
+  `debugLog` に出るだけで表示しないので、段階5（ログの英語化）で扱う。`openUserFilter()` が content script へ
+  返す `error: '発言者名が空です'` も、受け取り側が表示しない（片道の通知）ので同じく段階5
+- **SW のハーネスに i18n モックは足していない**（足す必要が出なかった）。SW のテストには「分類表は
+  errorType / action / severity だけを持つ」「popup へ届く errorInfo に title / message / solution が無い」
+  「分類できないエラーの値に日本語が無い」「自動停止は reasonKey を送り reason を送らない」を足した
+- **APIモードの eventText（罠2）**: `apiDetailOf()` はメンバーイベントを `eventKey` + `eventArgs` で返し、
+  `eventText` は `null`。`eventKey` は `newMember` / `memberUpgrade` / `memberMilestone`（`{ months }`）/
+  `gift`（`{ count }`。数が無ければ `null`）。メンバーシップのレベル名は `eventArgs.level` に入れ、
+  訳さずに「 · レベル名」で後ろへ添える（従来と同じ形）。正準形に `eventKey` / `eventArgs` を足し、
+  `fromDomMessage()` も引き継ぐ（正準形を通し直しても落ちない）。popup の `EVENT_LABELS` / `eventLabelOf()` が訳し、
+  `eventTextOf()` はまず `eventKey` を見て、無ければ従来どおり `eventText`（DOMモード・旧履歴の日本語はそのまま）
+  - 英語の文言は複数形を避けた: 「New member」「Upgraded membership」「Member for 12 mo」
+    「Gifted memberships: 5」「Gifted memberships」
+  - スーパーステッカーの `eventText: 'スーパーステッカー'` は APIモードでも正準トークンのまま
+    （DOMモードと同じ扱い。訳すのは段階2の `eventTextOf()`）
+  - **DOMモードの `eventText`（dom-chat.js）は変えていない**（罠1）
+- **調べて分かったこと（計画の罠2の前提の訂正）**: APIモードのコメントは IndexedDB に **API の item のまま**
+  保存されていて（`fetchLiveChatMessages` が `bucket` だけ焼き付けて渡す）、`eventText` も `searchText` も
+  保存されていない。正準形に通すのは popup が取り込むとき（`formatComment()`）で、開くたびに作り直す。
+  だから「旧履歴の日本語 eventText」は APIモードの保存データには実質無く、更新後は旧履歴の API item も
+  `eventKey` で訳される（storage.local からの移行も形を変えずに移すだけなので同じ）。
+  `eventText` が文言のまま出るのは DOMモードの行（YouTube の画面の文言）と、`eventText` を持った形で
+  保存されたもの。「旧履歴の日本語はそのまま表示」の約束は `eventTextOf()` の後段として残してある
+- **検索の言語**: `searchText` を作るのは `shared/comment.js` で、このファイルは表示言語を知らない
+  （SW と content script からも読まれる）。そこで `buildSearchText(comment, eventLabel)` に訳した一行を
+  渡せる口を足し、popup の `formatComment()` が `eventKey` を持つ行だけ作り直す。結果として
+  **APIモードのメンバーイベントは「popup を開いたときの表示言語」で当たる**（計画で許容していた
+  「保存時の言語」より良い）。**「保存時の言語」で当たるのは、DOMモードの `eventText`（YouTube の表示言語）と
+  旧履歴の日本語 `eventText`**（どちらも訳し直さない）。`docs/architecture.md` の「キーワード検索」に明記した
+- `docs/architecture.md` の「表示言語」の節に「SW は文言を作らない」「メンバーイベントはコードで持つ」を足した
+- テスト: `test/popup-i18n.test.js` に、en でのエラー詳細（errorType から引く・Cloud Console のボタン・
+  ストレージ上限・unknown の detail と既定・知らない errorType・errorType 無しは素通し）、全 errorType が
+  en / ja で引けること、ja で従来と同じ文言、自動停止（reasonKey・知らない reasonKey）、
+  APIモードのメンバーイベント（en / ja の文言、英語で検索して当たる、保存値はコードのまま）を足した。
+  `test/shared-comment.test.js` に `eventKey` / `eventArgs` の形、通し直し、スーパーステッカーと DOMモードは
+  据え置き、の各テスト。`popup-port.test.js` の自動停止は reasonKey に直した
+- 実ブラウザ（Chromium 1194、`--lang=en-US` / `ja`、420px）で popup を開き、**本物の SW から本物のポートで**
+  `notifyPopupOfError(analyzeError(…))`（quota / 分類できないエラー）・`notifyStorageQuotaError()`・
+  `autoStopMonitoring('tabClosed')`・APIモードのメンバーイベント3種を流して表示を確認。どれも横にはみ出さない
+  （`scrollWidth` = 420）。日本語の文言は従来と同一

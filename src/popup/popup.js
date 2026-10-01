@@ -80,6 +80,7 @@ function escapeRegExp(text) {
 // 一般視聴者・メンバーのどちらからも飛んでくるので、役割とは別枠で数えて絞る
 const {
     FILTER_KEYS,
+    buildSearchText,
     filterKeyOf,
     isCommentEnabled,
     normalizeComment,
@@ -136,6 +137,49 @@ const KIND_ICONS = {
 // commentKeyOf() で ID のキーに混ざる。**保存値は訳さない**（言語ごとに ID が
 // 変わり、履歴が二重に積まれる）。訳すのは描画するときだけ（eventTextOf）
 const SUPER_STICKER_EVENT_TEXT = 'スーパーステッカー';
+
+// APIモードのメンバーイベント（shared/comment.js の eventKey / eventArgs）の一行。
+// 保存値はコードのままで、訳すのは描画時と検索文字列を作るときだけ（罠2）。
+// level（メンバーシップのレベル名）は配信者が付けた名前なので訳さずに後ろへ添える
+const EVENT_LABELS = {
+    newMember:       () => t('eventNewMember'),
+    memberUpgrade:   () => t('eventMemberUpgrade'),
+    memberMilestone: args => t('eventMemberMilestone', String(args.months ?? '?')),
+    gift:            args => (args.count ? t('eventGiftCount', String(args.count)) : t('eventGift'))
+};
+
+// eventKey を持つコメントの一行を、いまの表示言語で組み立てる。
+// 持たない（DOMモード・旧履歴の日本語 eventText）なら null
+function eventLabelOf(comment) {
+    // hasOwn で引く（'constructor' のような値でプロトタイプの関数を拾わない）
+    if (!Object.hasOwn(EVENT_LABELS, comment.eventKey ?? '')) return null;
+    const label = EVENT_LABELS[comment.eventKey];
+    const args = comment.eventArgs || {};
+    const text = label(args);
+    return args.level ? `${text} · ${args.level}` : text;
+}
+
+// Service Worker が送ってくるエラーの errorType → 見出し・説明・解決方法。
+// SW は文言を作らない（docs/i18n-plan.md の段階3）ので、文言の正はここと messages.json。
+// errorType の一覧は service-worker.js の ERROR_SOLUTIONS と notifyStorageQuotaError
+const ERROR_TEXT = {
+    apiKeyInvalid: () => [t('errApiKeyInvalidTitle'), t('errApiKeyInvalidMessage'), t('errApiKeyInvalidSolution')],
+    apiKeyMissing: () => [t('errApiKeyMissingTitle'), t('errApiKeyMissingMessage'), t('errApiKeyMissingSolution')],
+    quotaExceeded: () => [t('errQuotaTitle'), t('errQuotaMessage'), t('errQuotaSolution')],
+    rateLimited: () => [t('errRateLimitTitle'), t('errRateLimitMessage'), t('errRateLimitSolution')],
+    liveChatDisabled: () => [t('errLiveChatDisabledTitle'), t('errLiveChatDisabledMessage'), t('errLiveChatDisabledSolution')],
+    liveChatNotFound: () => [t('errLiveChatNotFoundTitle'), t('errLiveChatNotFoundMessage'), t('errLiveChatNotFoundSolution')],
+    videoNotLive: () => [t('errVideoNotLiveTitle'), t('errVideoNotLiveMessage'), t('errVideoNotLiveSolution')],
+    network: () => [t('errNetworkTitle'), t('errNetworkMessage'), t('errNetworkSolution')],
+    forbidden: () => [t('errForbiddenTitle'), t('errForbiddenMessage'), t('errForbiddenSolution')],
+    storageQuota: () => [t('errStorageQuotaTitle'), t('errStorageQuotaMessage'), t('errStorageQuotaSolution')],
+    unknown: () => [t('errUnknownTitle'), t('errUnknownMessage'), t('errUnknownSolution')]
+};
+
+// 自動停止の理由（Service Worker の autoStopMonitoring が送る reasonKey）→ 文言
+const AUTO_STOP_REASONS = {
+    tabClosed: () => t('autoStopReasonTabClosed')
+};
 
 // 取得の状態（トップバーの表示）。popup の中では状態をこのキーで持ち、
 // 文言は表示するときだけ引く。以前は文言そのものを渡して
@@ -493,7 +537,7 @@ class PopupController {
         } else if (request.action === 'domChatHealth') {
             this.updateChatHealth(request.health);
         } else if (request.action === 'monitoringAutoStopped') {
-            this.handleAutoStop(request.reason);
+            this.handleAutoStop(request.reasonKey);
         } else if (request.action === 'showDetailedError') {
             // DOMモードではAPIキー関連エラーを表示しない
             if (this.chatMode === 'dom' && request.errorInfo?.action === 'setApiKey') {
@@ -1632,6 +1676,11 @@ class PopupController {
     // 足すのは表示のためのフィールドだけ
     formatComment(comment) {
         const normalized = normalizeComment(comment);
+        // APIモードのメンバーイベントは、訳した一行でも検索に当たるようにする。
+        // 検索文字列は popup がコメントを取り込むたびに作り直すので、
+        // 当たるのは「popup を開いたときの表示言語」の文言
+        const eventLabel = eventLabelOf(normalized);
+        if (eventLabel) normalized.searchText = buildSearchText(normalized, eventLabel);
         const [roleLabelOf, roleClass] = ROLE_LABELS[normalized.role] || ROLE_LABELS.normal;
         const roleLabel = roleLabelOf();
 
@@ -1893,6 +1942,9 @@ class PopupController {
     // 本文とは別に出す一行の、表示用の文言。保存値（eventText）は訳さずに持ち、
     // 訳すのはここだけ（SUPER_STICKER_EVENT_TEXT の但し書き）
     eventTextOf(comment) {
+        // APIモードのメンバーイベントはコード（eventKey）で届く
+        const eventLabel = eventLabelOf(comment);
+        if (eventLabel) return eventLabel;
         if (comment.kind === 'supersticker' && comment.eventText === SUPER_STICKER_EVENT_TEXT) {
             return t('kindSuperSticker');
         }
@@ -2495,8 +2547,9 @@ class PopupController {
         }
     }
     
-    handleAutoStop(reason) {
-        debugLog('[Popup] Monitoring auto-stopped:', reason);
+    // reasonKey は Service Worker が送る理由のコード（AUTO_STOP_REASONS）
+    handleAutoStop(reasonKey) {
+        debugLog('[Popup] Monitoring auto-stopped:', reasonKey);
         
         // 監視状態を更新
         this.isMonitoring = false;
@@ -2505,16 +2558,17 @@ class PopupController {
         this.updateChatHealth(null);
         
         // 自動停止の通知を表示
-        this.showAutoStopNotification(reason);
+        this.showAutoStopNotification(reasonKey);
     }
     
-    showAutoStopNotification(reason) {
+    showAutoStopNotification(reasonKey) {
         // 既存のエラーメッセージをクリア
         this.showError('');
         
-        // 自動停止メッセージを表示。reason はまだ Service Worker が作った文言のまま
-        // 届く（コード化は docs/i18n-plan.md の段階3）
-        const message = t('autoStopped', reason);
+        // 自動停止メッセージを表示。理由はコードで届くので、ここで訳す。
+        // 知らないコード（SW だけ新しい版など）は理由を伏せた文言にする
+        const reasonText = Object.hasOwn(AUTO_STOP_REASONS, reasonKey ?? '') ? AUTO_STOP_REASONS[reasonKey] : null;
+        const message = reasonText ? t('autoStopped', reasonText()) : t('autoStoppedNoReason');
         this.showMessage(message, 'info');
         
         // エラーメッセージエリアを一時的に情報表示に使用
@@ -2540,10 +2594,11 @@ class PopupController {
         // 通常のエラーメッセージを隠す
         this.elements.errorMessage.style.display = 'none';
         
+        const { title, message, solution } = this.errorTextOf(errorInfo);
         // HTMLタグを除去してから表示
-        const cleanTitle = stripHtmlTags(errorInfo.title || t('errorDefaultTitle'));
-        const cleanMessage = stripHtmlTags(errorInfo.message || errorInfo.originalError || '');
-        const cleanSolution = stripHtmlTags(errorInfo.solution || t('errorDefaultSolution'));
+        const cleanTitle = stripHtmlTags(title || t('errorDefaultTitle'));
+        const cleanMessage = stripHtmlTags(message || errorInfo.originalError || '');
+        const cleanSolution = stripHtmlTags(solution || t('errorDefaultSolution'));
         
         // 詳細エラー情報を表示
         this.elements.errorTitle.textContent = cleanTitle;
@@ -2562,6 +2617,23 @@ class PopupController {
         // 自動的に非表示にしない（ユーザーが解決するまで表示継続）
     }
     
+    /**
+     * エラー詳細の文言。Service Worker からは errorType（コード）だけが届くので、
+     * ここで ERROR_TEXT から引く。popup 自身が出すエラー（再読み込みの案内など）は
+     * すでに t() で訳した title / message / solution を持ってくるので、そのまま使う。
+     * 知らない errorType は unknown として扱う（SW だけ新しい版になったときなど）
+     */
+    errorTextOf(errorInfo) {
+        if (!errorInfo.errorType) {
+            return { title: errorInfo.title, message: errorInfo.message, solution: errorInfo.solution };
+        }
+        const isKnown = Object.hasOwn(ERROR_TEXT, errorInfo.errorType);
+        const [title, message, solution] = (isKnown ? ERROR_TEXT[errorInfo.errorType] : ERROR_TEXT.unknown)();
+        // 分類できなかったエラーは、API が返した説明（detail。訳さない）があればそれを出す
+        const isUnknown = !isKnown || errorInfo.errorType === 'unknown';
+        return { title, message: (isUnknown && errorInfo.detail) || message, solution };
+    }
+
     hideDetailedError() {
         this.elements.errorDetails.style.display = 'none';
     }
@@ -2573,8 +2645,8 @@ class PopupController {
      * 以前は「1分後に再試行」「明日再試行」「接続確認」「再確認」と出し分けていたが、
      * handleRetry() は常に「エラーを閉じて取得を開始し直す」だけで、
      * 5種類のうち4つは嘘だった。popup は閉じれば死ぬので「1分待ってから押す」
-     * を代行することもできない。**待ち時間の情報は solution の文（SW の
-     * ERROR_SOLUTIONS が持っている）に残っている**ので、ボタンからは落として、
+     * を代行することもできない。**待ち時間の情報は solution の文（errorType ごとの
+     * err*Solution が持っている）に残っている**ので、ボタンからは落として、
      * 実際にできる2つ——取得のやり直しと、タブの再読み込み——だけを名乗らせる。
      *
      * 押したときの行き先は dataset.action で伝える。`onclick` を代入すると

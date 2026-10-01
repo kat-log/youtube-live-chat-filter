@@ -114,6 +114,67 @@ describe('正準形への変換', () => {
   });
 });
 
+// メンバー加入・連続・アップグレード・ギフトの一行は文言ではなくコードで持つ
+// （docs/i18n-plan.md の罠2）。このファイルは Service Worker からも読まれ、
+// 表示言語を知らない。訳すのは popup の描画時
+describe('APIモードのメンバーイベント', () => {
+  const item = (type, details) => ({
+    id: `api-${type}`,
+    snippet: { type, publishedAt: '2026-09-07T13:02:00.000Z', ...details },
+    authorDetails: { displayName: 'fan', isChatSponsor: true }
+  });
+  const JAPANESE = /[぀-ヿ一-鿿]/;
+
+  test('種類ごとに eventKey と引数になり、eventText は持たない', () => {
+    const cases = [
+      [item('newSponsorEvent', { newSponsorDetails: { memberLevelName: 'Gold' } }),
+        'newMember', { level: 'Gold' }],
+      [item('newSponsorEvent', { newSponsorDetails: { isUpgrade: true } }),
+        'memberUpgrade', {}],
+      [item('memberMilestoneChatEvent', { memberMilestoneChatDetails: { memberMonth: 12, userComment: 'yay' } }),
+        'memberMilestone', { months: 12 }],
+      [item('membershipGiftingEvent', { membershipGiftingDetails: { giftMembershipsCount: 5, giftMembershipsLevelName: 'Gold' } }),
+        'gift', { count: 5, level: 'Gold' }],
+      [item('membershipGiftingEvent', {}), 'gift', { count: null }]
+    ];
+    for (const [raw, eventKey, eventArgs] of cases) {
+      const comment = YTF.normalizeComment(raw);
+      assert.equal(comment.eventKey, eventKey, raw.snippet.type);
+      assert.deepEqual(plain(comment.eventArgs), eventArgs, raw.snippet.type);
+      assert.equal(comment.eventText, null, raw.snippet.type);
+      assert.doesNotMatch(comment.searchText, JAPANESE, '表示言語を知らない場所で文言を焼き付けている');
+    }
+    assert.equal(YTF.normalizeComment(cases[2][0]).message, 'yay');
+  });
+
+  test('正準形を通し直しても eventKey は落ちない', () => {
+    const once = YTF.normalizeComment(item('newSponsorEvent', {}));
+    const twice = YTF.normalizeComment(plain(once));
+    assert.equal(twice.eventKey, 'newMember');
+    assert.equal(twice.id, once.id);
+  });
+
+  test('スーパーステッカーは DOMモードと同じ正準トークンのまま', () => {
+    const comment = YTF.normalizeComment(item('superStickerEvent', {
+      superStickerDetails: { amountDisplayString: '¥200', superStickerMetadata: { altText: 'cat' } }
+    }));
+    assert.equal(comment.eventText, 'スーパーステッカー');
+    assert.equal(comment.eventKey, null);
+  });
+
+  test('DOMモードの eventText（ID のキーに混ざる）はそのまま', () => {
+    const comment = YTF.normalizeComment({ kind: 'membership', role: 'member', displayName: 'fan', eventText: '新規メンバー' });
+    assert.equal(comment.eventText, '新規メンバー');
+    assert.equal(comment.eventKey, null);
+    assert.match(comment.searchText, /新規メンバー/);
+  });
+
+  test('buildSearchText は訳した一行を渡されたらそれで検索させる', () => {
+    const comment = YTF.normalizeComment(item('newSponsorEvent', {}));
+    assert.match(YTF.buildSearchText(comment, 'New member'), /new member/);
+  });
+});
+
 describe('ID の作り方', () => {
   const key = YTF.commentKeyOf('text', 'にゃんこ', { message: '8888' }, '23:02');
 

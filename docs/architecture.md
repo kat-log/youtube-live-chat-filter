@@ -474,6 +474,12 @@ Service Worker が渡すのは `readCommentsForPopup(videoId, 'primary')` の結
 数千件で目に見えて固まる。更新前に保存された履歴には `searchText` が無いので、
 `searchTextOf()` がそのぶんだけ遅延生成で補う。
 
+**イベントの一行が検索に当たる言語**: APIモードの item は IndexedDB に API の形のまま入り、
+popup がコメントを取り込むたびに正準形へ通すので、メンバーイベントの一行（`eventKey`）は
+**popup を開いたときの表示言語の文言**で当たる。DOMモードの `eventText` は YouTube の画面に
+出ていた文言（YouTube の表示言語）、旧履歴の日本語 `eventText` は日本語のまま当たる
+——どちらも保存したときの言語で、訳し直さない（ID に入る・移行しないため）。
+
 不可視文字を落とすのは必須で、飾りではない。YouTubeのライブチャットからコメントを
 コピーするとゼロ幅スペース（`U+200B`）や方向制御文字が一緒に付いてきて、貼り付けた
 見た目は同じなのに `includes()` が外れ、**全件が0件になる**。同じ理由で、
@@ -536,6 +542,12 @@ Service Worker が渡すのは `readCommentsForPopup(videoId, 'primary')` の結
   `data-i18n-placeholder` / `data-i18n-aria-label` を付け、`applyTo(document)` で流し込む
 - CSS の `__MSG_` は効くが、手動切替に追従しないので使わない
 - `i18n.js` は `theme.js` の次に**両ページの `<head>`** で読む（読み込み時には何も描かない）
+- **Service Worker は表示文言を作らない。** エラーは `errorType`（と `action` / `severity`）、
+  自動停止は `reasonKey` だけを送り、popup が `ERROR_TEXT` / `AUTO_STOP_REASONS` から `t()` で引く。
+  SW は `i18n.js` を読まず、SW のテストのハーネスにも `chrome.i18n` のモックは無い
+- **APIモードのメンバーイベント**（新規メンバー・連続・アップグレード・ギフト）は
+  `shared/comment.js` が `eventKey` + `eventArgs` のコードで返し、popup が描画時に訳す（`EVENT_LABELS`）。
+  ID に入る DOMモードの `eventText`（`'スーパーステッカー'` など）は訳さずに持ち、訳すのは描画時だけ
 
 ---
 

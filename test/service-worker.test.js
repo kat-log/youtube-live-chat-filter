@@ -1268,6 +1268,90 @@ describe('APIモードのエラー処理', () => {
   });
 });
 
+// SW は表示文言を作らない（docs/i18n-plan.md の段階3）。送るのは errorType と、
+// ボタン・色を決める action / severity のコードだけで、文言は popup が t() で引く。
+// SW のハーネスに chrome.i18n のモックが無いのはこのため
+describe('エラーはコードで送る', () => {
+  const JAPANESE = /[぀-ヿ一-鿿]/;
+  const TEXT_FIELDS = ['title', 'message', 'solution'];
+
+  test('分類表は errorType / action / severity だけを持つ', async () => {
+    const { chrome } = createChromeMock();
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    for (const [pattern, entry] of Object.entries(sw.ERROR_SOLUTIONS)) {
+      assert.deepEqual(Object.keys(entry).sort(), ['action', 'errorType', 'severity'], pattern);
+    }
+  });
+
+  test('分類できたエラーは errorType だけで、文言を持たない', async () => {
+    const { chrome } = createChromeMock();
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    const cases = [
+      ['YouTube API Error: The request cannot be completed because you have exceeded your <a href="/q">quota</a>.',
+        'quotaExceeded', 'waitOrUpgrade'],
+      ['API key not valid. Please pass a valid API key.', 'apiKeyInvalid', 'checkApiKey'],
+      ['API key not found', 'apiKeyMissing', 'setApiKey'],
+      ['rateLimitExceeded', 'rateLimited', 'waitAndRetry'],
+      ['NetworkError when attempting to fetch resource.', 'network', 'checkConnection']
+    ];
+    for (const [message, errorType, action] of cases) {
+      const info = sw.analyzeError(new Error(message));
+      assert.equal(info.errorType, errorType, message);
+      assert.equal(info.action, action, message);
+      for (const field of TEXT_FIELDS) assert.equal(field in info, false, `${errorType} が ${field} を持っている`);
+    }
+  });
+
+  test('分類できないエラーは unknown と、API の説明（タグを除いたもの）を訳さずに送る', async () => {
+    const { chrome } = createChromeMock();
+    const sw = loadServiceWorker(chrome);
+    await settle();
+
+    const info = sw.analyzeError(new Error('YouTube API Error: <b>Bad Request</b>'));
+    assert.equal(info.errorType, 'unknown');
+    // 以前はここで「リクエストが無効です」に置き換えていた（cleanErrorMessage の対訳表）
+    assert.equal(info.detail, 'YouTube API Error: Bad Request');
+    assert.equal(sw.analyzeError({ code: 500 }).errorType, 'unknown');
+    for (const value of Object.values(info)) {
+      assert.doesNotMatch(String(value), JAPANESE);
+    }
+  });
+
+  test('ポーリングの失敗は errorType で popup へ届く', async () => {
+    const { chrome, store } = createChromeMock({ tabs: watchTab(3, 'V') });
+    store.youtubeApiKey = 'KEY';
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    const popup = chrome.__connectPopup();
+
+    sw.setFetch(async () => { throw new Error('YouTube API Error: liveChatEnded videoNotLive'); });
+    await sw.startBackgroundMonitoring('LIVE_CHAT_ID', 3, 'V');
+    await settle();
+    await sw.stopBackgroundMonitoring();
+
+    const notice = popup.notifications().find(m => m.action === 'showDetailedError');
+    assert.ok(notice, 'popup へエラーを送っていない');
+    assert.equal(notice.errorInfo.errorType, 'videoNotLive');
+    for (const field of TEXT_FIELDS) assert.equal(field in notice.errorInfo, false);
+  });
+
+  test('保存領域の上限も storageQuota のコードで送る', async () => {
+    const { chrome } = createChromeMock();
+    const sw = loadServiceWorker(chrome);
+    await settle();
+    const popup = chrome.__connectPopup();
+
+    sw.notifyStorageQuotaError();
+    const notice = popup.notifications().find(m => m.action === 'showDetailedError');
+    assert.equal(notice.errorInfo.errorType, 'storageQuota');
+    assert.equal(notice.errorInfo.action, 'clearHistory');
+    for (const field of TEXT_FIELDS) assert.equal(field in notice.errorInfo, false);
+  });
+});
+
 describe('liveChatId の取得（APIキーの要否）', () => {
   // 取得元のモードの既定は DOM。APIキーを要求してよいのは APIモードだけで、
   // ここを取り違えると「インストールしただけでエラー」になる
@@ -1405,8 +1489,11 @@ describe('タブが閉じられたとき', () => {
     assert.equal(store.monitoringState.isMonitoring, false);
     assert.deepEqual([...(await sw.store.read('V')).map(c => c.id)], ['dom_1'],
       '保存待ちのコメントが失われている');
-    assert.ok(popup.notifications().some(m => m.action === 'monitoringAutoStopped'),
-      'popup へ通知していない');
+    const notice = popup.notifications().find(m => m.action === 'monitoringAutoStopped');
+    assert.ok(notice, 'popup へ通知していない');
+    // 理由はコードで送る。文言は popup が引く（docs/i18n-plan.md の段階3）
+    assert.equal(notice.reasonKey, 'tabClosed');
+    assert.equal('reason' in notice, false);
   });
 
   test('別のタブが閉じられても止まらない', async () => {
