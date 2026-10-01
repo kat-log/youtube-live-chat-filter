@@ -131,6 +131,37 @@
         return language;
     }
 
+    // YouTube Data API が返す英語のエラーの説明 → こちらの文言。
+    // 突き合わせは「説明に含まれるか」（大文字小文字を区別しない）で、上から順に見る
+    // （'exceeded your quota' を 'quotaExceeded' より先に）。
+    // 値は messages.json のキーを引く関数にしてある。キーを文字列のまま持つと
+    // test/i18n.test.js の「誰も引かないキー」に見えなくなり、文言を固めて持つと
+    // 手動の言語切替に追従しない。
+    // 使うのは options の API接続テストと、popup の分類できないエラー（detail）。
+    // Service Worker は文言を作らない（突き合わせは SW 自身の分類表が英語のまま行う）
+    // ので、この表は読まない
+    const API_ERROR_KEYS = Object.freeze([
+        ['exceeded your quota', () => t('apiErrQuotaExceeded')],
+        ['quotaExceeded', () => t('apiErrQuota')],
+        ['API key not valid', () => t('apiErrKeyInvalid')],
+        ['Access denied', () => t('apiErrAccessDenied')],
+        ['Forbidden', () => t('apiErrForbidden')],
+        ['Bad Request', () => t('apiErrBadRequest')],
+        ['rateLimitExceeded', () => t('apiErrRateLimit')]
+    ]);
+
+    /**
+     * API のエラーの説明を、こちらの文言に置き換える。対訳が無ければ null
+     * （呼び出し側が API の説明をそのまま出す。こちらの文言ではないので訳さない）
+     */
+    function apiErrorText(message) {
+        const lower = String(message ?? '').toLowerCase();
+        for (const [pattern, text] of API_ERROR_KEYS) {
+            if (lower.includes(pattern.toLowerCase())) return text();
+        }
+        return null;
+    }
+
     /** data-i18n* の付いた要素に文言を流し込み、<html lang> をそろえる */
     function applyTo(root) {
         if (!root || typeof root.querySelectorAll !== 'function') return;
@@ -154,6 +185,8 @@
         t,
         currentLanguage,
         loadOverride,
-        applyTo
+        applyTo,
+        API_ERROR_KEYS,
+        apiErrorText
     };
 })();

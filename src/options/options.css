@@ -173,6 +173,24 @@ body {
     box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
+/* 表示言語のセレクト。入力欄と同じ見た目にそろえる */
+.form-group .select {
+    width: 100%;
+    padding: 12px 16px;
+    background-color: var(--bg-input);
+    color: var(--text-primary);
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+.form-group .select:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
 .toggle-btn {
     position: absolute;
     right: 8px;

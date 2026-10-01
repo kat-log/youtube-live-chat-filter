@@ -287,3 +287,179 @@ describe('shared/i18n.js', () => {
     }
   });
 });
+
+describe('API_ERROR_KEYS（API のエラーの説明 → こちらの文言）', () => {
+  test('各パターンが en / ja の文言を引く（キーは messages.json にある）', async () => {
+    for (const locale of LOCALES) {
+      const { i18n } = loadI18n({ locale });
+      for (const [pattern, text] of i18n.API_ERROR_KEYS) {
+        const got = i18n.apiErrorText(`YouTube API Error: ${pattern}.`);
+        assert.equal(got, text(), pattern);
+        assert.ok(got && !Object.hasOwn(messagesOf(locale), got), `${pattern} がキーのまま出ている: ${got}`);
+      }
+    }
+  });
+
+  test('大文字小文字を区別せず、上から順に当てる', () => {
+    const { i18n } = loadI18n({ locale: 'ja' });
+    const ja = messagesOf('ja');
+    assert.equal(i18n.apiErrorText('API KEY NOT VALID'), ja.apiErrKeyInvalid.message);
+    // 'exceeded your quota' と 'quotaExceeded' の両方を含む説明は、詳しい前者で出す
+    assert.equal(i18n.apiErrorText('You have exceeded your quota (quotaExceeded)'), ja.apiErrQuotaExceeded.message);
+  });
+
+  test('当たらなければ null（呼び出し側が API の説明をそのまま出す）', () => {
+    const { i18n } = loadI18n({ locale: 'en' });
+    assert.equal(i18n.apiErrorText('Backend Error'), null);
+    assert.equal(i18n.apiErrorText(undefined), null);
+  });
+
+  test('手動で選んだ言語に追従する（文言を読み込み時に固めていない）', async () => {
+    const { i18n } = loadI18n({ locale: 'ja', storage: { uiLanguage: 'en' } });
+    await i18n.loadOverride();
+    assert.equal(i18n.apiErrorText('Forbidden'), messagesOf('en').apiErrForbidden.message);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 日本語のリテラルが残っていない（段階2〜4が揃った時点で入れる。計画の「機械で防ぐもの」）
+// ---------------------------------------------------------------------------
+
+/**
+ * JS からコメントを取り除く（行の数と位置は保つ）。文字列・テンプレート・正規表現の
+ * リテラルの中の // や /* はコメントとして扱わない
+ */
+function stripJsComments(source) {
+  let out = '';
+  let lastSignificant = '';
+  for (let i = 0; i < source.length;) {
+    const c = source[i];
+    const next = source[i + 1];
+    if (c === '/' && next === '/') {
+      while (i < source.length && source[i] !== '\n') i++;
+      continue;
+    }
+    if (c === '/' && next === '*') {
+      const end = source.indexOf('*/', i + 2) + 2;
+      out += source.slice(i, end).replace(/[^\n]/g, ' ');
+      i = end;
+      continue;
+    }
+    if (c === "'" || c === '"' || c === '`') {
+      let j = i + 1;
+      while (j < source.length && source[j] !== c) j += source[j] === '\\' ? 2 : 1;
+      out += source.slice(i, j + 1);
+      lastSignificant = c;
+      i = j + 1;
+      continue;
+    }
+    // 直前が値（識別子・閉じ括弧）でなければ、/ は割り算ではなく正規表現の始まり
+    if (c === '/' && !/[\w)\]$]/.test(lastSignificant)) {
+      let j = i + 1;
+      let inClass = false;
+      while (j < source.length && source[j] !== '\n') {
+        if (source[j] === '\\') { j += 2; continue; }
+        if (source[j] === '[') inClass = true;
+        else if (source[j] === ']') inClass = false;
+        else if (source[j] === '/' && !inClass) break;
+        j++;
+      }
+      out += source.slice(i, j + 1);
+      lastSignificant = '/';
+      i = j + 1;
+      continue;
+    }
+    out += c;
+    if (!/\s/.test(c)) lastSignificant = c;
+    i++;
+  }
+  return out;
+}
+
+const blank = text => text.replace(/[^\n]/g, ' ');
+function stripComments(file, source) {
+  if (file.endsWith('.js')) return stripJsComments(source);
+  if (file.endsWith('.html')) return source.replace(/<!--[\s\S]*?-->/g, blank);
+  if (file.endsWith('.css')) return source.replace(/\/\*[\s\S]*?\*\//g, blank);
+  return source;
+}
+
+// ひらがな・カタカナ・漢字・全角の記号
+const JAPANESE = /[　-ヿ㐀-䶿一-鿿！-｠]/;
+
+// 残してよい日本語。ファイルごとに「その文字列を含む行」だけを許す。
+// 段階5（ログの英語化）で消すものは、消したらここからも外す（使われない許可は下のテストが落とす）
+const JAPANESE_ALLOWED = {
+  // ID に入る正準トークン（罠1）。訳すとロケールごとに ID が変わる。表示は popup の描画時に訳す
+  'popup/popup.js': ["'スーパーステッカー'"],
+  'shared/comment.js': ["'スーパーステッカー'"],
+  'content/dom-chat.js': [
+    "'スーパーステッカー'",
+    // YouTube の時刻表示（日本語の YouTube は「午後 10:34」）を読むためのもの。表示文言ではない
+    '(午前|午後)',
+    "'午後'",
+    // 段階5: 開発者向けのログ
+    "'[DomChat] チャットの #items が見つからないため監視を諦めた:'",
+    "'[YouTube Special Comments] 未知の絵文字の配信元:'"
+  ],
+  'background/service-worker.js': [
+    // 段階5: staleSessionReason() / discardSession() の理由。debugLog に出るだけで表示しない
+    "'タブ情報なし'",
+    "'タブが存在しない'",
+    '`動画が変わっている (',
+    "'拡張機能のインストール／更新'",
+    // 段階5: openUserFilter() が content script へ返す error。受け取り側は表示しない
+    "'発言者名が空です'"
+  ],
+  // 言語セレクトの選択肢。言語名はどの表示言語でもその言語自身の名前で出す（訳さない）
+  'options/options.html': ['>日本語<']
+};
+
+describe('日本語のリテラル', () => {
+  const files = sourceFiles().filter(file => !file.endsWith('manifest.json'));
+  const used = new Set();
+  const leftovers = [];
+  for (const file of files) {
+    const relative = path.relative(SRC, file).split(path.sep).join('/');
+    const allowed = JAPANESE_ALLOWED[relative] || [];
+    const lines = stripComments(file, fs.readFileSync(file, 'utf8')).split('\n');
+    lines.forEach((line, index) => {
+      if (!JAPANESE.test(line)) return;
+      let rest = line;
+      for (const fragment of allowed) {
+        if (rest.includes(fragment)) {
+          used.add(`${relative}\0${fragment}`);
+          rest = rest.split(fragment).join('');
+        }
+      }
+      if (JAPANESE.test(rest)) leftovers.push(`${relative}:${index + 1}: ${line.trim()}`);
+    });
+  }
+
+  test('popup / options / SW / content script / shared の非コメント行に日本語が無い', () => {
+    // 表示文言は _locales/<lang>/messages.json へ。コードコメントは日本語のままでよい
+    assert.deepEqual(leftovers, [], `日本語のリテラルが残っている:\n${leftovers.join('\n')}`);
+  });
+
+  test('許可リストに、もう使われていないものを残さない', () => {
+    const stale = Object.entries(JAPANESE_ALLOWED)
+      .flatMap(([file, fragments]) => fragments.map(fragment => [file, fragment]))
+      .filter(([file, fragment]) => !used.has(`${file}\0${fragment}`))
+      .map(([file, fragment]) => `${file}: ${fragment}`);
+    assert.deepEqual(stale, [], `使われていない許可:\n${stale.join('\n')}`);
+  });
+
+  test('コメントの除去は、文字列や正規表現の中の // を消さない', () => {
+    const source = [
+      "const url = 'https://example.com/' // コメント",
+      'const re = /a\\/\\/b/g; /* ブロック */ const x = 1;',
+      'const y = a / b; // 割り算のあとのコメント',
+      'const s = `テンプレート // ${x}`;'
+    ].join('\n');
+    const out = stripJsComments(source).split('\n');
+    assert.equal(out[0].trimEnd(), "const url = 'https://example.com/'");
+    assert.equal(out[1].replace(/\s+/g, ' '), 'const re = /a\\/\\/b/g; const x = 1;');
+    assert.equal(out[2].trimEnd(), 'const y = a / b;');
+    assert.equal(out[3], 'const s = `テンプレート // ${x}`;');
+  });
+});

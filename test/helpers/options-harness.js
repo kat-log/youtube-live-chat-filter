@@ -9,6 +9,11 @@
 // **storage.local.set が onChanged を発火させる**（本物と同じ。テーマの
 // 追従が「保存 → 通知 → 塗り直し」まで通ることを見たいため）。
 //
+// 表示言語（i18n 段階4）: options.html で data-i18n* を付けた要素は、偽 document の
+// querySelectorAll('[data-i18n…]') で引けるようにしてある（shared/i18n.js の applyTo() が
+// 使う唯一のセレクタ）。要素の textContent の初期値は HTML に直接書いてある文言。
+// fetch は src/_locales の実物を返す（手動の言語切替で messages.json を読むため）。
+//
 // 注意: これは本物のDOMではない。CSS も :checked も無いので、
 // 「見た目が正しいか」はここでは分からない（実ブラウザでしか確認できない）。
 
@@ -33,6 +38,51 @@ function idsInOptionsHtml() {
   return new Set(Array.from(html.matchAll(/\bid="([^"]+)"/g), m => m[1]));
 }
 
+const I18N_ATTRIBUTES = ['data-i18n', 'data-i18n-title', 'data-i18n-placeholder', 'data-i18n-aria-label'];
+
+const decodeEntities = text => text
+  .replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+
+/**
+ * options.html の中で data-i18n* を付けた要素を拾う。
+ * @returns {{ tag: string, id: string|null, attributes: object, text: string }[]}
+ */
+function i18nElementsInOptionsHtml() {
+  const html = fs.readFileSync(OPTIONS_HTML_PATH, 'utf8').replace(/<!--[\s\S]*?-->/g, '');
+  const out = [];
+  for (const match of html.matchAll(/<([a-z0-9]+)\b([^>]*\bdata-i18n[^>]*)>/g)) {
+    const [whole, tag, rest] = match;
+    const attributes = {};
+    for (const [, name, value] of rest.matchAll(/([a-z0-9-]+)="([^"]*)"/g)) attributes[name] = value;
+    const start = match.index + whole.length;
+    const text = decodeEntities(html.slice(start, html.indexOf('<', start)).replace(/\s+/g, ' ').trim());
+    out.push({ tag, id: attributes.id ?? null, attributes, text });
+  }
+  return out;
+}
+
+/** 偽 document に data-i18n* の要素を載せ、属性セレクタ1つだけの querySelectorAll を足す */
+function attachI18nElements(document) {
+  const elements = i18nElementsInOptionsHtml().map(({ tag, id, attributes, text }) => {
+    const el = id ? document.getElementById(id) : document.createElement(tag);
+    for (const [name, value] of Object.entries(attributes)) el.attributes[name] = value;
+    el.textContent = text;
+    el.writes.textContent = [];
+    return el;
+  });
+  document.querySelectorAll = selector => {
+    const name = selector.match(/^\[([a-z0-9-]+)\]$/)?.[1];
+    if (!name || !I18N_ATTRIBUTES.includes(name)) {
+      throw new Error(`偽 document の querySelectorAll は data-i18n* の属性セレクタだけ: ${selector}`);
+    }
+    return elements.filter(el => el.getAttribute(name) !== null);
+  };
+  /** テストから: data-i18n* のキーで要素を引く（最初の1つ） */
+  document.byI18nKey = key => elements.find(el => I18N_ATTRIBUTES.some(a => el.getAttribute(a) === key)) || null;
+  document.i18nElements = elements;
+  return elements;
+}
+
 /**
  * options.js が触る chrome API の最小モック。
  *
@@ -49,6 +99,7 @@ function createChromeMock({ storage = {}, responses = {}, locale = 'ja' } = {}) 
     runtime: {
       id: 'test-extension-id',
       lastError: null,
+      getURL: file => `chrome-extension://test-extension-id/${file}`,
       async sendMessage(message) {
         calls.runtimeMessages.push(message);
         return responses[message.action] ?? {};
@@ -94,8 +145,24 @@ function createChromeMock({ storage = {}, responses = {}, locale = 'ja' } = {}) 
  * `document.fire('DOMContentLoaded')` で作る。
  * setTimeout は popup ハーネスと同じく「積むだけ」（トーストの自動消去を実時間で待たない）。
  */
-function loadOptions({ storage = {}, responses = {}, chrome = createChromeMock({ storage, responses }) } = {}) {
+function loadOptions({
+  storage = {},
+  responses = {},
+  locale = 'ja',
+  fetchApi = async () => { throw new Error('API への fetch はテストで差し替える'); },
+  chrome = createChromeMock({ storage, responses, locale })
+} = {}) {
   const document = createFakeDocument({ ids: idsInOptionsHtml() });
+  attachI18nElements(document);
+  // input の type は HTML のまま持たせる（APIキー欄の表示・非表示が type を見て切り替える）
+  const html = fs.readFileSync(OPTIONS_HTML_PATH, 'utf8');
+  for (const [, id, type] of html.matchAll(/<input\b[^>]*\bid="([^"]+)"[^>]*\btype="([^"]+)"/g)) {
+    document.getElementById(id).type = type;
+  }
+  for (const [, type, id] of html.matchAll(/<input\b[^>]*\btype="([^"]+)"[^>]*\bid="([^"]+)"/g)) {
+    document.getElementById(id).type = type;
+  }
+  const fetched = [];
   const timers = new Map();
   let nextTimerId = 1;
 
@@ -103,7 +170,17 @@ function loadOptions({ storage = {}, responses = {}, chrome = createChromeMock({
     console,
     setTimeout(fn) { timers.set(nextTimerId, fn); return nextTimerId++; },
     clearTimeout(id) { timers.delete(id); },
-    fetch: async () => { throw new Error('fetch はテストから使わない'); },
+    // 拡張機能の中のファイル（_locales の messages.json）は実物を返す。
+    // それ以外（API接続テストの googleapis）は fetchApi に任せる
+    async fetch(url) {
+      fetched.push(url);
+      const prefix = 'chrome-extension://test-extension-id/';
+      if (String(url).startsWith(prefix)) {
+        const body = fs.readFileSync(path.join(SRC_DIR, String(url).slice(prefix.length)), 'utf8');
+        return { ok: true, json: async () => JSON.parse(body) };
+      }
+      return fetchApi(url);
+    },
     chrome,
     document
   });
@@ -119,6 +196,7 @@ function loadOptions({ storage = {}, responses = {}, chrome = createChromeMock({
   Object.assign(context.__options, {
     document,
     chrome,
+    fetched,
     /** 積まれているタイマーを1つ進める */
     tick() {
       const [id, fn] = timers.entries().next().value || [];
@@ -132,4 +210,4 @@ function loadOptions({ storage = {}, responses = {}, chrome = createChromeMock({
   return context.__options;
 }
 
-module.exports = { loadOptions, createChromeMock, idsInOptionsHtml };
+module.exports = { loadOptions, createChromeMock, idsInOptionsHtml, i18nElementsInOptionsHtml };

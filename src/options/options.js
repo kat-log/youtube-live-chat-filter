@@ -9,6 +9,11 @@ const { stripHtmlTags } = self.YTF;
 // ページ自身が永久にライトテーマ**だった
 const { applyTheme } = self.YTFTheme;
 
+// 表示文言は shared/i18n.js（docs/i18n-plan.md）。options.html に直接書いてある
+// 文言は英語で、初期化の冒頭で applyTo() が data-i18n* を差し替える。
+// 文言で分岐しないこと（状態はフラグで持ち、文言は描くときだけ引く）
+const { t, LANGUAGE_KEY, normalizeLanguage, apiErrorText } = self.YTFi18n;
+
 // テーマはこの画面からも popup からも変えられる。どちらで変えても
 // 経路を1本にするため、自分の保存も含めて storage.onChanged で受ける
 // （chrome.storage.onChanged は書いた本人のページにも飛ぶ）
@@ -21,34 +26,50 @@ chrome.storage.onChanged.addListener((changes) => {
 
 class OptionsController {
     constructor() {
+        // ボタンの文言を決める状態。文言（'保存中...' など）を読んで分岐しないために持つ
+        this.saving = false;
+        this.testing = false;
+        // 言語の適用は1本の列で順に流す。続けて切り替えたとき、先に始めた読み込みが
+        // あとから終わって古い言語で上書きするのを防ぐ
+        this.languageQueue = Promise.resolve();
+
         this.initializeElements();
         this.attachEventListeners();
-        this.loadSettings();
+        // 文言を先に決めてから設定を読む（読み込みの失敗をトーストで出すときに、
+        // 選ばれた言語で出すため）。テストはこの Promise を待つ
+        this.ready = this.applyLanguage().then(() => this.loadSettings());
     }
-    
-    // エラーメッセージ改善関数
+
+    // API のエラーの説明を、こちらの文言に置き換える。
+    // 対訳表は shared/i18n.js の API_ERROR_KEYS（popup の分類できないエラーと共有）。
+    // 当たらなければ API の説明をタグだけ除いてそのまま出す（訳さない）
     improveErrorMessage(originalMessage) {
         const cleanMessage = stripHtmlTags(originalMessage);
-        
-        // よくあるYouTube API エラーの日本語化
-        const errorMappings = {
-            'exceeded your quota': 'API使用量制限に達しました。明日再試行するか、Google Cloud Consoleで制限を増やしてください',
-            'quotaExceeded': 'API使用量制限に達しました',
-            'API key not valid': 'APIキーが無効です。Google Cloud ConsoleでAPIキーを確認してください',
-            'Access denied': 'アクセスが拒否されました。APIキーの権限を確認してください',
-            'Forbidden': 'アクセス権限がありません。APIキーとYouTube Data API v3の有効化を確認してください',
-            'Bad Request': 'リクエストが無効です。APIキーを確認してください',
-            'rateLimitExceeded': 'アクセス頻度制限に達しました。しばらく待ってから再試行してください'
-        };
-        
-        // エラーメッセージから該当するパターンを検索
-        for (const [pattern, japanese] of Object.entries(errorMappings)) {
-            if (cleanMessage.toLowerCase().includes(pattern.toLowerCase())) {
-                return japanese;
-            }
-        }
-        
-        return cleanMessage;
+        return apiErrorText(cleanMessage) ?? cleanMessage;
+    }
+
+    /**
+     * 表示言語を決めて、options.html の data-i18n* と、JS が書く文言を描き直す。
+     * 初期化のときと、uiLanguage が変わったとき（この画面のセレクト・別の options の
+     * タブ）に呼ぶ。popup は開くたびに読むので、ここから知らせる必要は無い
+     */
+    applyLanguage() {
+        this.languageQueue = this.languageQueue.then(async () => {
+            const language = await self.YTFi18n.loadOverride();
+            self.YTFi18n.applyTo(document);
+            this.elements.languageSelect.value = language;
+            this.renderDynamicText();
+        });
+        return this.languageQueue;
+    }
+
+    // JS が書く文言（data-i18n を付けていない要素）。いまの状態から描き直す
+    renderDynamicText() {
+        const { apiKeyInput, toggleVisibilityBtn, saveSettingsBtn, testApiBtn } = this.elements;
+        // キーは t() の引数にそのまま書く（test/i18n.test.js が引かれているキーを拾うため）
+        toggleVisibilityBtn.textContent = apiKeyInput.type === 'password' ? t('optShowKey') : t('optHideKey');
+        saveSettingsBtn.textContent = this.saving ? t('optSaving') : t('optSave');
+        testApiBtn.textContent = this.testing ? t('optTesting') : t('optTestApi');
     }
     
     initializeElements() {
@@ -62,6 +83,7 @@ class OptionsController {
             themeToggle: document.getElementById('theme-toggle'),
             timeHour12Toggle: document.getElementById('time-hour12'),
             timeSecondsToggle: document.getElementById('time-seconds'),
+            languageSelect: document.getElementById('ui-language'),
             toast: document.getElementById('toast')
         };
     }
@@ -75,6 +97,13 @@ class OptionsController {
         this.elements.themeToggle.addEventListener('change', () => this.saveTheme());
         this.elements.timeHour12Toggle.addEventListener('change', () => this.saveTimeFormat());
         this.elements.timeSecondsToggle.addEventListener('change', () => this.saveTimeFormat());
+        this.elements.languageSelect.addEventListener('change', () => this.saveLanguage());
+
+        // 表示言語は、この画面のセレクトでも別の options のタブでも変わりうる。
+        // テーマと同じく、自分の保存も含めて storage.onChanged の1本で描き直す
+        chrome.storage.onChanged.addListener((changes, areaName) => {
+            if (areaName === 'local' && changes[LANGUAGE_KEY]) this.applyLanguage();
+        });
         
         this.elements.apiKeyInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
@@ -117,7 +146,7 @@ class OptionsController {
             this.updateButtonStates();
         } catch (error) {
             console.error('Error loading settings:', error);
-            this.showToast('設定の読み込みに失敗しました', 'error');
+            this.showToast(t('optLoadFailed'), 'error');
         }
     }
     
@@ -125,13 +154,14 @@ class OptionsController {
         const apiKey = this.elements.apiKeyInput.value.trim();
         
         if (!apiKey) {
-            this.showToast('APIキーを入力してください', 'error');
+            this.showToast(t('optApiKeyRequired'), 'error');
             this.elements.apiKeyInput.focus();
             return;
         }
         
         this.elements.saveSettingsBtn.disabled = true;
-        this.elements.saveSettingsBtn.textContent = '保存中...';
+        this.saving = true;
+        this.renderDynamicText();
         
         try {
             const apiResponse = await chrome.runtime.sendMessage({
@@ -140,16 +170,17 @@ class OptionsController {
             });
             
             if (apiResponse.success) {
-                this.showToast('設定が保存されました', 'success');
+                this.showToast(t('optSaved'), 'success');
             } else {
-                this.showToast('設定の保存に失敗しました', 'error');
+                this.showToast(t('optSaveFailed'), 'error');
             }
         } catch (error) {
             console.error('Error saving settings:', error);
-            this.showToast('設定の保存に失敗しました: ' + error.message, 'error');
+            this.showToast(t('optSaveFailedDetail', error.message), 'error');
         } finally {
             this.elements.saveSettingsBtn.disabled = false;
-            this.elements.saveSettingsBtn.textContent = '設定を保存';
+            this.saving = false;
+            this.renderDynamicText();
             this.updateButtonStates();
         }
     }
@@ -164,11 +195,11 @@ class OptionsController {
                 debugMode: this.elements.debugModeSwitch.checked
             });
             if (!response || !response.success) {
-                this.showToast('デバッグモードの保存に失敗しました', 'error');
+                this.showToast(t('optDebugSaveFailed'), 'error');
             }
         } catch (error) {
             console.error('Error saving debug mode setting:', error);
-            this.showToast('デバッグモードの保存に失敗しました', 'error');
+            this.showToast(t('optDebugSaveFailed'), 'error');
         }
     }
 
@@ -206,17 +237,29 @@ class OptionsController {
         }
     }
 
+    // 表示言語（'auto' | 'en' | 'ja'）。描き直しは storage.onChanged から
+    async saveLanguage() {
+        try {
+            await chrome.storage.local.set({
+                [LANGUAGE_KEY]: normalizeLanguage(this.elements.languageSelect.value)
+            });
+        } catch (error) {
+            console.error('Error saving language setting:', error);
+        }
+    }
+
     async testApiConnection() {
         const apiKey = this.elements.apiKeyInput.value.trim();
         
         if (!apiKey) {
-            this.showToast('APIキーを入力してください', 'error');
+            this.showToast(t('optApiKeyRequired'), 'error');
             this.elements.apiKeyInput.focus();
             return;
         }
         
         this.elements.testApiBtn.disabled = true;
-        this.elements.testApiBtn.textContent = 'テスト中...';
+        this.testing = true;
+        this.renderDynamicText();
         
         try {
             // キーの有効性が分かればよいので、search.list（100 units）ではなく
@@ -229,36 +272,30 @@ class OptionsController {
             if (response.ok) {
                 const data = await response.json();
                 if (data.items) {
-                    this.showToast('API接続テスト成功', 'success');
+                    this.showToast(t('optApiTestSucceeded'), 'success');
                 } else {
-                    this.showToast('API接続テスト失敗: 予期しないレスポンス', 'error');
+                    this.showToast(t('optApiTestFailed', t('optApiTestUnexpected')), 'error');
                 }
             } else {
                 const errorData = await response.json();
                 const rawMessage = errorData.error?.message || `HTTP ${response.status}`;
                 const cleanMessage = this.improveErrorMessage(rawMessage);
-                this.showToast(`API接続テスト失敗: ${cleanMessage}`, 'error');
+                this.showToast(t('optApiTestFailed', cleanMessage), 'error');
             }
         } catch (error) {
             console.error('Error testing API:', error);
-            this.showToast('API接続テスト失敗: ネットワークエラー', 'error');
+            this.showToast(t('optApiTestFailed', t('optApiTestNetwork')), 'error');
         } finally {
             this.elements.testApiBtn.disabled = false;
-            this.elements.testApiBtn.textContent = 'API接続テスト';
+            this.testing = false;
+            this.renderDynamicText();
         }
     }
     
     toggleApiKeyVisibility() {
         const input = this.elements.apiKeyInput;
-        const button = this.elements.toggleVisibilityBtn;
-        
-        if (input.type === 'password') {
-            input.type = 'text';
-            button.textContent = '非表示';
-        } else {
-            input.type = 'password';
-            button.textContent = '表示';
-        }
+        input.type = input.type === 'password' ? 'text' : 'password';
+        this.renderDynamicText();
     }
     
     updateButtonStates() {

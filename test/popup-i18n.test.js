@@ -253,9 +253,9 @@ describe('英語で開いた popup: Service Worker から届くコード', () =>
 
   test('分類できないエラーは API の説明（訳さない）を出し、無ければ既定の説明', () => {
     const c = controller();
-    c.showDetailedError({ errorType: 'unknown', detail: 'YouTube API Error: Bad Request', severity: 'medium' });
+    c.showDetailedError({ errorType: 'unknown', detail: 'YouTube API Error: Something odd', severity: 'medium' });
     assert.equal(c.elements.errorTitle.textContent, 'Connection error');
-    assert.equal(c.elements.errorDescription.textContent, 'YouTube API Error: Bad Request');
+    assert.equal(c.elements.errorDescription.textContent, 'YouTube API Error: Something odd');
 
     c.showDetailedError({ errorType: 'unknown', detail: '', severity: 'medium' });
     assert.equal(c.elements.errorDescription.textContent, EN.errUnknownMessage.message);
@@ -263,6 +263,22 @@ describe('英語で開いた popup: Service Worker から届くコード', () =>
     // popup より新しい SW が知らない errorType を送ってきても、unknown として出す
     c.showDetailedError({ errorType: 'somethingNew', severity: 'low' });
     assert.equal(c.elements.errorTitle.textContent, 'Connection error');
+  });
+
+  test('分類できないエラーでも、API_ERROR_KEYS に当たる説明はこちらの文言にする（段階4）', () => {
+    // SW の分類表に無い Access denied / Bad Request は unknown で届く。
+    // options の API接続テストと同じ表（shared/i18n.js）で置き換える
+    const en = controller('en');
+    en.showDetailedError({ errorType: 'unknown', detail: 'YouTube API Error: Bad Request', severity: 'medium' });
+    assert.equal(en.elements.errorDescription.textContent, EN.apiErrBadRequest.message);
+
+    const ja = controller('ja');
+    ja.showDetailedError({ errorType: 'unknown', detail: 'Access denied for this key', severity: 'medium' });
+    assert.equal(ja.elements.errorDescription.textContent, 'アクセスが拒否されました。APIキーの権限を確認してください');
+
+    // 分類できたエラーの説明は ERROR_TEXT のまま（detail は見ない）
+    en.showDetailedError({ errorType: 'forbidden', detail: 'Bad Request', severity: 'high' });
+    assert.equal(en.elements.errorDescription.textContent, EN.errForbiddenMessage.message);
   });
 
   test('popup 自身が出すエラー（errorType なし）は渡した文言のまま', () => {
