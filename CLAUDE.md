@@ -60,6 +60,18 @@ npm test
   訳すのは popup の描画時だけ。
 - **表示文言で分岐しない**（`status.includes('取得中')` のような書き方）。言語が変わると壊れる。
   状態はキーで持ち、文言は表示するときだけ引く。
+- **Service Worker に表示文言を作らせない。** SW は `errorType` / `reasonKey` / `eventKey` のような
+  コードだけを送り、popup / options が `t()` で引く。SW は手動の言語切替を知らないので、
+  SW で組み立てた文言は選んだ言語に追従しない。
+- **JS があとから書き換える要素に `data-i18n` を付けない**（件数バッジ・状態で変わるボタン）。
+  `applyTo()` があとから走ると JS の書いた値を消す。
+- **開発者向けの文字列（`debugLog` / `console.*` / 表示しない理由や `error`）は固定の英語で書く。**
+  `t()` は通さず messages.json にも足さない。`src/` の非コメント行の日本語は `test/i18n.test.js` が落とす
+  （許可は ID に入る `'スーパーステッカー'`・YouTube の時刻を読む「午前/午後」・言語名「日本語」だけ）。
+  コードコメントは日本語のまま。
+- **`README.md` と `README.en.md`、掲載文の日本語と英語は対で直す。** 名前と短い説明は
+  `_locales/<lang>/messages.json` と `docs/store-listing.md` を `test/manifest.test.js` が突き合わせる。
+  `CHANGELOG.md` は各バージョンに `### English` を併記する。
 
 ### YouTube の DOM
 
@@ -203,7 +215,7 @@ npm test
   審査を通らない（2026-09 に差し戻された）。
 - **`manifest.json` の権限を増やすこと。** 審査のやり直しになるうえ、
   `test/manifest.test.js` が固定しているのでテストも落ちる。
-- **バージョンを上げること。** `src/manifest.json` と `README.md` の冒頭は
+- **バージョンを上げること。** `src/manifest.json` と `README.md`・`README.en.md` の冒頭は
   対で直す（食い違いは `test/manifest.test.js` が落とす）。
 
 ---
@@ -217,7 +229,8 @@ npm test
 | [`docs/audit-2026-09.md`](docs/audit-2026-09.md) | 2026-09-07 の全体監査。**凍結された記録**で行番号はいまのコードと対応しない。欠陥番号（#1〜#46 / #T1〜#T11）を引く索引として読む |
 | [`docs/release-checklist.md`](docs/release-checklist.md) | リリース手順と確認項目（機械／偽YouTube／実配信の3段）、各リリースの実施記録 |
 | [`docs/store-listing.md`](docs/store-listing.md) | ストア掲載文の正。短い説明は `_locales/<lang>/messages.json` の `extDescription` と同一文字列 |
-| [`docs/i18n-plan.md`](docs/i18n-plan.md) | 英語対応の計画と段階ごとの進み具合 |
+| [`docs/i18n-plan.md`](docs/i18n-plan.md) | 英語対応の計画と段階1〜6の実施記録（完了） |
+| [`README.en.md`](README.en.md) | README の英語版。`README.md` と対 |
 | [`CHANGELOG.md`](CHANGELOG.md) | 利用者から見える変更だけ。2.0.0 から |
 
 `docs/` のこれ以外（`requirements.md` / `comment-display-design.md` /
@@ -239,5 +252,5 @@ npm test
 
 **再設計のフェーズ0〜9 は完了している（2026-09-08）。** 次にやることは
 `docs/redesign-plan.md` の「この再設計のあとに残っている宿題」にある
-（i18n、`optional_host_permissions`、実ブラウザでしか確認できないもの、
+（i18n はリリース作業だけ残して完了、`optional_host_permissions`、実ブラウザでしか確認できないもの、
 残ったテストの盲点、通信路がまだ2本あること、リリース作業）。

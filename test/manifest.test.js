@@ -121,11 +121,28 @@ describe('manifest.json', () => {
     }
   });
 
+  test('名前は docs/store-listing.md の「名前」と同一', () => {
+    const listing = fs.readFileSync(path.join(__dirname, '..', 'docs', 'store-listing.md'), 'utf8');
+    const at = listing.indexOf('## 名前（75文字以内）\n');
+    assert.ok(at >= 0, 'store-listing.md に「名前」の見出しが無い');
+    const section = listing.slice(at, listing.indexOf('\n---\n', at));
+    for (const [locale, label] of [['ja', '日本語:'], ['en', '英語:']]) {
+      const block = section.slice(section.indexOf(label)).match(/```\n([\s\S]*?)\n```/);
+      assert.ok(block, `store-listing.md の「名前」に ${label} のコードブロックが無い`);
+      const messages = JSON.parse(fs.readFileSync(path.join(SRC, '_locales', locale, 'messages.json'), 'utf8'));
+      assert.equal(messages.extName.message, block[1], `${locale} の名前が掲載文とずれている`);
+    }
+  });
+
   test('version は README の冒頭と揃っている（#44）', () => {
-    const readme = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
-    const shown = readme.match(/\*\*バージョン:\*\* v(\d+\.\d+\.\d+)/);
-    assert.ok(shown, 'README の冒頭にバージョンが見つからない');
-    assert.equal(shown[1], manifest.version);
+    // 英語版の README.en.md も対で直す
+    for (const [file, pattern] of [['README.md', /\*\*バージョン:\*\* v(\d+\.\d+\.\d+)/],
+                                   ['README.en.md', /\*\*Version:\*\* v(\d+\.\d+\.\d+)/]]) {
+      const readme = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+      const shown = readme.match(pattern);
+      assert.ok(shown, `${file} の冒頭にバージョンが見つからない`);
+      assert.equal(shown[1], manifest.version, `${file} のバージョンが manifest とずれている`);
+    }
   });
 
   test('参照しているファイルが実在する', () => {
