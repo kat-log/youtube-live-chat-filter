@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <title>YouTube Special Comments Filter</title>
@@ -7,7 +7,9 @@
     <!-- テーマは最初の描画より前に決める（#15）。body の末尾で読むと、
          ライトテーマの利用者が一瞬ダーク（popup.css の :root）を見る -->
     <script src="../shared/theme.js"></script>
-    <!-- 文言の引き当て（docs/i18n-plan.md）。読み込み時には何も描かない -->
+    <!-- 文言の引き当て（docs/i18n-plan.md）。読み込み時には何も描かない。
+         このファイルに直接書いてある文言は英語（JS が走る前の既定）で、
+         popup.js が data-i18n* を見て表示言語の文言に差し替える -->
     <script src="../shared/i18n.js"></script>
 </head>
 <body>
@@ -16,7 +18,7 @@
         <!-- ─────────────── TOP BAR ─────────────── -->
         <div class="top-bar">
             <div class="top-bar-left">
-                <span id="status-indicator" class="status-indicator status-offline">オフライン</span>
+                <span id="status-indicator" class="status-indicator status-offline" data-i18n="statusOffline">Offline</span>
                 <!-- DOMモードで「チャットを読み取れているか」（フェーズ7）。
                      読めているときは点だけ、読めていないときだけ文言も出す -->
                 <span id="chat-health" class="chat-health" role="status" style="display:none">
@@ -26,15 +28,16 @@
                 <span class="video-id-chip" id="current-video-id">---</span>
             </div>
             <div class="top-bar-right">
-                <button id="start-monitoring" class="tb-btn tb-start" disabled title="APIキーを入力してください">
+                <button id="start-monitoring" class="tb-btn tb-start" disabled title="Enter your API key" data-i18n-title="startTitleNeedsApiKey">
                     <svg width="10" height="12" viewBox="0 0 10 12" fill="currentColor"><polygon points="0,0 10,6 0,12"/></svg>
-                    開始
+                    <span data-i18n="buttonStart">Start</span>
                 </button>
-                <button id="stop-monitoring" class="tb-btn tb-stop" disabled title="取得停止中です">
+                <button id="stop-monitoring" class="tb-btn tb-stop" disabled title="Not collecting" data-i18n-title="stopTitleNotRunning">
                     <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><rect width="10" height="10"/></svg>
-                    停止
+                    <span data-i18n="buttonStop">Stop</span>
                 </button>
-                <button id="settings-toggle-btn" class="tb-btn tb-icon" title="設定を開く" aria-label="設定">
+                <button id="settings-toggle-btn" class="tb-btn tb-icon" title="Open settings" aria-label="Settings"
+                        data-i18n-title="settingsOpen" data-i18n-aria-label="settingsLabel">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <circle cx="12" cy="12" r="3"/>
                         <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
@@ -49,78 +52,78 @@
 
                 <!-- モード選択 -->
                 <div class="drawer-row">
-                    <label class="drawer-label">取得モード</label>
+                    <label class="drawer-label" data-i18n="chatModeLabel">Source</label>
                     <div class="mode-select-wrapper" id="mode-select-wrapper">
                         <select id="chat-mode-toggle" class="mode-select">
-                            <option value="api">APIモード</option>
-                            <option value="dom">DOMモード（APIキー不要）</option>
+                            <option value="api" data-i18n="chatModeApi">API mode</option>
+                            <option value="dom" data-i18n="chatModeDom">DOM mode (no API key)</option>
                         </select>
                     </div>
                 </div>
-                <p class="mode-help-text" id="dom-mode-help" style="display:none">
-                    DOMモード：APIキー不要でライブチャットのDOMを直接監視します。
+                <p class="mode-help-text" id="dom-mode-help" style="display:none" data-i18n="chatModeDomHelp">
+                    DOM mode: reads the live chat on the page directly. No API key needed.
                 </p>
 
                 <!-- APIキー入力 -->
                 <div id="api-key-section" class="drawer-api-section">
                     <label class="drawer-label">YouTube Data API Key</label>
                     <div class="api-input-row">
-                        <input type="password" id="api-key-input" class="api-input" placeholder="APIキーを入力...">
-                        <button id="save-api-key" class="btn-save">保存</button>
+                        <input type="password" id="api-key-input" class="api-input" placeholder="Enter API key..." data-i18n-placeholder="apiKeyPlaceholder">
+                        <button id="save-api-key" class="btn-save" data-i18n="buttonSave">Save</button>
                     </div>
                     <p class="help-text">
+                        <span data-i18n="apiKeyHelp">Get an API key at</span>
                         <a href="https://console.developers.google.com/" target="_blank">Google Cloud Console</a>
-                        でAPIキーを取得してください
                     </p>
                 </div>
 
                 <!-- フィルター -->
                 <div class="drawer-section">
                     <div class="filter-header-row">
-                        <span class="drawer-label">フィルター</span>
+                        <span class="drawer-label" data-i18n="filtersLabel">Filters</span>
                         <div class="filter-presets">
-                            <button id="preset-special" class="btn-preset btn-preset-active">特別</button>
-                            <button id="preset-all" class="btn-preset">すべて</button>
-                            <button id="preset-none" class="btn-preset">なし</button>
+                            <button id="preset-special" class="btn-preset btn-preset-active" data-i18n="presetSpecial">Special</button>
+                            <button id="preset-all" class="btn-preset" data-i18n="presetAll">All</button>
+                            <button id="preset-none" class="btn-preset" data-i18n="presetNone">None</button>
                         </div>
                     </div>
                     <div class="filter-toggles">
                         <label class="filter-toggle-container">
                             <input type="checkbox" id="owner-toggle" checked>
                             <span class="toggle-slider owner-slider"></span>
-                            <span class="toggle-label"><span class="comment-role role-owner">配信者</span></span>
+                            <span class="toggle-label"><span class="comment-role role-owner" data-i18n="roleOwner">Streamer</span></span>
                         </label>
                         <label class="filter-toggle-container">
                             <input type="checkbox" id="moderator-toggle" checked>
                             <span class="toggle-slider moderator-slider"></span>
-                            <span class="toggle-label"><span class="comment-role role-moderator">モデレーター</span></span>
+                            <span class="toggle-label"><span class="comment-role role-moderator" data-i18n="roleModerator">Moderator</span></span>
                         </label>
                         <label class="filter-toggle-container">
                             <input type="checkbox" id="sponsor-toggle">
                             <span class="toggle-slider sponsor-slider"></span>
-                            <span class="toggle-label"><span class="comment-role role-sponsor">メンバー</span></span>
+                            <span class="toggle-label"><span class="comment-role role-sponsor" data-i18n="roleMember">Member</span></span>
                         </label>
                         <label class="filter-toggle-container">
                             <input type="checkbox" id="normal-toggle">
                             <span class="toggle-slider normal-slider"></span>
-                            <span class="toggle-label"><span class="comment-role role-normal">一般</span></span>
+                            <span class="toggle-label"><span class="comment-role role-normal" data-i18n="roleNormal">Regular</span></span>
                         </label>
                         <label class="filter-toggle-container">
                             <input type="checkbox" id="superchat-toggle" checked>
                             <span class="toggle-slider superchat-slider"></span>
-                            <span class="toggle-label"><span class="comment-role role-superchat">スパチャ</span></span>
+                            <span class="toggle-label"><span class="comment-role role-superchat" data-i18n="filterSuperchat">Super Chat</span></span>
                         </label>
                         <label class="filter-toggle-container">
                             <input type="checkbox" id="membership-toggle" checked>
                             <span class="toggle-slider membership-slider"></span>
-                            <span class="toggle-label"><span class="comment-role role-membership">加入・ギフト</span></span>
+                            <span class="toggle-label"><span class="comment-role role-membership" data-i18n="filterMembership">Joins &amp; gifts</span></span>
                         </label>
                     </div>
                 </div>
 
                 <!-- テーマ切り替え -->
                 <div class="drawer-row drawer-theme-row">
-                    <label class="drawer-label" for="dark-mode-toggle">ダークモード</label>
+                    <label class="drawer-label" for="dark-mode-toggle" data-i18n="darkModeLabel">Dark mode</label>
                     <label class="filter-toggle-container">
                         <input type="checkbox" id="dark-mode-toggle">
                         <span class="toggle-slider"></span>
@@ -129,14 +132,14 @@
 
                 <!-- 時刻表示 -->
                 <div class="drawer-row drawer-theme-row">
-                    <label class="drawer-label" for="time-hour12-toggle">12時間表記（AM/PM）</label>
+                    <label class="drawer-label" for="time-hour12-toggle" data-i18n="hour12Label">12-hour clock (AM/PM)</label>
                     <label class="filter-toggle-container">
                         <input type="checkbox" id="time-hour12-toggle">
                         <span class="toggle-slider"></span>
                     </label>
                 </div>
                 <div class="drawer-row drawer-theme-row">
-                    <label class="drawer-label" for="time-seconds-toggle">秒を表示</label>
+                    <label class="drawer-label" for="time-seconds-toggle" data-i18n="showSecondsLabel">Show seconds</label>
                     <label class="filter-toggle-container">
                         <input type="checkbox" id="time-seconds-toggle" checked>
                         <span class="toggle-slider"></span>
@@ -145,16 +148,16 @@
 
                 <!-- 操作ボタン群 -->
                 <div class="drawer-controls">
-                    <button id="clear-comments" class="btn btn-secondary">履歴クリア</button>
+                    <button id="clear-comments" class="btn btn-secondary" data-i18n="buttonClearHistory">Clear history</button>
                     <div id="fix-extension-container" style="display: none;">
-                        <button id="fix-extension" class="btn btn-warning">修復</button>
+                        <button id="fix-extension" class="btn btn-warning" data-i18n="buttonRepair">Repair</button>
                     </div>
                 </div>
 
                 <!-- DOMモード リロード通知 -->
                 <div id="dom-mode-reload-notice" class="dom-reload-notice" style="display:none">
-                    <span class="dom-reload-text">DOMモードを有効にするにはページのリロードが必要です</span>
-                    <button id="reload-page-for-dom" class="btn btn-warning btn-sm">リロード</button>
+                    <span class="dom-reload-text" data-i18n="domReloadNotice">Reload the page to enable DOM mode</span>
+                    <button id="reload-page-for-dom" class="btn btn-warning btn-sm" data-i18n="buttonReload">Reload</button>
                 </div>
 
             </div>
@@ -171,11 +174,12 @@
                     type="text"
                     id="search-keyword-input"
                     class="search-keyword-input"
-                    placeholder="キーワードで絞り込み..."
+                    placeholder="Filter by keyword..."
+                    data-i18n-placeholder="searchPlaceholder"
                     autocomplete="off"
                     spellcheck="false"
                 >
-                <button id="clear-search-btn" class="btn-clear-search" style="display: none;" title="検索をクリア">×</button>
+                <button id="clear-search-btn" class="btn-clear-search" style="display: none;" title="Clear search" data-i18n-title="searchClear">×</button>
             </div>
             <span id="search-match-count" class="search-match-count" style="display: none;"></span>
         </div>
@@ -184,16 +188,16 @@
         <div class="comments-area">
 
             <div class="comments-header">
-                <h2 id="comments-title">コメント</h2>
+                <h2 id="comments-title" data-i18n="commentsTitle">Comments</h2>
                 <div class="comment-counts">
-                    <span id="total-count" class="comment-count comment-count-total">0件</span>
+                    <span id="total-count" class="comment-count comment-count-total">Total: 0</span>
                     <div class="comment-count-details">
-                        <span role="button" tabindex="0" id="owner-count" class="comment-count-item owner-count">配信者: 0</span>
-                        <span role="button" tabindex="0" id="moderator-count" class="comment-count-item moderator-count">モデレーター: 0</span>
-                        <span role="button" tabindex="0" id="sponsor-count" class="comment-count-item sponsor-count">メンバー: 0</span>
-                        <span role="button" tabindex="0" id="normal-count" class="comment-count-item normal-count">一般: 0</span>
-                        <span role="button" tabindex="0" id="superchat-count" class="comment-count-item superchat-count">スパチャ: 0</span>
-                        <span role="button" tabindex="0" id="membership-count" class="comment-count-item membership-count">加入・ギフト: 0</span>
+                        <span role="button" tabindex="0" id="owner-count" class="comment-count-item owner-count">Streamer: 0</span>
+                        <span role="button" tabindex="0" id="moderator-count" class="comment-count-item moderator-count">Moderator: 0</span>
+                        <span role="button" tabindex="0" id="sponsor-count" class="comment-count-item sponsor-count">Member: 0</span>
+                        <span role="button" tabindex="0" id="normal-count" class="comment-count-item normal-count">Regular: 0</span>
+                        <span role="button" tabindex="0" id="superchat-count" class="comment-count-item superchat-count">Super Chat: 0</span>
+                        <span role="button" tabindex="0" id="membership-count" class="comment-count-item membership-count">Joins &amp; gifts: 0</span>
                     </div>
                 </div>
             </div>
@@ -202,18 +206,18 @@
                 <div class="user-filter-info">
                     <span class="user-filter-icon">👤</span>
                     <span id="filtered-username" class="filtered-username"></span>
-                    <span class="user-filter-text">のコメントを表示中</span>
+                    <span class="user-filter-text" data-i18n="userFilterSuffix">only</span>
                 </div>
                 <button id="clear-user-filter" class="btn-clear-filter">×</button>
             </div>
 
-            <div id="no-comments" class="no-comments">まだコメントがありません</div>
+            <div id="no-comments" class="no-comments" data-i18n="noCommentsYet">No comments yet</div>
             <div id="comments-list" class="comments-list"></div>
 
             <!-- ローディング（コメントエリア内オーバーレイ） -->
             <div class="loading" id="loading" style="display: none;">
                 <div class="spinner"></div>
-                <span>読み込み中...</span>
+                <span data-i18n="loading">Loading...</span>
                 <div id="initialization-status" class="initialization-status" style="display: none;"></div>
             </div>
 
@@ -222,14 +226,14 @@
             <div class="error-details" id="error-details" style="display: none;">
                 <div class="error-header">
                     <div class="error-icon">⚠️</div>
-                    <div class="error-title" id="error-title">エラーが発生しました</div>
+                    <div class="error-title" id="error-title" data-i18n="errorDefaultTitle">An error occurred</div>
                 </div>
                 <div class="error-content">
                     <div class="error-description" id="error-description"></div>
                     <div class="error-solution" id="error-solution"></div>
                     <div class="error-actions" id="error-actions">
-                        <button id="retry-button" class="btn btn-primary btn-small">再試行</button>
-                        <button id="options-button" class="btn btn-secondary btn-small">設定画面</button>
+                        <button id="retry-button" class="btn btn-primary btn-small" data-i18n="buttonRetry">Retry</button>
+                        <button id="options-button" class="btn btn-secondary btn-small" data-i18n="buttonOptions">Options</button>
                     </div>
                 </div>
             </div>

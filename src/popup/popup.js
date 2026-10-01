@@ -18,6 +18,12 @@ async function loadDebugMode() {
 // コールドスタート時に最悪十数秒のあいだ真っ黒な popup を見せられていた
 const { applyTheme } = self.YTFTheme;
 
+// 表示文言の引き当ては shared/i18n.js が正（docs/i18n-plan.md）。文言の正は
+// _locales/<lang>/messages.json で、キーは t() の引数にそのまま書く。
+// 文字列で組み立てると test/i18n.test.js の「誰も引かないキー」に引っかかる。
+// **文言で分岐しない**——状態はキーで持ち、文言は表示するときだけ引く
+const { t } = self.YTFi18n;
+
 // 生成中のコントローラ。ストレージ変更を再描画へ橋渡しするために保持する
 let popupController = null;
 
@@ -108,19 +114,43 @@ const BULK_FILTER_KEYS = ['sponsor', 'normal'];
 // 下端判定の許容誤差（px）
 const SCROLL_BOTTOM_THRESHOLD = 5;
 
+// 役割バッジの名前とクラス。名前は引くたびに t() で訳す
+// （手動の言語切替は読み込みのあとで効くので、読み込み時に固めない）
 const ROLE_LABELS = {
-    owner:     ['配信者',       'role-owner'],
-    moderator: ['モデレーター', 'role-moderator'],
-    member:    ['メンバー',     'role-sponsor'],
-    normal:    ['一般',         'role-normal']
+    owner:     [() => t('roleOwner'),     'role-owner'],
+    moderator: [() => t('roleModerator'), 'role-moderator'],
+    member:    [() => t('roleMember'),    'role-sponsor'],
+    normal:    [() => t('roleNormal'),    'role-normal']
 };
 
 // 種別バッジ。役割バッジ（王冠など）とは別に、行の性格を1文字で示す
 const KIND_ICONS = {
-    superchat:    ['\u{1F4B0}', 'スーパーチャット'],
-    supersticker: ['\u{1F4B0}', 'スーパーステッカー'],
-    membership:   ['\u{2728}',  'メンバーシップ'],
-    gift:         ['\u{1F381}', 'メンバーシップギフト']
+    superchat:    ['\u{1F4B0}', () => t('kindSuperChat')],
+    supersticker: ['\u{1F4B0}', () => t('kindSuperSticker')],
+    membership:   ['\u{2728}',  () => t('kindMembership')],
+    gift:         ['\u{1F381}', () => t('kindGift')]
+};
+
+// スーパーステッカーの行の eventText。DOMモード（dom-chat.js）も
+// APIモード（shared/comment.js）もこの日本語で保存していて、DOMモードでは
+// commentKeyOf() で ID のキーに混ざる。**保存値は訳さない**（言語ごとに ID が
+// 変わり、履歴が二重に積まれる）。訳すのは描画するときだけ（eventTextOf）
+const SUPER_STICKER_EVENT_TEXT = 'スーパーステッカー';
+
+// 取得の状態（トップバーの表示）。popup の中では状態をこのキーで持ち、
+// 文言は表示するときだけ引く。以前は文言そのものを渡して
+// status.includes('取得中') で色を決めていたので、訳すと壊れた
+const STATUS_VIEW = {
+    offline:          { online: false, label: () => t('statusOffline') },
+    youtubePage:      { online: false, label: () => t('statusYouTubePage') },
+    notYouTube:       { online: false, label: () => t('statusNotYouTube') },
+    error:            { online: false, label: () => t('statusError') },
+    monitoring:       { online: true,  label: () => t('statusMonitoring') },
+    monitoringDom:    { online: true,  label: () => t('statusMonitoringDom') },
+    stopped:          { online: false, label: () => t('statusStopped') },
+    liveChatFound:    { online: false, label: () => t('statusLiveChatFound') },
+    liveChatNotFound: { online: false, label: () => t('statusLiveChatNotFound') },
+    autoStopped:      { online: false, label: () => t('statusAutoStopped') }
 };
 
 // 画像の配信ホスト。https の前方一致だけだと、外部由来のURLを img の src に
@@ -144,31 +174,32 @@ const EMOJI_IMAGE_HOSTS = ['.ggpht.com', '.googleusercontent.com', 'www.youtube.
 // これまでは静かな配信と見分ける手段が利用者側に無かった（根本原因F）
 const CHAT_HEALTH_VIEW = {
     watching: {
-        level: 'ok', text: '',
-        title: 'ライブチャットを監視しています（まだコメントが流れていません）'
+        level: 'ok', text: () => '',
+        title: () => t('healthWatchingTitle')
     },
     reading: {
-        level: 'ok', text: '',
-        title: 'ライブチャットを読み取れています'
+        level: 'ok', text: () => '',
+        title: () => t('healthReadingTitle')
     },
     searching: {
-        level: 'warn', text: 'チャットを探しています',
-        title: 'ライブチャットの一覧をまだ見つけられていません'
+        level: 'warn', text: () => t('healthSearching'),
+        title: () => t('healthSearchingTitle')
     },
     'no-chat': {
-        level: 'error', text: 'チャットが見つかりません',
-        title: 'ライブチャットの一覧が見つかりませんでした。ページを再読み込みしてください'
+        level: 'error', text: () => t('healthNoChat'),
+        title: () => t('healthNoChatTitle')
     },
     unreadable: {
-        level: 'error', text: 'チャットを読み取れません',
-        title: 'チャットの行はありますが、内容を読み取れていません。' +
-               'YouTube側のDOM変更で拡張機能が対応できていない可能性があります'
+        level: 'error', text: () => t('healthUnreadable'),
+        title: () => t('healthUnreadableTitle')
     }
 };
 
 class PopupController {
     constructor() {
         this.isMonitoring = false;
+        // トップバーの状態（STATUS_VIEW のキー）。文言ではなくこれで持つ
+        this.status = 'offline';
         this.comments = [];
         // this.comments に入っているコメントのID。重複判定はこれだけを見る（#3）
         this.commentIds = new Set();
@@ -232,18 +263,35 @@ class PopupController {
         this.runInitialization();
     }
 
+    /**
+     * 表示言語を決めて、popup.html の data-i18n* に文言を流し込む。
+     * HTML に直接書いてある文言は英語（JS が走る前の既定）なので、ここで差し替える。
+     * CSS の content に出す文言も属性経由でここで入れる（CSS の __MSG_ は
+     * 手動の言語切替に追従しないので使わない）
+     */
+    async applyLanguage() {
+        await self.YTFi18n.loadOverride();
+        self.YTFi18n.applyTo(document);
+        this.elements.modeSelectWrapper.setAttribute('data-hint', t('chatModeLockedHint'));
+        this.elements.errorSolution.setAttribute('data-label', t('errorSolutionLabel'));
+    }
+
     // 初期化プロセス
     async runInitialization() {
         try {
             debugLog('[YouTube Special Comments] 🚀 Starting comprehensive initialization process...');
 
+            // 表示言語。ほかの何かを書くより先に済ませる
+            // （applyTo は data-i18n* の付いた要素を書き換えるので、あとで呼ぶと消してしまう）
+            await this.applyLanguage();
+
             // Step 1: 基本設定の初期化
-            this.showInitializationStatus('Step 1/2: 設定を読み込み中...');
+            this.showInitializationStatus(t('initStep1'));
             await this.completeBasicInitialization();
             debugLog('[YouTube Special Comments] ✅ Step 1 Complete: Basic initialization done');
 
             // Step 2: Content Script状態確認と通信テスト
-            this.showInitializationStatus('Step 2/2: Content Script通信テスト...');
+            this.showInitializationStatus(t('initStep2'));
             const contentScriptReady = await this.checkContentScriptInjection();
             
             if (contentScriptReady) {
@@ -251,7 +299,7 @@ class PopupController {
                 // Step 1で表示されていたエラーパネルをクリア
                 this.hideDetailedError();
                 this.elements.fixExtensionContainer.style.display = 'none';
-                this.showInitializationStatus('初期化完了！');
+                this.showInitializationStatus(t('initDone'));
                 await this.delay(500); // 成功メッセージを少し表示
             } else {
                 debugWarn('[YouTube Special Comments] ⚠️ Step 2 Warning: Content Script issues detected');
@@ -271,13 +319,13 @@ class PopupController {
                         this.updateChatModeUI();
                     }
                     this.updateMonitoringButtonStates();
-                    this.updateStatus(this.chatMode === 'dom' ? '取得中（DOMモード）' : '取得中');
+                    this.updateStatus(this.chatMode === 'dom' ? 'monitoringDom' : 'monitoring');
                 }
             }
 
         } catch (error) {
             debugError('[YouTube Special Comments] ❌ Critical initialization error:', error);
-            this.showInitializationStatus('初期化エラーが発生しました');
+            this.showInitializationStatus(t('initError'));
             
             // フォールバック: 基本的な初期化のみ実行
             await this.emergencyFallbackInitialization();
@@ -346,7 +394,7 @@ class PopupController {
             debugLog('[YouTube Special Comments] ✅ Emergency fallback completed');
         } catch (error) {
             debugError('[YouTube Special Comments] ❌ Emergency fallback also failed:', error);
-            this.showError('拡張機能の初期化に失敗しました。ブラウザを再起動してください。');
+            this.showError(t('errInitFailed'));
         }
     }
     
@@ -403,7 +451,7 @@ class PopupController {
         try {
             port = this.connectToBackground();
         } catch (error) {
-            return Promise.reject(new Error(`拡張機能に接続できません: ${error.message}`));
+            return Promise.reject(new Error(t('errCannotConnect', error.message)));
         }
 
         const requestId = ++this.lastRequestId;
@@ -466,7 +514,7 @@ class PopupController {
 
         const pending = Array.from(this.pendingRequests.values());
         this.pendingRequests.clear();
-        const error = new Error('Service Worker との接続が切れました');
+        const error = new Error(t('errPortDisconnected'));
         for (const entry of pending) entry.reject(error);
 
         // 張り直しは1回だけ。connect の中で同期的に切られる作りでも回り続けないよう、
@@ -477,7 +525,7 @@ class PopupController {
             this.connectToBackground();
         } catch (reconnectError) {
             debugWarn('[Popup] Failed to reconnect:', reconnectError.message);
-            this.showError('拡張機能の接続が失われました。ポップアップを開き直してください。');
+            this.showError(t('errConnectionLost'));
             return;
         } finally {
             this.reconnecting = false;
@@ -565,7 +613,7 @@ class PopupController {
     // Content Script回復試行
     async attemptContentScriptRecovery() {
         debugLog('[YouTube Special Comments] 🔄 Attempting content script recovery...');
-        this.showInitializationStatus('Content Scriptを修復中...');
+        this.showInitializationStatus(t('repairContentScript'));
         
         try {
             // 1. Service Workerから最後の注入結果を確認
@@ -640,19 +688,19 @@ class PopupController {
     
     // Content Script問題の表示
     showContentScriptError() {
-        this.showError('初回インストール後はページのリロードが必要です。以下のボタンで再読み込みしてください。');
+        this.showError(t('errReloadAfterInstall'));
 
         // ボタンをリロードとして設定
         const btn = this.elements.fixExtensionBtn;
-        btn.textContent = 'ページを再読み込み';
+        btn.textContent = t('buttonReloadPage');
         btn.dataset.action = 'reload';
         this.elements.fixExtensionContainer.style.display = 'block';
 
         // 詳細なエラー情報を表示
         this.showDetailedError({
-            title: '初回インストール後のリロードが必要です',
-            message: 'インストール直後は既存のタブにContent Scriptが読み込まれていません',
-            solution: '「ページを再読み込み」ボタンで現在のタブを更新すると解決します。2回目以降は自動的に動作します。',
+            title: t('reloadAfterInstallTitle'),
+            message: t('reloadAfterInstallMessage'),
+            solution: t('reloadAfterInstallSolution'),
             action: 'reload',
             severity: 'high'
         });
@@ -662,13 +710,16 @@ class PopupController {
     async fixExtension() {
         debugLog('[YouTube Special Comments] 🔧 Starting extension repair process...');
         this.elements.fixExtensionBtn.disabled = true;
-        this.elements.fixExtensionBtn.textContent = '修復中...';
-        this.showInitializationStatus('拡張機能を修復中...');
+        this.elements.fixExtensionBtn.textContent = t('buttonRepairing');
+        this.showInitializationStatus(t('repairExtension'));
+        // 失敗してタブの再読み込みに切り替えたか。finally でボタンを戻すかどうかを、
+        // ボタンの文言（表示言語で変わる）ではなくこれで決める
+        let fellBackToReload = false;
         
         try {
             // Step 1: Content Script再注入を要求
             debugLog('[YouTube Special Comments] Step 1: Requesting content script re-injection');
-            this.showInitializationStatus('Content Scriptを再注入中...');
+            this.showInitializationStatus(t('repairReinjecting'));
             
             const reinjectResponse = await this.requestBackground({
                 action: 'reinjectContentScripts',
@@ -681,12 +732,12 @@ class PopupController {
             
             // Step 2: 注入完了を待機
             debugLog('[YouTube Special Comments] Step 2: Waiting for injection to complete');
-            this.showInitializationStatus('注入完了を待機中...');
+            this.showInitializationStatus(t('repairWaiting'));
             await this.delay(3000); // 注入処理の完了を待つ
             
             // Step 3: Content Script通信テスト
             debugLog('[YouTube Special Comments] Step 3: Testing content script communication');
-            this.showInitializationStatus('通信をテスト中...');
+            this.showInitializationStatus(t('repairTesting'));
             
             const testResponse = await this.sendTabMessageWithTimeout(this.currentTab.id, {
                 action: 'ping'
@@ -694,13 +745,13 @@ class PopupController {
             
             if (testResponse && testResponse.success) {
                 debugLog('[YouTube Special Comments] ✅ Extension repair successful!');
-                this.showInitializationStatus('修復完了！');
+                this.showInitializationStatus(t('repairDone'));
                 
                 // 成功時の処理
                 this.hideDetailedError();
                 this.showError('');
                 this.elements.fixExtensionContainer.style.display = 'none';
-                this.showMessage('拡張機能を修復しました！', 'success');
+                this.showMessage(t('repairSucceeded'), 'success');
                 
                 // 初期化プロセスを完了
                 await this.delay(1000);
@@ -711,13 +762,13 @@ class PopupController {
             
         } catch (error) {
             debugError('[YouTube Special Comments] ❌ Extension repair failed:', error);
-            this.showInitializationStatus('修復失敗');
+            this.showInitializationStatus(t('repairFailed'));
             
             // 失敗時のフォールバック: タブ再読み込みを提案
             this.showDetailedError({
-                title: '修復失敗',
-                message: '自動修復に失敗しました',
-                solution: 'このタブを手動で再読み込みしてください。Ctrl+F5 または Cmd+R を押してください。',
+                title: t('repairFailed'),
+                message: t('repairFailedMessage'),
+                solution: t('repairFailedSolution'),
                 action: 'reload',
                 severity: 'high'
             });
@@ -726,9 +777,10 @@ class PopupController {
             // 押されたときに何をするかは dataset.action で伝える（#16）。
             // onclick を代入すると attachEventListeners のリスナーと二重に発火し、
             // 修復とタブ再読み込みが同時に走っていた
-            this.elements.fixExtensionBtn.textContent = 'タブを再読み込み';
+            this.elements.fixExtensionBtn.textContent = t('buttonReloadTab');
             this.elements.fixExtensionBtn.disabled = false;
             this.elements.fixExtensionBtn.dataset.action = 'reload';
+            fellBackToReload = true;
 
         } finally {
             await this.delay(1000);
@@ -736,8 +788,8 @@ class PopupController {
             
             // 通常の修復ボタン状態に戻す。文言を戻すなら、押したときの
             // 行き先（dataset.action）も一緒に戻す（#16）
-            if (this.elements.fixExtensionBtn.textContent === '修復中...') {
-                this.elements.fixExtensionBtn.textContent = '修復';
+            if (!fellBackToReload) {
+                this.elements.fixExtensionBtn.textContent = t('buttonRepair');
                 this.elements.fixExtensionBtn.disabled = false;
                 delete this.elements.fixExtensionBtn.dataset.action;
             }
@@ -756,7 +808,7 @@ class PopupController {
             window.close();
         } catch (error) {
             debugError('[YouTube Special Comments] Failed to reload tab:', error);
-            this.showError('タブの再読み込みに失敗しました。手動でページを更新してください。');
+            this.showError(t('errReloadTabFailed'));
         }
     }
     
@@ -1026,7 +1078,7 @@ class PopupController {
 
     async onChatModeChange() {
         if (this.isMonitoring) {
-            this.showMessage('取得中はモードを切り替えられません。取得を停止してから変更してください。', 'error');
+            this.showMessage(t('chatModeLocked'), 'error');
             // トグルを元の値に戻す
             this.elements.chatModeToggle.value = this.chatMode;
             return;
@@ -1061,14 +1113,14 @@ class PopupController {
             }
         } catch (error) {
             debugError('[YouTube Special Comments] Error loading API key:', error);
-            this.showError('APIキーの読み込みに失敗しました。ページを再読み込みしてください。');
+            this.showError(t('errApiKeyLoad'));
         }
     }
     
     async saveApiKey() {
         const apiKey = this.elements.apiKeyInput.value.trim();
         if (!apiKey) {
-            this.showMessage('APIキーを入力してください', 'error');
+            this.showMessage(t('startTitleNeedsApiKey'), 'error');
             return;
         }
         
@@ -1083,10 +1135,10 @@ class PopupController {
             if (response.success) {
                 this.showError('');
                 this.updateMonitoringButtons(true);
-                this.showMessage('APIキーが保存されました', 'success');
+                this.showMessage(t('apiKeySaved'), 'success');
             }
         } catch (error) {
-            this.showError('APIキーの保存に失敗しました: ' + error.message);
+            this.showError(t('errApiKeySave', error.message));
         } finally {
             this.showLoading(false);
         }
@@ -1101,15 +1153,15 @@ class PopupController {
             
             const isYouTubePage = tab.url && (tab.url.includes('youtube.com/watch') || tab.url.includes('youtube.com/live/'));
             if (isYouTubePage) {
-                this.updateStatus('YouTube ページ');
+                this.updateStatus('youtubePage');
                 await this.loadExistingComments();
             } else {
-                this.updateStatus('YouTube以外のページ');
+                this.updateStatus('notYouTube');
                 this.updateMonitoringButtons(false);
             }
         } catch (error) {
             debugError('Error checking current tab:', error);
-            this.updateStatus('エラー');
+            this.updateStatus('error');
         }
     }
     
@@ -1138,9 +1190,9 @@ class PopupController {
                 this.updateMonitoringButtonStates();
 
                 if (this.isMonitoring) {
-                    this.updateStatus(this.chatMode === 'dom' ? '取得中（DOMモード）' : '取得中');
+                    this.updateStatus(this.chatMode === 'dom' ? 'monitoringDom' : 'monitoring');
                 } else {
-                    this.updateStatus('停止済み');
+                    this.updateStatus('stopped');
                 }
             }
             
@@ -1159,8 +1211,8 @@ class PopupController {
             
         } catch (error) {
             debugError('[YouTube Special Comments] Error loading existing comments:', error);
-            this.showError('コメント履歴の読み込みに失敗しました。');
-            this.updateStatus('エラー');
+            this.showError(t('errHistoryLoad'));
+            this.updateStatus('error');
         }
     }
     
@@ -1297,13 +1349,13 @@ class PopupController {
             }, 2);
             
             if (response && response.liveChatId) {
-                this.updateStatus('ライブチャット検出済み');
+                this.updateStatus('liveChatFound');
             } else {
-                this.updateStatus('ライブチャット未検出');
+                this.updateStatus('liveChatNotFound');
             }
         } catch {
             debugLog('[YouTube Special Comments] Content script not available');
-            this.updateStatus('ライブチャット未検出');
+            this.updateStatus('liveChatNotFound');
         }
     }
     
@@ -1347,7 +1399,7 @@ class PopupController {
         const isYouTubePage = this.currentTab && this.currentTab.url && 
             (this.currentTab.url.includes('youtube.com/watch') || this.currentTab.url.includes('youtube.com/live/'));
         if (!isYouTubePage) {
-            if (!suppressErrors) this.showError('YouTubeのライブ配信ページで使用してください');
+            if (!suppressErrors) this.showError(t('startTitleUseOnLivePage'));
             return;
         }
         
@@ -1368,13 +1420,13 @@ class PopupController {
                 if (response && response.success) {
                     this.isMonitoring = true;
                     this.updateMonitoringButtonStates();
-                    this.updateStatus('取得中（DOMモード）');
+                    this.updateStatus('monitoringDom');
                     this.showError('');
                     this.hideDetailedError();
                     this.elements.fixExtensionContainer.style.display = 'none';
                     this.refreshChatHealth();
                 } else if (!suppressErrors) {
-                    this.showError('DOMモードでの取得開始に失敗しました。');
+                    this.showError(t('errDomStartFailed'));
                 }
                 return;
             }
@@ -1382,7 +1434,7 @@ class PopupController {
             // APIキーの存在確認
             const apiKeyResponse = await this.requestBackground({ action: 'getApiKey' });
             if (!apiKeyResponse || !apiKeyResponse.apiKey) {
-                this.showError('YouTube Data APIキーが設定されていません。オプション画面で設定してください。');
+                this.showError(t('errApiKeyMissing'));
                 return;
             }
 
@@ -1402,12 +1454,12 @@ class PopupController {
             if (response && response.success) {
                 this.isMonitoring = true;
                 this.updateMonitoringButtonStates();
-                this.updateStatus('取得中');
+                this.updateStatus('monitoring');
                 this.showError('');
                 this.hideDetailedError();
                 this.elements.fixExtensionContainer.style.display = 'none';
             } else {
-                this.showError('取得を開始できませんでした。ライブチャットが見つからない可能性があります。');
+                this.showError(t('errStartNoChat'));
             }
         } catch (error) {
             if (suppressErrors || error.message.includes('Could not establish connection')) {
@@ -1421,13 +1473,13 @@ class PopupController {
                 if (error.message.includes('Could not establish connection')) {
                     this.showContentScriptError();
                 } else if (error.message.includes('API key')) {
-                    this.showError('APIキーが設定されていません。オプション画面で設定してください。');
+                    this.showError(t('errApiKeyNotSet'));
                 } else if (error.message.includes('No active live chat')) {
-                    this.showError('このビデオはライブ配信ではないか、チャットが無効になっています。');
+                    this.showError(t('errNotLive'));
                 } else if (error.message.includes('quota')) {
-                    this.showError('YouTube API の使用量制限に達しました。しばらく待ってから再試行してください。');
+                    this.showError(t('errQuota'));
                 } else {
-                    this.showError(`取得の開始に失敗しました: ${error.message}`);
+                    this.showError(t('errStartFailed', error.message));
                 }
             }
         } finally {
@@ -1449,23 +1501,23 @@ class PopupController {
             if (response && response.success) {
                 this.isMonitoring = false;
                 this.updateMonitoringButtonStates();
-                this.updateStatus('停止済み');
+                this.updateStatus('stopped');
                 this.updateChatHealth(null);
                 this.showError('');
             } else {
-                this.showError('取得を停止できませんでした');
+                this.showError(t('errStopFailed'));
             }
         } catch (error) {
             debugError('[YouTube Special Comments] Stop monitoring error:', error);
             if (error.message.includes('Could not establish connection')) {
-                this.showError('ページを再読み込みしてみてください。（Content scriptが読み込まれていません...）');
+                this.showError(t('errStopNoContentScript'));
                 // 強制的に停止状態にする
                 this.isMonitoring = false;
                 this.updateMonitoringButtonStates();
-                this.updateStatus('停止済み');
+                this.updateStatus('stopped');
                 this.updateChatHealth(null);
             } else {
-                this.showError('取得の停止に失敗しました: ' + error.message);
+                this.showError(t('errStopFailedDetail', error.message));
             }
         } finally {
             this.showLoading(false);
@@ -1580,7 +1632,8 @@ class PopupController {
     // 足すのは表示のためのフィールドだけ
     formatComment(comment) {
         const normalized = normalizeComment(comment);
-        const [roleLabel, roleClass] = ROLE_LABELS[normalized.role] || ROLE_LABELS.normal;
+        const [roleLabelOf, roleClass] = ROLE_LABELS[normalized.role] || ROLE_LABELS.normal;
+        const roleLabel = roleLabelOf();
 
         return {
             ...normalized,
@@ -1828,12 +1881,22 @@ class PopupController {
         const entry = KIND_ICONS[comment.kind];
         if (!entry) return null;
 
-        const [icon, label] = entry;
+        const [icon, labelOf] = entry;
+        const label = labelOf();
         const span = this.createNode('span', 'comment-kind comment-kind--icon', icon);
         span.setAttribute('title', label);
         span.setAttribute('role', 'img');
         span.setAttribute('aria-label', label);
         return span;
+    }
+
+    // 本文とは別に出す一行の、表示用の文言。保存値（eventText）は訳さずに持ち、
+    // 訳すのはここだけ（SUPER_STICKER_EVENT_TEXT の但し書き）
+    eventTextOf(comment) {
+        if (comment.kind === 'supersticker' && comment.eventText === SUPER_STICKER_EVENT_TEXT) {
+            return t('kindSuperSticker');
+        }
+        return comment.eventText;
     }
 
     // 1行ぶんの要素を組み立てる。ここで作った要素は、フィルターや検索を
@@ -1872,8 +1935,9 @@ class PopupController {
         row.appendChild(header);
 
         // 「新規メンバー」「◯か月連続のメンバー」など、本文とは別に出す一行
-        if (comment.eventText) {
-            row.appendChild(this.createNode('div', 'comment-event', comment.eventText));
+        const eventText = this.eventTextOf(comment);
+        if (eventText) {
+            row.appendChild(this.createNode('div', 'comment-event', eventText));
         }
 
         const sticker = this.stickerNode(comment);
@@ -2072,14 +2136,16 @@ class PopupController {
     updateCountBadges(counts, visibleCount) {
         const unknownBulk = this.unloadedBulk > 0;
 
-        this.elements.totalCount.textContent = `${visibleCount}件`;
+        // chrome.i18n には複数形の仕組みが無いので、どの言語でも
+        // 「名前: 数」のような数に依らない言い回しにしてある
+        this.elements.totalCount.textContent = t('countTotal', visibleCount);
         this.updateSearchMatchCount(visibleCount);
-        this.elements.ownerCount.textContent = `配信者: ${counts.owner}`;
-        this.elements.moderatorCount.textContent = `モデレーター: ${counts.moderator}`;
-        this.elements.sponsorCount.textContent = `メンバー: ${unknownBulk ? '?' : counts.sponsor}`;
-        this.elements.normalCount.textContent = `一般: ${unknownBulk ? '?' : counts.normal}`;
-        this.elements.superchatCount.textContent = `スパチャ: ${counts.superchat}`;
-        this.elements.membershipCount.textContent = `加入・ギフト: ${counts.membership}`;
+        this.elements.ownerCount.textContent = t('countOwner', counts.owner);
+        this.elements.moderatorCount.textContent = t('countModerator', counts.moderator);
+        this.elements.sponsorCount.textContent = t('countMember', unknownBulk ? '?' : counts.sponsor);
+        this.elements.normalCount.textContent = t('countNormal', unknownBulk ? '?' : counts.normal);
+        this.elements.superchatCount.textContent = t('countSuperchat', counts.superchat);
+        this.elements.membershipCount.textContent = t('countMembership', counts.membership);
 
         // フィルター状態に応じてバッジのアクティブ・非アクティブ表示を切り替え
         for (const key of FILTER_KEYS) {
@@ -2089,10 +2155,9 @@ class PopupController {
             element.classList.toggle('filter-inactive', !enabled);
             // バッジ単体でも状態を確かめられるように、見た目に加えて文言でも示す
             if (unknownBulk && BULK_FILTER_KEYS.includes(key)) {
-                element.title = `クリックで読み込んで表示する（未読み込み${this.unloadedBulk}件）`;
+                element.title = t('countTitleLoad', this.unloadedBulk);
             } else {
-                element.title = enabled ? 'クリックで非表示にする（現在: 表示中）'
-                                        : 'クリックで表示する（現在: 非表示）';
+                element.title = enabled ? t('countTitleHide') : t('countTitleShow');
             }
             element.setAttribute('aria-pressed', String(enabled));
         }
@@ -2171,8 +2236,8 @@ class PopupController {
 
         chip.style.display = '';
         chip.className = `chat-health chat-health--${view.level}`;
-        chip.title = view.title;
-        this.elements.chatHealthText.textContent = view.text;
+        chip.title = view.title();
+        this.elements.chatHealthText.textContent = view.text();
     }
 
     /**
@@ -2192,14 +2257,16 @@ class PopupController {
         }
     }
 
-    updateStatus(status) {
-        this.elements.statusIndicator.textContent = status;
-        
-        if (status.includes('取得中')) {
-            this.elements.statusIndicator.className = 'status-indicator status-online';
-        } else {
-            this.elements.statusIndicator.className = 'status-indicator status-offline';
-        }
+    /**
+     * トップバーの状態表示。
+     * @param {string} state STATUS_VIEW のキー（'monitoring' など）。文言は渡さない
+     */
+    updateStatus(state) {
+        const view = STATUS_VIEW[state] || STATUS_VIEW.error;
+        this.status = state;
+        this.elements.statusIndicator.textContent = view.label();
+        this.elements.statusIndicator.className =
+            `status-indicator ${view.online ? 'status-online' : 'status-offline'}`;
     }
     
     updateMonitoringButtons(hasApiKey) {
@@ -2211,10 +2278,10 @@ class PopupController {
         // 監視開始ボタンの状態とツールチップ
         if (!effectiveHasApiKey) {
             this.elements.startMonitoringBtn.disabled = true;
-            this.elements.startMonitoringBtn.title = 'APIキーを入力してください';
+            this.elements.startMonitoringBtn.title = t('startTitleNeedsApiKey');
         } else if (!isYouTubePage) {
             this.elements.startMonitoringBtn.disabled = true;
-            this.elements.startMonitoringBtn.title = 'YouTubeのライブ配信ページで使用してください';
+            this.elements.startMonitoringBtn.title = t('startTitleUseOnLivePage');
         } else {
             this.elements.startMonitoringBtn.disabled = false;
             this.elements.startMonitoringBtn.title = '';
@@ -2233,7 +2300,7 @@ class PopupController {
         // 監視開始ボタン
         if (this.isMonitoring) {
             this.elements.startMonitoringBtn.disabled = true;
-            this.elements.startMonitoringBtn.title = '取得中です';
+            this.elements.startMonitoringBtn.title = t('startTitleRunning');
         } else {
             // 監視していない場合は通常のボタン状態ロジックを適用
             if (this.chatMode === 'dom') {
@@ -2256,7 +2323,7 @@ class PopupController {
             this.elements.stopMonitoringBtn.title = '';
         } else {
             this.elements.stopMonitoringBtn.disabled = true;
-            this.elements.stopMonitoringBtn.title = '取得停止中です';
+            this.elements.stopMonitoringBtn.title = t('stopTitleNotRunning');
         }
     }
     
@@ -2424,7 +2491,7 @@ class PopupController {
         if (this.currentVideoId) {
             this.elements.currentVideoId.textContent = this.currentVideoId;
         } else {
-            this.elements.currentVideoId.textContent = '未検出';
+            this.elements.currentVideoId.textContent = t('videoIdNotFound');
         }
     }
     
@@ -2434,7 +2501,7 @@ class PopupController {
         // 監視状態を更新
         this.isMonitoring = false;
         this.updateMonitoringButtonStates();
-        this.updateStatus('自動停止');
+        this.updateStatus('autoStopped');
         this.updateChatHealth(null);
         
         // 自動停止の通知を表示
@@ -2445,8 +2512,9 @@ class PopupController {
         // 既存のエラーメッセージをクリア
         this.showError('');
         
-        // 自動停止メッセージを表示
-        const message = `取得が自動停止されました: ${reason}`;
+        // 自動停止メッセージを表示。reason はまだ Service Worker が作った文言のまま
+        // 届く（コード化は docs/i18n-plan.md の段階3）
+        const message = t('autoStopped', reason);
         this.showMessage(message, 'info');
         
         // エラーメッセージエリアを一時的に情報表示に使用
@@ -2473,9 +2541,9 @@ class PopupController {
         this.elements.errorMessage.style.display = 'none';
         
         // HTMLタグを除去してから表示
-        const cleanTitle = stripHtmlTags(errorInfo.title || 'エラーが発生しました');
+        const cleanTitle = stripHtmlTags(errorInfo.title || t('errorDefaultTitle'));
         const cleanMessage = stripHtmlTags(errorInfo.message || errorInfo.originalError || '');
-        const cleanSolution = stripHtmlTags(errorInfo.solution || '設定を確認してください');
+        const cleanSolution = stripHtmlTags(errorInfo.solution || t('errorDefaultSolution'));
         
         // 詳細エラー情報を表示
         this.elements.errorTitle.textContent = cleanTitle;
@@ -2520,16 +2588,16 @@ class PopupController {
         this.elements.optionsButton.style.display = 'inline-block';
 
         // 行き先も文言も、毎回ここで全部書き直す（前のエラーの設定を残さない）
-        this.elements.retryButton.textContent = '再試行';
+        this.elements.retryButton.textContent = t('buttonRetry');
         this.elements.retryButton.dataset.action = 'retry';
-        this.elements.optionsButton.textContent = '設定画面';
+        this.elements.optionsButton.textContent = t('buttonOptions');
         this.elements.optionsButton.dataset.action = 'options';
 
         // アクションに応じてボタンをカスタマイズ
         switch (action) {
             case 'setApiKey':
             case 'checkApiKey':
-                this.elements.optionsButton.textContent = 'APIキー設定';
+                this.elements.optionsButton.textContent = t('buttonApiKeySettings');
                 break;
             case 'waitAndRetry':
                 this.elements.optionsButton.style.display = 'none';
@@ -2543,7 +2611,7 @@ class PopupController {
                 break;
             case 'reload':
                 // これだけは文言どおりに動かせる（タブを再読み込みする）
-                this.elements.retryButton.textContent = 'ページ再読込';
+                this.elements.retryButton.textContent = t('buttonReloadPageShort');
                 this.elements.retryButton.dataset.action = 'reload';
                 this.elements.optionsButton.style.display = 'none';
                 break;
@@ -2644,7 +2712,7 @@ class PopupController {
         // メモリに載せていなければ、ここで読んでから描く
         this._searchDebounceTimer = setTimeout(() => {
             if (isSearching && this.shouldLoadBulk()) {
-                this.elements.searchMatchCount.textContent = '検索中…';
+                this.elements.searchMatchCount.textContent = t('searchSearching');
                 this.elements.searchMatchCount.style.display = 'inline-block';
             }
             this.renderWithBulk(false, false).catch(error =>
@@ -2664,7 +2732,7 @@ class PopupController {
 
     updateSearchMatchCount(matchCount) {
         if (this.searchQuery.length > 0) {
-            this.elements.searchMatchCount.textContent = `${matchCount}件一致`;
+            this.elements.searchMatchCount.textContent = t('searchMatches', matchCount);
             this.elements.searchMatchCount.style.display = 'inline-block';
         } else {
             this.elements.searchMatchCount.style.display = 'none';
@@ -2679,7 +2747,7 @@ class PopupController {
         const total = this.comments.length + this.unloadedBulk;
 
         if (total === 0) {
-            this.elements.noComments.textContent = 'まだコメントがありません';
+            this.elements.noComments.textContent = t('noCommentsYet');
             return;
         }
 
@@ -2690,16 +2758,16 @@ class PopupController {
             // 検索した範囲は正直に書く。上限や読み込み失敗で全件を見られていないのに
             // 「すべてを検索」と出すと、0件の理由がまた見分けられなくなる
             const scope = this.unloadedBulk > 0
-                ? `${this.comments.length}件を検索・${this.unloadedBulk}件は未読み込み`
-                : `取得済み${total}件すべてを検索`;
+                ? t('emptyScopePartial', [this.comments.length, this.unloadedBulk])
+                : t('emptyScopeAll', total);
+            const keyword = this.searchKeyword.trim();
             this.elements.noComments.textContent = keywordHits > 0
-                ? `「${this.searchKeyword.trim()}」に一致する${keywordHits}件は、いまのフィルターで非表示です`
-                : `「${this.searchKeyword.trim()}」に一致するコメントはありません（${scope}）`;
+                ? t('emptyKeywordFiltered', [keyword, keywordHits])
+                : t('emptyKeywordNoMatch', [keyword, scope]);
             return;
         }
 
-        this.elements.noComments.textContent =
-            `表示できるコメントがありません（取得済み${total}件はフィルターで非表示です）`;
+        this.elements.noComments.textContent = t('emptyAllFiltered', total);
     }
     
     updateUserFilterStatus() {

@@ -13,7 +13,7 @@ const path = require('node:path');
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { loadPopup } = require('./helpers/popup-harness');
+const { loadPopup, createChromeMock } = require('./helpers/popup-harness');
 
 const POPUP_DIR = path.join(__dirname, '..', 'src', 'popup');
 const POPUP_JS = fs.readFileSync(path.join(POPUP_DIR, 'popup.js'), 'utf8');
@@ -124,7 +124,8 @@ describe('テーマのちらつき（#15）', () => {
     // ライトテーマの利用者が真っ黒な popup を見たまま待たされた
     const popup = loadPopup({ storage: { theme: 'dark' } });
     popup.document.fire('DOMContentLoaded');
-    for (let i = 0; i < 5; i++) await Promise.resolve();
+    // 初期化の冒頭で表示言語の設定（storage.local）を読むぶん、数手ぶん余計に待つ
+    for (let i = 0; i < 20; i++) await Promise.resolve();
 
     assert.equal(popup.document.documentElement.getAttribute('data-theme'), 'dark');
     // ポートには要求が積まれたまま（＝応答は1つも返っていない）
@@ -243,18 +244,21 @@ describe('再試行ボタンの文言と挙動（#17）', () => {
 describe('チップ幅の跳ね（#19）', () => {
   test('件数バッジの初期値は、JS が最初に書く文言と一致する', () => {
     // HTML が「モデレ: 0」、JS が「モデレーター: 0」だったので、
-    // 最初の renderComments でチップが横に広がり、レイアウトが目に見えて動いた
-    const prefixes = Array.from(
-      POPUP_JS.matchAll(/elements\.(\w+)Count\.textContent = `([^:`$\n]+): /g),
-      m => [m[1], m[2]]
-    );
-    assert.equal(prefixes.length, 6);
+    // 最初の renderComments でチップが横に広がり、レイアウトが目に見えて動いた。
+    // 英語対応（段階2）からは HTML に書く初期値が英語なので、英語の JS と突き合わせる
+    // （日本語では初期値が英語から差し替わるが、描画前の一瞬だけで、跳ねる幅も無い）
+    const popup = loadPopup({ chrome: createChromeMock({ locale: 'en' }) });
+    const c = new popup.__popup.PopupController();
+    c.unloadedBulk = 0;
+    c.updateCountBadges(
+      { owner: 0, moderator: 0, sponsor: 0, normal: 0, superchat: 0, membership: 0 }, 0);
 
-    for (const [key, prefix] of prefixes) {
-      const id = key.replace(/[A-Z]/g, ch => `-${ch.toLowerCase()}`);
+    const ids = ['total', 'owner', 'moderator', 'sponsor', 'normal', 'superchat', 'membership'];
+    for (const id of ids) {
       const cell = POPUP_HTML.match(new RegExp(`id="${id}-count"[^>]*>([^<]*)<`));
       assert.ok(cell, `popup.html に ${id}-count が無い`);
-      assert.match(cell[1], new RegExp(`^${prefix}: `), `${id}-count の初期値がずれている`);
+      const initial = cell[1].replace(/&amp;/g, '&');
+      assert.equal(c.elements[`${id}Count`].textContent, initial, `${id}-count の初期値がずれている`);
     }
   });
 });
