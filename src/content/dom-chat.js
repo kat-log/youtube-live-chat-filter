@@ -185,7 +185,7 @@ const ATTACH_MAX_RETRIES = 60; // 500ms x 60 = 30秒
 function attachObserver(retriesLeft = ATTACH_MAX_RETRIES) {
   if (!ensureObserving()) {
     if (retriesLeft <= 0) {
-      console.warn('[DomChat] チャットの #items が見つからないため監視を諦めた:', location.href);
+      console.warn('[DomChat] Gave up observing: chat #items not found:', location.href);
       setHealthState(HEALTH.NO_CHAT);
       return;
     }
@@ -643,7 +643,7 @@ function extractEmojiUrl(img) {
 
   if (!warnedEmojiHosts.has(url.hostname)) {
     warnedEmojiHosts.add(url.hostname);
-    console.warn('[YouTube Special Comments] 未知の絵文字の配信元:', url.hostname);
+    console.warn('[YouTube Special Comments] Unknown emoji host:', url.hostname);
   }
   return null;
 }

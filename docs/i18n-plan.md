@@ -282,3 +282,25 @@
 - 実ブラウザ（Chromium 1194、`--load-extension`、`--lang=en-US` / `ja`）で options を開き、言語セレクトの切替で
   見出し・`<title>`・ボタン・注記・`<html lang>` がその場で変わり、`uiLanguage` が保存されること、そのあと popup（420px）を
   開くと選んだ言語になること（はみ出し無し）、「自動」に戻すとブラウザの言語に戻ることを確認した
+
+### 段階5: コンソールログの英語化（2026-10-01）
+
+- 対象は `test/i18n.test.js` の許可リストで「段階5」としていた7つ。`t()` は通さず、`messages.json` にも足さない固定の英語にした:
+  - `dom-chat.js` の `console.warn` 2つ: `'[DomChat] Gave up observing: chat #items not found:'` /
+    `'[YouTube Special Comments] Unknown emoji host:'`
+  - `service-worker.js` の `staleSessionReason()` の理由3つ: `'no tab info'` / `'tab no longer exists'` /
+    `` `video changed (${old} -> ${new})` ``、`discardSession('extension installed/updated')`、
+    `openUserFilter()` の `error: 'displayName is empty'`
+- **受け取り側を確かめた結果、どれも英語にするだけで済んだ**（表示に出る所も、文字列で分岐する所も無い）:
+  - `staleSessionReason()` の戻り値は `restoreStateFromStorage()` が真偽で見て `discardSession()` に渡すだけで、
+    `discardSession()` は `debugLog` に出すだけ。インストール／更新の理由も同じ経路
+  - `openUserFilter()` の応答は `dom-chat.js` の `sendToBackground()` が受けるが、コールバックは `lastError` で
+    再送するかを見るだけで応答の中身を読まない
+  - `console.warn` 2つは開発者向けのログそのもの。テストは件数とホスト名で見ていて、文言を突き合わせていない
+    （既存テストの修正は不要だった）
+- `debugLog` / `debugError` / `console.*` の中にほかの日本語は無い（`src/` の非コメント行を全部見る
+  `test/i18n.test.js` が検出したのは上の7つだけで、英語化後は検出されない）。コードコメントは日本語のまま
+  （`service-worker.js` のコメントで「タブ情報なし」を引いていた1か所だけ、新しい文言に合わせた）
+- 許可リストから7つを外した。残るのは ID に入る正準トークン `'スーパーステッカー'`（popup.js / comment.js / dom-chat.js）、
+  `parseTimestampText()` の「午前/午後」2行（dom-chat.js）、options.html の言語名「日本語」だけ
+- `docs/redesign-plan.md` の実施記録にある「タブ情報なし」は当時の記録なので直していない

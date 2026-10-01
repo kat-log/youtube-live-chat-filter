@@ -503,19 +503,19 @@ function ensureStateRestored() {
 // 別配信のコメントを古い動画の履歴に積んでしまう。
 // 突き合わせそのものは reconcile が持つ。ここはタブを見に行くぶんだけ
 async function staleSessionReason() {
-  if (session.tabId === null) return 'タブ情報なし';
+  if (session.tabId === null) return 'no tab info';
 
   let tab;
   try {
     tab = await chrome.tabs.get(session.tabId);
   } catch {
-    return 'タブが存在しない';
+    return 'tab no longer exists';
   }
 
   // URLが読めないときは videoId が null になり、reconcile は判断を保留する
   const tabVideoId = extractVideoIdFromUrl(tab?.url);
   if (reconcile(session.tabId, tabVideoId) === 'changed') {
-    return `動画が変わっている (${session.videoId} -> ${tabVideoId})`;
+    return `video changed (${session.videoId} -> ${tabVideoId})`;
   }
 
   return null;
@@ -616,7 +616,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   // インストール時に監視状態をリセット（履歴は保持）。
   // 起動直後の ensureStateRestored() が古い状態を復元している可能性があるため、
   // メモリと storage を1回で揃える
-  await discardSession('拡張機能のインストール／更新');
+  await discardSession('extension installed/updated');
 
   // 旧バージョンで肥大化したストレージを更新時に整理する
   await cleanupOldCommentHistories();
@@ -840,7 +840,7 @@ const PENDING_USER_FILTER_TTL_MS = 10 * 60 * 1000;
 /** dom-chat.js が拾ったクリック。置いてから popup を開く */
 async function openUserFilter(displayName, sender) {
   const name = typeof displayName === 'string' ? displayName.trim() : '';
-  if (!name) return { success: false, error: '発言者名が空です' };
+  if (!name) return { success: false, error: 'displayName is empty' };
 
   await chrome.storage.local.set({
     [PENDING_USER_FILTER_KEY]: { displayName: name, at: Date.now() }
@@ -1660,7 +1660,7 @@ chrome.runtime.onStartup.addListener(async () => {
 //  - DOMモードのコメントはそのタブの live_chat から届く。タブが無ければ
 //    以後1件も来ない。「継続」はバッジだけ ON のまま何も起きない状態を作る
 //  - タブを失ったセッションは、次に Service Worker が復帰した時点で
-//    staleSessionReason の「タブ情報なし」で破棄される。「継続」は
+//    staleSessionReason の「no tab info」で破棄される。「継続」は
 //    Service Worker が生きている間しか続かず、挙動が説明できない
 //  - APIモードは続けられるが、見ていない配信のために quota を使い続ける
 // 履歴は停止処理の中で flush されるので、閉じる直前のコメントは失われない
