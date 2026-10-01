@@ -101,22 +101,62 @@
 
 - 1〜5: 済（`manifest.json`・`README.md`・`README.en.md` を 3.0.0 に、CHANGELOG の「未リリース」を
   3.0.0 に付け替え、`store-listing.md` の告知文を v3.0.0 に。権限は変えていないので「権限の説明」はそのまま）
-- 6〜8: **未実施**（zip、英語のスクリーンショット、ダッシュボードへの登録と提出）
+- 6: 済。`youtube-live-chat-filter-v3.0.0.zip`（SHA-256 `e1cdc97cdd484f976973cffdfb59ee4f4a14ead7154e02948ff0a90013c0f214`）。
+  `git archive --format=zip HEAD:src` で作り、**`manifest.json` が zip の直下に来る形**にした
+  （v2.2.1 までの zip は `src/` が1段挟まっていた）
+- 7: 一部済（下の C）
+- 8: 済。zip のアップロード、日本語の詳細な説明の差し替えと「このバージョンの新機能」、
+  English の掲載情報（詳細な説明・告知文・スクリーンショット3枚）を入力し、**2026-10-01 に審査へ提出した**。
+  名前と短い説明は貼らず、ダッシュボードで日本語「YouTube特別コメントフィルター」／英語「YouTube Special Comments Filter」と
+  出ていること、「プライバシーへの取り組み」の `alarms` の理由が入っていることは開発者が確認した
+- **ダッシュボードは自動化できない。** Chrome ウェブストアのページは拡張機能からの操作・読み取りを Chrome 自身が拒む
+  （"The extensions gallery cannot be scripted"）ので、Claude in Chrome でもスクリーンショットすら取れない。
+  入力は人が行い、貼る文面はこのリポジトリの `store-listing.md` からスクリプトでそのまま抜き出して渡した
 
-### A. 機械で確かめられるもの
+### 英語のスクリーンショット
 
-- `npm run lint` / `npm test`: **431件 パス**
-- zip の同梱物の確認: zip を作るときに行う
+`promotion/store-screenshots-en/` の3枚（1280x800）。`store-listing.md` の「スクリーンショット・英語」の3構図
+（監視中／フィルターのドロワー／`Matches: N` の検索）。実配信（hololive の英語配信）を `--lang=en-US` の Chromium で
+読み込んだ popup（420x600 を2倍で撮影）に、掲載文の言い回しから取った見出しを添えた。
+**スパチャが流れなかったため、1枚目に金額チップとステッカー画像は写っていない。** 次に撮り直すときの宿題。
+
+### A. 機械で確かめられるもの — 済
+
+- `npm ci` → `npm run lint` → `npm test`: **431件 パス**（main d53e8e8）
+- zip の同梱物: `unzip -l` で `test/` `docs/` `node_modules` `.devcontainer` が無いこと、
+  `git ls-files src` と1対1で一致すること、`manifest.json` の `version` が 3.0.0 であることを確認
 
 ### B. 偽 YouTube + 実 Chromium
 
-i18n の段階2〜4で、実 Chromium（1194、`--load-extension`）で `--lang=en-US` / `ja` / `ko` の表示、
-420px の popup の折り返し、options の言語セレクトの切替を確認済み（`docs/i18n-plan.md` の実施記録）。
-**v3.0.0 の zip そのものでの通しは未実施。**
+i18n の段階2〜4で確認済み（`docs/i18n-plan.md` の実施記録）。下の C は v3.0.0 の zip の中身そのもので行った。
 
-### C. 本物でしか踏めないもの — **未実施。ストア提出前に人がやる**
+### C. 本物でしか踏めないもの — 一部済
 
-とくに今回足した2項目（英語の YouTube での DOMモードの読み取り、公開後のストアの言語別表示）。
+zip を展開したものを Chromium 1194（Playwright 同梱、Xvfb 上で headful）に `--load-extension` で読み込み、
+本物の YouTube のライブ配信で確認した（クラウドの作業環境。開発者の Mac の Chrome ではない）。
+
+| 項目 | 結果 |
+| --- | --- |
+| DOMモードを1時間以上流す | **未達（約31分）**。15:55〜16:26 JST、ヘルスは `reading` のまま、件数は 86 → 751 と増え続け、止まった形跡は無い。作業環境（クラウドのコンテナ）が再起動されてブラウザごと消えたため打ち切り。拡張機能の不具合ではない |
+| 「上位のチャット ↔ チャット」の切り替え | 済。英語の配信で Top chat → Live chat に切り替えたあとも件数が増え続けた |
+| 英語の YouTube（`--lang=en-US`）で役割が読める | 済。owner（配信者）・member を取り込んだ（バッジは `Member (1 year)` などの英語表記） |
+| 英語の YouTube で時刻（AM/PM）が読める | 済。チャット欄の `3:55 PM` が 15:55 JST として保存された（12時間表示で `4:09:00 PM` と出る） |
+| 英語の YouTube でスパチャ・メンバー加入が読める | **未確認**。3配信で計20分ほど待ったがスパチャも加入も流れなかった |
+| 日本語のブラウザ（`--lang=ja`）で従来どおり日本語で出る | 済。popup が「取得中（DOMモード）」「コメント」「101件」と日本語で出た |
+| 設定画面の言語で English / 日本語 を切り替えると popup が追従する | 済。日本語ブラウザで English → 日本語 → 自動、英語ブラウザで 日本語 → 自動 と切り替え、そのたびに設定画面がその場で変わり、次に開いた popup も同じ言語になった（監視中の配信でも確認） |
+| APIモード（取得・quota からの復帰） | **未実施**（APIキーが無い）。v3.0.0 では APIモードのメンバー加入・継続・ギフトの一行が文言からコード（`eventKey`）に変わっている（`shared/comment.js` の `apiDetailOf`）ので、**次に APIキーで流すときに最初に見る** |
+| SW の手動終了・書き込み量・履歴の引き継ぎ・Tab キー | 未実施 |
+| 公開後、ストアの掲載名・説明が閲覧者の言語で出る | 未実施（公開後に見る） |
+
+踏んだ環境の罠（次に同じ道具立てで確かめるとき用）:
+
+- **Linux の Chromium は `--lang` だけでは `chrome.i18n.getUILanguage()` が `en-US` のまま**になる
+  （`getMessage()` は `--lang` に従うので画面は日本語になるが、`<html lang>` が `en` になる）。
+  `LANGUAGE=ja LANG=ja_JP.UTF-8` を環境変数でも渡すと `ja` になる。Mac / Windows の Chrome では起きない
+- クラウドの IP から新しいプロファイルで YouTube を何度も開くと、途中から `google.com/sorry`（ボット確認）に飛ばされる。
+  すでに開いているタブのチャットは読み続けられる。動画は「Sign in to confirm you're not a bot」で再生されないが、チャットは流れる
+- 確認用のブラウザは CDP で Service Worker に1分おきに `evaluate` していたので、SW のアイドル終了は起きにくい条件だった。
+  「SW が終了しても取得が続く」の確認にはならない
 
 ---
 
