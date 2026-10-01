@@ -2475,7 +2475,7 @@ host_permissions のパスは通信の可否には効かない（「権限は宣
 **→ 完了（2026-10-01）。** 独立した計画 [`i18n-plan.md`](i18n-plan.md) の段階1〜6 で片付けた
 （`_locales/{en,ja}`・popup / options / SW の文言・言語の手動切替・ログの英語化・英語の README と掲載文）。
 仕組みは [`architecture.md`](architecture.md) の「表示言語（i18n）」。**残っているのはリリース作業だけ**
-（バージョンを決めて CHANGELOG の「未リリース」を移し、ストアに英語の掲載情報とスクリーンショットを登録する。
+（バージョンは **3.0.0** に上げた（2026-10-01）。残りは zip・英語のスクリーンショット・ストアへの英語の掲載情報の登録。
 手順は [`release-checklist.md`](release-checklist.md)）。以下は当時の記録。
 
 約125個の日本語リテラルが `popup.js` / `options.js` / `content-script.js` /
