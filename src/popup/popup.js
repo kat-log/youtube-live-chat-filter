@@ -2629,9 +2629,14 @@ class PopupController {
         }
         const isKnown = Object.hasOwn(ERROR_TEXT, errorInfo.errorType);
         const [title, message, solution] = (isKnown ? ERROR_TEXT[errorInfo.errorType] : ERROR_TEXT.unknown)();
-        // 分類できなかったエラーは、API が返した説明（detail。訳さない）があればそれを出す
+        // 分類できなかったエラーは、API が返した説明（detail）があればそれを出す。
+        // options と同じ対訳表（shared/i18n.js の API_ERROR_KEYS）に当たればこちらの文言に、
+        // 当たらなければ API の英語のまま（こちらの文言ではないので訳さない）
         const isUnknown = !isKnown || errorInfo.errorType === 'unknown';
-        return { title, message: (isUnknown && errorInfo.detail) || message, solution };
+        const detail = isUnknown && errorInfo.detail
+            ? (self.YTFi18n.apiErrorText(errorInfo.detail) ?? errorInfo.detail)
+            : '';
+        return { title, message: detail || message, solution };
     }
 
     hideDetailedError() {

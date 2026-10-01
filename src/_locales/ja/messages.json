@@ -141,7 +141,7 @@
   },
   "apiKeyPlaceholder": {
     "message": "APIキーを入力...",
-    "description": "popup: APIキーの入力欄"
+    "description": "popup / options: APIキーの入力欄"
   },
   "buttonSave": {
     "message": "保存",
@@ -149,7 +149,7 @@
   },
   "apiKeyHelp": {
     "message": "APIキーの取得先:",
-    "description": "popup: APIキーの取得先の案内。直後に「Google Cloud Console」のリンクが続く"
+    "description": "popup / options: APIキーの取得先の案内。直後に「Google Cloud Console」のリンクが続く"
   },
   "apiKeySaved": {
     "message": "APIキーが保存されました",
@@ -187,19 +187,19 @@
   },
   "roleOwner": {
     "message": "配信者",
-    "description": "popup: 役割の名前（フィルターと役割バッジ）"
+    "description": "popup / options: 役割の名前（フィルターと役割バッジ）"
   },
   "roleModerator": {
     "message": "モデレーター",
-    "description": "popup: 役割の名前（フィルターと役割バッジ）"
+    "description": "popup / options: 役割の名前（フィルターと役割バッジ）"
   },
   "roleMember": {
     "message": "メンバー",
-    "description": "popup: 役割の名前（フィルターと役割バッジ）"
+    "description": "popup / options: 役割の名前（フィルターと役割バッジ）"
   },
   "roleNormal": {
     "message": "一般",
-    "description": "popup: 役割の名前（フィルターと役割バッジ）"
+    "description": "popup / options: 役割の名前（フィルターと役割バッジ）"
   },
   "filterSuperchat": {
     "message": "スパチャ",
@@ -211,15 +211,15 @@
   },
   "darkModeLabel": {
     "message": "ダークモード",
-    "description": "popup: 設定"
+    "description": "popup / options: 設定"
   },
   "hour12Label": {
     "message": "12時間表記（AM/PM）",
-    "description": "popup: 設定"
+    "description": "popup / options: 設定"
   },
   "showSecondsLabel": {
     "message": "秒を表示",
-    "description": "popup: 設定"
+    "description": "popup / options: 設定"
   },
   "buttonClearHistory": {
     "message": "履歴クリア",
@@ -816,5 +816,265 @@
   "eventGift": {
     "message": "メンバーシップギフト",
     "description": "popup: APIモードのメンバーイベント（eventKey=gift、数が無いとき）"
+  },
+  "optPageTitle": {
+    "message": "YouTube Special Comments Filter - 設定",
+    "description": "options: 設定画面の <title>"
+  },
+  "optHeading": {
+    "message": "YouTube特別コメントフィルター 設定",
+    "description": "options: 見出し"
+  },
+  "optSubtitle": {
+    "message": "YouTubeライブチャットで特別なコメントを抽出して表示する拡張機能の設定",
+    "description": "options: 見出しの下の説明"
+  },
+  "optApiSection": {
+    "message": "API設定",
+    "description": "options: 節の見出し"
+  },
+  "optApiModeHelp": {
+    "message": "APIモードを使う場合のみ必要です。標準のDOMモードはAPIキーなしで動作します。取得モードはポップアップの設定（歯車）から切り替えられます。",
+    "description": "options: APIキー欄の説明。後ろに apiKeyHelp とリンクが続く"
+  },
+  "optShowKey": {
+    "message": "表示",
+    "description": "options: APIキーを見せるボタン"
+  },
+  "optHideKey": {
+    "message": "非表示",
+    "description": "options: APIキーを隠すボタン"
+  },
+  "optSave": {
+    "message": "設定を保存",
+    "description": "options: APIキーの保存ボタン"
+  },
+  "optSaving": {
+    "message": "保存中...",
+    "description": "options: 保存ボタン（保存中）"
+  },
+  "optTestApi": {
+    "message": "API接続テスト",
+    "description": "options: API接続テストのボタン"
+  },
+  "optTesting": {
+    "message": "テスト中...",
+    "description": "options: API接続テストのボタン（テスト中）"
+  },
+  "optLanguageSection": {
+    "message": "言語",
+    "description": "options: 節の見出し"
+  },
+  "optLanguageLabel": {
+    "message": "表示言語",
+    "description": "options: 言語セレクトのラベル"
+  },
+  "optLanguageAuto": {
+    "message": "自動（ブラウザに従う）",
+    "description": "options: 言語セレクトの「自動」。English / 日本語 の選択肢は訳さない（どの言語でも自分の言語名で出す）"
+  },
+  "optLanguageNote": {
+    "message": "拡張機能の名前とツールバーのツールチップは、常にブラウザの言語で表示されます（Chrome の仕様上の制約）。ポップアップは次に開いたときから切り替わります。",
+    "description": "options: 言語セレクトの注記"
+  },
+  "optThemeSection": {
+    "message": "テーマ",
+    "description": "options: 節の見出し"
+  },
+  "optThemeHelp": {
+    "message": "ONにすると、ポップアップの表示テーマをダークモードに切り替えます。",
+    "description": "options: ダークモードの説明"
+  },
+  "optTimeSection": {
+    "message": "コメント時刻の表示",
+    "description": "options: 節の見出し"
+  },
+  "optHour12Help": {
+    "message": "12時間表記と24時間表記を切り替えます。",
+    "description": "options: 12時間表記の説明。後ろに optExample と表示例が続く"
+  },
+  "optSecondsHelp": {
+    "message": "OFFにすると秒を省いて表示します。",
+    "description": "options: 秒表示の説明。後ろに optExample と表示例が続く"
+  },
+  "optExample": {
+    "message": "表示例",
+    "description": "options: 時刻の表示例の前置き。後ろに「ON 10:34 PM / OFF 22:34」が続く"
+  },
+  "optDebugMode": {
+    "message": "デバッグモード",
+    "description": "options: 節の見出しとスイッチのラベル"
+  },
+  "optDebugHelp": {
+    "message": "デバッグモードを有効にすると、ブラウザのコンソールに詳細なログが表示されます。通常は無効のままで問題ありません。",
+    "description": "options: デバッグモードの説明"
+  },
+  "optAutoStartSection": {
+    "message": "自動取得",
+    "description": "options: 節の見出し"
+  },
+  "optAutoStartLabel": {
+    "message": "ライブページで自動取得開始",
+    "description": "options: 自動取得のスイッチ"
+  },
+  "optAutoStartHelp": {
+    "message": "ONにすると、YouTubeライブ配信ページを開いた時に自動でコメント取得を開始します。DOMモードはAPIキーなしで自動開始します。APIモードの場合は、APIキーが未設定だと自動開始しません。",
+    "description": "options: 自動取得の説明"
+  },
+  "optUsageSection": {
+    "message": "使い方",
+    "description": "options: 節の見出し"
+  },
+  "optUsage1": {
+    "message": "YouTubeのライブ配信ページを開いてください",
+    "description": "options: 使い方 1"
+  },
+  "optUsage2": {
+    "message": "拡張機能のアイコンをクリックしてポップアップを開いてください",
+    "description": "options: 使い方 2"
+  },
+  "optUsage3": {
+    "message": "自動で始まらない場合は「開始」ボタンをクリックしてください",
+    "description": "options: 使い方 3。ボタン名は popup の buttonStart と同じにする"
+  },
+  "optUsage4": {
+    "message": "配信者、モデレーター、メンバー、一般コメントを個別にフィルタリングして表示できます",
+    "description": "options: 使い方 4"
+  },
+  "optUsage5": {
+    "message": "APIモードを使う場合のみ、上記でYouTube Data API Keyを設定してください",
+    "description": "options: 使い方 5"
+  },
+  "optRolesSection": {
+    "message": "対象コメントについて",
+    "description": "options: 節の見出し"
+  },
+  "optRoleOwnerDesc": {
+    "message": "チャンネルオーナー（配信者本人）のコメント",
+    "description": "options: 役割の説明（配信者）"
+  },
+  "optRoleModeratorDesc": {
+    "message": "配信者が任命したモデレーターのコメント",
+    "description": "options: 役割の説明（モデレーター）"
+  },
+  "optRoleMemberDesc": {
+    "message": "チャンネルメンバー（スポンサー）のコメント",
+    "description": "options: 役割の説明（メンバー）"
+  },
+  "optRoleNormalDesc": {
+    "message": "通常の視聴者によるコメント",
+    "description": "options: 役割の説明（一般）"
+  },
+  "optApiGuideSection": {
+    "message": "APIキー取得方法",
+    "description": "options: 節の見出し"
+  },
+  "optApiGuide1": {
+    "message": "次にアクセス:",
+    "description": "options: APIキー取得手順 1。直後に「Google Cloud Console」のリンクが続く"
+  },
+  "optApiGuide2": {
+    "message": "新しいプロジェクトを作成するか、既存のプロジェクトを選択",
+    "description": "options: APIキー取得手順 2"
+  },
+  "optApiGuide3": {
+    "message": "「APIとサービス」→「ライブラリ」から「YouTube Data API v3」を有効化",
+    "description": "options: APIキー取得手順 3。Google Cloud Console の画面の表記に合わせる"
+  },
+  "optApiGuide4": {
+    "message": "「APIとサービス」→「認証情報」から「APIキーを作成」",
+    "description": "options: APIキー取得手順 4。Google Cloud Console の画面の表記に合わせる"
+  },
+  "optApiGuide5": {
+    "message": "作成されたAPIキーをコピーして上記のフィールドに貼り付け",
+    "description": "options: APIキー取得手順 5"
+  },
+  "optNoteLabel": {
+    "message": "注意:",
+    "description": "options: 注意書きの前置き"
+  },
+  "optApiKeyNote": {
+    "message": "APIキーは適切に管理し、他人と共有しないでください。必要に応じてAPI使用量の制限を設定することをお勧めします。",
+    "description": "options: APIキーの注意書き"
+  },
+  "optLoadFailed": {
+    "message": "設定の読み込みに失敗しました",
+    "description": "options: トースト"
+  },
+  "optApiKeyRequired": {
+    "message": "APIキーを入力してください",
+    "description": "options: トースト（APIキーが空）"
+  },
+  "optSaved": {
+    "message": "設定が保存されました",
+    "description": "options: トースト"
+  },
+  "optSaveFailed": {
+    "message": "設定の保存に失敗しました",
+    "description": "options: トースト"
+  },
+  "optSaveFailedDetail": {
+    "message": "設定の保存に失敗しました: $DETAIL$",
+    "description": "options: トースト。DETAIL は例外の説明（訳さない）",
+    "placeholders": {
+      "detail": {
+        "content": "$1",
+        "example": "API key not valid"
+      }
+    }
+  },
+  "optDebugSaveFailed": {
+    "message": "デバッグモードの保存に失敗しました",
+    "description": "options: トースト"
+  },
+  "optApiTestSucceeded": {
+    "message": "API接続テスト成功",
+    "description": "options: トースト"
+  },
+  "optApiTestFailed": {
+    "message": "API接続テスト失敗: $DETAIL$",
+    "description": "options: トースト。DETAIL は apiErr* の文言か、対訳の無い API の説明（訳さない）",
+    "placeholders": {
+      "detail": {
+        "content": "$1",
+        "example": "API key not valid"
+      }
+    }
+  },
+  "optApiTestUnexpected": {
+    "message": "予期しないレスポンス",
+    "description": "options: optApiTestFailed の DETAIL に入る"
+  },
+  "optApiTestNetwork": {
+    "message": "ネットワークエラー",
+    "description": "options: optApiTestFailed の DETAIL に入る"
+  },
+  "apiErrQuotaExceeded": {
+    "message": "API使用量制限に達しました。明日再試行するか、Google Cloud Consoleで制限を増やしてください",
+    "description": "options: API_ERROR_KEYS（shared/i18n.js）: 'exceeded your quota'"
+  },
+  "apiErrQuota": {
+    "message": "API使用量制限に達しました",
+    "description": "options: API_ERROR_KEYS（shared/i18n.js）: 'quotaExceeded'"
+  },
+  "apiErrKeyInvalid": {
+    "message": "APIキーが無効です。Google Cloud ConsoleでAPIキーを確認してください",
+    "description": "options: API_ERROR_KEYS（shared/i18n.js）: 'API key not valid'"
+  },
+  "apiErrAccessDenied": {
+    "message": "アクセスが拒否されました。APIキーの権限を確認してください",
+    "description": "options: API_ERROR_KEYS（shared/i18n.js）: 'Access denied'"
+  },
+  "apiErrForbidden": {
+    "message": "アクセス権限がありません。APIキーとYouTube Data API v3の有効化を確認してください",
+    "description": "options: API_ERROR_KEYS（shared/i18n.js）: 'Forbidden'"
+  },
+  "apiErrBadRequest": {
+    "message": "リクエストが無効です。APIキーを確認してください",
+    "description": "options: API_ERROR_KEYS（shared/i18n.js）: 'Bad Request'"
+  },
+  "apiErrRateLimit": {
+    "message": "アクセス頻度制限に達しました。しばらく待ってから再試行してください",
+    "description": "options: API_ERROR_KEYS（shared/i18n.js）: 'rateLimitExceeded'"
   }
 }

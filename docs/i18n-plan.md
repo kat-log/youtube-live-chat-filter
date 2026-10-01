@@ -231,3 +231,54 @@
   `notifyPopupOfError(analyzeError(…))`（quota / 分類できないエラー）・`notifyStorageQuotaError()`・
   `autoStopMonitoring('tabClosed')`・APIモードのメンバーイベント3種を流して表示を確認。どれも横にはみ出さない
   （`scrollWidth` = 420）。日本語の文言は従来と同一
+
+### 段階4: options（2026-10-01）
+
+- `options.html`: 静的な文言に `data-i18n` / `data-i18n-placeholder` を付け、直接書く文言は英語に（`<html lang="en">`、
+  `<title>` も `data-i18n`）。リンクや `<code>` と並ぶ文言は `<span>` で包んだ。語順が言語で違う所は形を変えた:
+  APIキーの案内は popup と同じ「APIキーの取得先: <リンク>」（`apiKeyHelp` を共用）、時刻の説明は
+  「説明文 + 表示例: ON `10:34 PM` / OFF `22:34`」、取得手順の1は「次にアクセス: <リンク>」
+- **JS が書き換える要素には `data-i18n` を付けない**（段階2と同じ）: APIキーの表示／非表示ボタン・保存ボタン・
+  接続テストのボタン・トースト・言語セレクト。ボタンの文言は `renderDynamicText()` が状態から書く
+- 役割名・ダークモード・12時間表記・秒表示・APIキーの入力欄は popup のキー（`roleOwner` など）を共用し、
+  description を「popup / options:」にした。それ以外は `opt*`（55個）と `apiErr*`（7個）。ja は従来と同一文字列
+  （APIキーの入力欄だけ popup と同じ「APIキーを入力...」になった）
+- `options.js`: 表示文言を `t('key')` に。初期化は `applyLanguage()`（`loadOverride()` → `applyTo(document)` →
+  セレクトの位置合わせ → `renderDynamicText()`）を済ませてから `loadSettings()`（読み込み失敗のトーストを
+  選んだ言語で出すため）。コンストラクタは同期のまま、その Promise を `this.ready` に持つ
+- **文言で分岐していた箇所**: 表示／非表示ボタンは `textContent` ではなく `input.type` を見ていたので元から安全。
+  保存中・テスト中は文言を書いて戻すだけだったが、言語を切り替えたときに「いまの状態」で描き直せるよう
+  `this.saving` / `this.testing` のフラグで持つ形にした
+- **`API_ERROR_KEYS`** を `shared/i18n.js` に置き、`options.js` の対訳表を置き換えた。`[パターン, () => t('apiErr…')]` の
+  並び（上から順に当てる）と、引く関数 `apiErrorText(message)`（当たらなければ `null`）。
+  値はキーを引く関数にした: キーを文字列のまま持つと `test/i18n.test.js` の「誰も引かないキー」に見えず、
+  文言を読み込み時に固めると手動切替に追従しない（popup の `ERROR_TEXT` と同じ形）
+- **popup の unknown エラーの `detail` にも同じ表を当てた。** SW の分類表に無い `Access denied` / `Bad Request` は
+  段階3から unknown として API の英語のまま出ていたので、段階3より前と同じく（今度は表示言語で）訳した文言に戻る。
+  当たらない説明は従来どおり英語のまま。分類できたエラーの説明は `ERROR_TEXT` のまま（detail は見ない）
+- **SW は `i18n.js` を読んでいない。** `API_ERROR_KEYS` は文言への置き換えで、SW の突き合わせは自分の分類表が英語のまま
+  行うので要らなかった
+- **言語の手動切替**: options に「Language / 言語」の節とセレクト（`#ui-language`。自動（ブラウザに従う）/ English / 日本語）。
+  English と 日本語 はどの表示言語でもその言語自身の名前で出す（訳さない。`data-i18n` を付けない）。
+  変更は `storage.local.uiLanguage` に保存するだけで、描き直しはテーマと同じく `storage.onChanged` の1本から
+  （別の options のタブで変えられても追従する）。続けて切り替えても古い読み込みが後から勝たないよう、
+  `applyLanguage()` は1本の列（`languageQueue`）で順に流す。知らない値は `normalizeLanguage()` で `auto` に丸める。
+  manifest 由来の名前とツールバーのツールチップがブラウザの言語のままになることはセレクトの下に注記した
+- **日本語のリテラルのテスト**（`test/i18n.test.js`）: 計画では popup / options / SW だったが、`src/` の
+  `_locales` 以外の .js / .html / .css 全部を見ることにした（content script と shared も、残っているのは許可するものだけだったため）。
+  コメントは除く（文字列・テンプレート・正規表現の中の `//` を消さない小さな字句解析。それ自体のテストも置いた）。
+  許可リストはファイルごとに「その文字列を含む行」だけを許し、**使われなくなった許可はテストが落とす**（段階5で消し忘れない）:
+  - ID に入る正準トークン `'スーパーステッカー'`（popup.js / comment.js / dom-chat.js）
+  - `parseTimestampText()` の「午前/午後」2行（dom-chat.js。YouTube の表示を読むためのもの）
+  - 段階5で英語にするもの: dom-chat.js の `console.warn` 2つ、SW の `staleSessionReason()` の理由3つ・
+    `discardSession()` の引数1つ・`openUserFilter()` の `error` 1つ（いずれも表示しない）
+  - options.html の言語セレクトの `日本語`（訳さない言語名）
+- テスト: `test/options-i18n.test.js` を新設（options.html の既定文言＝en、JS が書く要素に `data-i18n` が無いこと、
+  en / ja で開いた表示、保存中の文言、API接続テストの対訳（en / ja / 対訳なし / 表の順 / HTTP の状態 / 通信失敗 / 成功）、
+  保存済みの `uiLanguage` が優先されること、セレクトの切替で保存されその場で文言が変わること、続けて切り替えたとき、
+  別のタブからの変更、切替後のトースト、知らない値）。`test/i18n.test.js` に `API_ERROR_KEYS` のテスト、
+  `test/popup-i18n.test.js` に unknown の detail の対訳。`test/helpers/options-harness.js` は options.html の
+  `data-i18n*` の要素を偽 document の `querySelectorAll` で引けるようにし、fetch で `_locales` の実物を返す
+- 実ブラウザ（Chromium 1194、`--load-extension`、`--lang=en-US` / `ja`）で options を開き、言語セレクトの切替で
+  見出し・`<title>`・ボタン・注記・`<html lang>` がその場で変わり、`uiLanguage` が保存されること、そのあと popup（420px）を
+  開くと選んだ言語になること（はみ出し無し）、「自動」に戻すとブラウザの言語に戻ることを確認した

@@ -1,158 +1,171 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YouTube Special Comments Filter - 設定</title>
+    <title data-i18n="optPageTitle">YouTube Special Comments Filter - Settings</title>
     <link rel="stylesheet" href="options.css">
     <!-- テーマは最初の描画より前に決める（#14 #15）。
          この画面自身も data-theme に追従する -->
     <script src="../shared/theme.js"></script>
-    <!-- 文言の引き当て（docs/i18n-plan.md）。読み込み時には何も描かない -->
+    <!-- 文言の引き当て（docs/i18n-plan.md）。読み込み時には何も描かない。
+         この画面の文言は data-i18n* で、options.js の初期化の冒頭で流し込む。
+         ここに直接書いてある文言は英語（JS が走る前の既定。en の messages.json と同じ） -->
     <script src="../shared/i18n.js"></script>
 </head>
 <body>
     <div class="container">
         <header class="header">
-            <h1>YouTube特別コメントフィルター 設定</h1>
-            <p class="subtitle">YouTubeライブチャットで特別なコメントを抽出して表示する拡張機能の設定</p>
+            <h1 data-i18n="optHeading">YouTube Special Comments Filter Settings</h1>
+            <p class="subtitle" data-i18n="optSubtitle">Settings for the extension that picks out special comments from YouTube live chat</p>
         </header>
 
         <div class="content">
             <section class="section">
-                <h2>API設定</h2>
+                <h2 data-i18n="optApiSection">API settings</h2>
                 <div class="form-group">
                     <label for="api-key">YouTube Data API Key</label>
-                    <input type="password" id="api-key" placeholder="APIキーを入力してください">
-                    <button type="button" id="toggle-visibility" class="toggle-btn">表示</button>
+                    <input type="password" id="api-key" placeholder="Enter API key..." data-i18n-placeholder="apiKeyPlaceholder">
+                    <!-- 文言は options.js が書く（表示中かどうかで変わるので data-i18n を付けない） -->
+                    <button type="button" id="toggle-visibility" class="toggle-btn">Show</button>
                 </div>
                 <p class="help-text">
-                    APIモードを使う場合のみ必要です。標準のDOMモードはAPIキーなしで動作します。
-                    キーは<a href="https://console.developers.google.com/" target="_blank">Google Cloud Console</a>
-                    で取得できます。取得モードはポップアップの設定（歯車）から切り替えられます。
+                    <span data-i18n="optApiModeHelp">Only needed for API mode. The default DOM mode works without an API key. You can switch modes from the popup settings (gear icon).</span>
+                    <span data-i18n="apiKeyHelp">Get an API key at</span>
+                    <a href="https://console.developers.google.com/" target="_blank">Google Cloud Console</a>
                 </p>
                 <div class="form-actions">
-                    <button id="save-settings" class="btn btn-primary">設定を保存</button>
-                    <button id="test-api" class="btn btn-secondary">API接続テスト</button>
+                    <!-- この2つも文言は options.js が書く（保存中・テスト中で変わる） -->
+                    <button id="save-settings" class="btn btn-primary">Save settings</button>
+                    <button id="test-api" class="btn btn-secondary">Test API connection</button>
                 </div>
             </section>
 
             <section class="section">
-                <h2>テーマ</h2>
+                <h2 data-i18n="optLanguageSection">Language</h2>
                 <div class="form-group">
-                    <label for="theme-toggle">ダークモード</label>
+                    <label for="ui-language" data-i18n="optLanguageLabel">Display language</label>
+                    <!-- 値は storage.local の uiLanguage。English / 日本語 は訳さない
+                         （どの表示言語でも、その言語自身の名前で出す） -->
+                    <select id="ui-language" class="select">
+                        <option value="auto" data-i18n="optLanguageAuto">Automatic (follow browser)</option>
+                        <option value="en" lang="en">English</option>
+                        <option value="ja" lang="ja">日本語</option>
+                    </select>
+                </div>
+                <p class="help-text" data-i18n="optLanguageNote">The extension name and the toolbar tooltip always follow the browser language (a Chrome limitation). The popup switches the next time you open it.</p>
+            </section>
+
+            <section class="section">
+                <h2 data-i18n="optThemeSection">Theme</h2>
+                <div class="form-group">
+                    <label for="theme-toggle" data-i18n="darkModeLabel">Dark mode</label>
                     <div class="switch-container">
                         <input type="checkbox" id="theme-toggle" class="debug-switch">
                         <label for="theme-toggle" class="switch-label"></label>
                     </div>
                 </div>
-                <p class="help-text">
-                    ONにすると、ポップアップの表示テーマをダークモードに切り替えます。
-                </p>
+                <p class="help-text" data-i18n="optThemeHelp">When on, the popup uses the dark theme.</p>
             </section>
 
             <section class="section">
-                <h2>コメント時刻の表示</h2>
+                <h2 data-i18n="optTimeSection">Comment time</h2>
                 <div class="form-group">
-                    <label for="time-hour12">12時間表記（AM/PM）</label>
+                    <label for="time-hour12" data-i18n="hour12Label">12-hour clock (AM/PM)</label>
                     <div class="switch-container">
                         <input type="checkbox" id="time-hour12" class="debug-switch">
                         <label for="time-hour12" class="switch-label"></label>
                     </div>
                 </div>
                 <p class="help-text">
-                    ONにすると <code>10:34 PM</code>、OFFにすると <code>22:34</code> の形式で表示します。
+                    <span data-i18n="optHour12Help">Switches between the 12-hour and 24-hour clock.</span>
+                    <span data-i18n="optExample">Example</span>: ON <code>10:34 PM</code> / OFF <code>22:34</code>
                 </p>
                 <div class="form-group">
-                    <label for="time-seconds">秒を表示</label>
+                    <label for="time-seconds" data-i18n="showSecondsLabel">Show seconds</label>
                     <div class="switch-container">
                         <input type="checkbox" id="time-seconds" class="debug-switch">
                         <label for="time-seconds" class="switch-label"></label>
                     </div>
                 </div>
                 <p class="help-text">
-                    OFFにすると <code>22:34:56</code> の秒を省いて <code>22:34</code> と表示します。
+                    <span data-i18n="optSecondsHelp">When off, seconds are left out.</span>
+                    <span data-i18n="optExample">Example</span>: ON <code>22:34:56</code> / OFF <code>22:34</code>
                 </p>
             </section>
 
             <section class="section">
-                <h2>デバッグモード</h2>
+                <h2 data-i18n="optDebugMode">Debug mode</h2>
                 <div class="form-group">
-                    <label for="debug-mode">デバッグモード</label>
+                    <label for="debug-mode" data-i18n="optDebugMode">Debug mode</label>
                     <div class="switch-container">
                         <input type="checkbox" id="debug-mode" class="debug-switch">
                         <label for="debug-mode" class="switch-label"></label>
                     </div>
                 </div>
-                <p class="help-text">
-                    デバッグモードを有効にすると、ブラウザのコンソールに詳細なログが表示されます。
-                    通常は無効のままで問題ありません。
-                </p>
+                <p class="help-text" data-i18n="optDebugHelp">When enabled, detailed logs are written to the browser console. You can normally leave this off.</p>
             </section>
 
             <section class="section">
-                <h2>自動取得</h2>
+                <h2 data-i18n="optAutoStartSection">Auto start</h2>
                 <div class="form-group">
-                    <label for="auto-start">ライブページで自動取得開始</label>
+                    <label for="auto-start" data-i18n="optAutoStartLabel">Start automatically on live pages</label>
                     <div class="switch-container">
                         <input type="checkbox" id="auto-start" class="debug-switch">
                         <label for="auto-start" class="switch-label"></label>
                     </div>
                 </div>
-                <p class="help-text">
-                    ONにすると、YouTubeライブ配信ページを開いた時に自動でコメント取得を開始します。
-                    DOMモードはAPIキーなしで自動開始します。APIモードの場合は、APIキーが未設定だと自動開始しません。
-                </p>
+                <p class="help-text" data-i18n="optAutoStartHelp">When on, fetching starts automatically when you open a YouTube live stream. DOM mode starts without an API key; API mode does not start automatically until an API key is set.</p>
             </section>
 
             <section class="section">
-                <h2>使い方</h2>
+                <h2 data-i18n="optUsageSection">How to use</h2>
                 <div class="instructions">
                     <ol>
-                        <li>YouTubeのライブ配信ページを開いてください</li>
-                        <li>拡張機能のアイコンをクリックしてポップアップを開いてください</li>
-                        <li>自動で始まらない場合は「開始」ボタンをクリックしてください</li>
-                        <li>配信者、モデレーター、メンバー、一般コメントを個別にフィルタリングして表示できます</li>
-                        <li>APIモードを使う場合のみ、上記でYouTube Data API Keyを設定してください</li>
+                        <li data-i18n="optUsage1">Open a YouTube live stream page.</li>
+                        <li data-i18n="optUsage2">Click the extension icon to open the popup.</li>
+                        <li data-i18n="optUsage3">If it does not start automatically, click &quot;Start&quot;.</li>
+                        <li data-i18n="optUsage4">You can show or hide streamer, moderator, member and regular comments separately.</li>
+                        <li data-i18n="optUsage5">Only if you use API mode, set a YouTube Data API key above.</li>
                     </ol>
                 </div>
             </section>
 
             <section class="section">
-                <h2>対象コメントについて</h2>
+                <h2 data-i18n="optRolesSection">Comment types</h2>
                 <div class="comment-types">
                     <div class="comment-type">
-                        <span class="role-badge role-owner">配信者</span>
-                        <span class="description">チャンネルオーナー（配信者本人）のコメント</span>
+                        <span class="role-badge role-owner" data-i18n="roleOwner">Streamer</span>
+                        <span class="description" data-i18n="optRoleOwnerDesc">Comments by the channel owner (the streamer)</span>
                     </div>
                     <div class="comment-type">
-                        <span class="role-badge role-moderator">モデレーター</span>
-                        <span class="description">配信者が任命したモデレーターのコメント</span>
+                        <span class="role-badge role-moderator" data-i18n="roleModerator">Moderator</span>
+                        <span class="description" data-i18n="optRoleModeratorDesc">Comments by moderators appointed by the streamer</span>
                     </div>
                     <div class="comment-type">
-                        <span class="role-badge role-sponsor">メンバー</span>
-                        <span class="description">チャンネルメンバー（スポンサー）のコメント</span>
+                        <span class="role-badge role-sponsor" data-i18n="roleMember">Member</span>
+                        <span class="description" data-i18n="optRoleMemberDesc">Comments by channel members (sponsors)</span>
                     </div>
                     <div class="comment-type">
-                        <span class="role-badge role-normal">一般</span>
-                        <span class="description">通常の視聴者によるコメント</span>
+                        <span class="role-badge role-normal" data-i18n="roleNormal">Regular</span>
+                        <span class="description" data-i18n="optRoleNormalDesc">Comments by regular viewers</span>
                     </div>
                 </div>
             </section>
 
             <section class="section">
-                <h2>APIキー取得方法</h2>
+                <h2 data-i18n="optApiGuideSection">Getting an API key</h2>
                 <div class="api-instructions">
                     <ol>
-                        <li><a href="https://console.developers.google.com/" target="_blank">Google Cloud Console</a>にアクセス</li>
-                        <li>新しいプロジェクトを作成するか、既存のプロジェクトを選択</li>
-                        <li>「APIとサービス」→「ライブラリ」から「YouTube Data API v3」を有効化</li>
-                        <li>「APIとサービス」→「認証情報」から「APIキーを作成」</li>
-                        <li>作成されたAPIキーをコピーして上記のフィールドに貼り付け</li>
+                        <li><span data-i18n="optApiGuide1">Open</span> <a href="https://console.developers.google.com/" target="_blank">Google Cloud Console</a></li>
+                        <li data-i18n="optApiGuide2">Create a new project or select an existing one</li>
+                        <li data-i18n="optApiGuide3">Under &quot;APIs &amp; Services&quot; → &quot;Library&quot;, enable &quot;YouTube Data API v3&quot;</li>
+                        <li data-i18n="optApiGuide4">Under &quot;APIs &amp; Services&quot; → &quot;Credentials&quot;, choose &quot;Create credentials&quot; → &quot;API key&quot;</li>
+                        <li data-i18n="optApiGuide5">Copy the new API key and paste it into the field above</li>
                     </ol>
                     <p class="note">
-                        <strong>注意:</strong> APIキーは適切に管理し、他人と共有しないでください。
-                        必要に応じてAPI使用量の制限を設定することをお勧めします。
+                        <strong data-i18n="optNoteLabel">Note:</strong>
+                        <span data-i18n="optApiKeyNote">Keep your API key safe and do not share it with anyone. Setting usage limits for the API is recommended.</span>
                     </p>
                 </div>
             </section>
