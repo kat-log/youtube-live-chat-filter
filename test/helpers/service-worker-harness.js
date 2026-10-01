@@ -247,6 +247,10 @@ function loadServiceWorker(chrome, idb = chrome.__idb || createIndexedDBMock()) 
       extractVideoIdFromUrl,
       safeStorageSet,
       commentPreview,
+      // エラーの分類（文言は持たず errorType だけ返す。docs/i18n-plan.md の段階3）
+      analyzeError,
+      ERROR_SOLUTIONS,
+      notifyStorageQuotaError,
       flushCommentsHistory,
       readCommentsForPopup,
       fetchLiveChatMessages,

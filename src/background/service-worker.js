@@ -56,148 +56,65 @@ function debugError(prefix, ...args) {
 // 初期化時にデバッグモードを読み込み
 loadDebugMode();
 
-// エラー解決データベース
+// エラーの分類表。**文言は持たない**（docs/i18n-plan.md の段階3）。
+// SW が送るのは errorType（どのエラーか）と action / severity（ボタンと色を
+// 決めるコード）だけで、見出し・説明・解決方法は popup が errorType から
+// t() で引く（popup.js の ERROR_TEXT）。SW で文言を作ると、表示言語の手動切替を
+// SW に同期させる経路が要るうえ、文言の正が SW と popup の2か所に割れる。
+// キーはエラーメッセージに含まれる文字列（大文字小文字を区別しない）
 const ERROR_SOLUTIONS = {
   // APIキー関連エラー
-  'API key not valid': {
-    title: 'APIキーが無効です',
-    message: 'YouTube Data API v3のAPIキーが正しくありません',
-    solution: 'Google Cloud ConsoleでAPIキーを確認し、YouTube Data API v3が有効になっていることを確認してください',
-    action: 'checkApiKey',
-    severity: 'high'
-  },
-  'API key not found': {
-    title: 'APIキーが設定されていません',
-    message: 'YouTube Data API v3のAPIキーが設定されていません',
-    solution: 'オプション画面を開いてAPIキーを設定してください',
-    action: 'setApiKey',
-    severity: 'high'
-  },
-  
+  'API key not valid': { errorType: 'apiKeyInvalid', action: 'checkApiKey', severity: 'high' },
+  'API key not found': { errorType: 'apiKeyMissing', action: 'setApiKey', severity: 'high' },
+
   // YouTube API制限エラー
-  'quotaExceeded': {
-    title: 'API使用量制限に達しました',
-    message: '1日のYouTube Data API使用量制限に達しました（1日10,000リクエスト制限）',
-    solution: '明日の00:00（太平洋標準時）にリセットされます。今すぐ使いたい場合はGoogle Cloud Consoleで制限を増やしてください',
-    action: 'waitOrUpgrade',
-    severity: 'medium'
-  },
-  'exceeded your quota': {
-    title: 'API使用量制限に達しました', 
-    message: '1日のYouTube Data API使用量制限に達しました（1日10,000リクエスト制限）',
-    solution: '明日の00:00（太平洋標準時）にリセットされます。今すぐ使いたい場合はGoogle Cloud Consoleで制限を増やしてください',
-    action: 'waitOrUpgrade',
-    severity: 'medium'
-  },
-  'rateLimitExceeded': {
-    title: 'アクセス頻度制限です',
-    message: 'APIへのアクセスが頻繁すぎます',
-    solution: '1分待ってから再試行してください',
-    action: 'waitAndRetry',
-    severity: 'low'
-  },
-  
+  'quotaExceeded': { errorType: 'quotaExceeded', action: 'waitOrUpgrade', severity: 'medium' },
+  'exceeded your quota': { errorType: 'quotaExceeded', action: 'waitOrUpgrade', severity: 'medium' },
+  'rateLimitExceeded': { errorType: 'rateLimited', action: 'waitAndRetry', severity: 'low' },
+
   // ライブストリーム関連エラー
-  'liveChatDisabled': {
-    title: 'ライブチャットが無効です',
-    message: 'この配信はライブチャット機能が無効になっています',
-    solution: '配信者がライブチャットを有効にするまでお待ちください',
-    action: 'waitForChat',
-    severity: 'medium'
-  },
-  'liveChatNotFound': {
-    title: 'ライブチャットが見つかりません',
-    message: 'ライブチャットが存在しないか、配信が終了している可能性があります',
-    solution: 'ライブ配信中のページで再試行してください',
-    action: 'checkLiveStatus',
-    severity: 'medium'
-  },
-  'videoNotLive': {
-    title: 'ライブ配信中ではありません',
-    message: 'この動画は現在ライブ配信中ではありません',
-    solution: 'ライブ配信中の動画でのみ使用できます',
-    action: 'findLiveStream',
-    severity: 'medium'
-  },
-  
+  'liveChatDisabled': { errorType: 'liveChatDisabled', action: 'waitForChat', severity: 'medium' },
+  'liveChatNotFound': { errorType: 'liveChatNotFound', action: 'checkLiveStatus', severity: 'medium' },
+  'videoNotLive': { errorType: 'videoNotLive', action: 'findLiveStream', severity: 'medium' },
+
   // ネットワーク・認証エラー
-  'NetworkError': {
-    title: 'ネットワークエラー',
-    message: 'インターネット接続に問題があります',
-    solution: 'インターネット接続を確認してから再試行してください',
-    action: 'checkConnection',
-    severity: 'high'
-  },
-  'Forbidden': {
-    title: 'アクセス権限エラー',
-    message: 'APIキーに適切な権限がありません',
-    solution: 'Google Cloud ConsoleでAPIキーの権限とYouTube Data API v3の有効化を確認してください',
-    action: 'checkPermissions',
-    severity: 'high'
-  }
+  'NetworkError': { errorType: 'network', action: 'checkConnection', severity: 'high' },
+  'Forbidden': { errorType: 'forbidden', action: 'checkPermissions', severity: 'high' }
 };
 
-// エラーメッセージ改善ユーティリティ（HTMLタグ除去は shared/comment.js の stripHtmlTags）
-function improveErrorMessage(originalMessage) {
-  const cleanMessage = stripHtmlTags(originalMessage);
-  
-  // よくあるYouTube API エラーの日本語化
-  const errorMappings = {
-    'exceeded your quota': 'API使用量制限に達しました',
-    'quotaExceeded': 'API使用量制限に達しました', 
-    'rateLimitExceeded': 'アクセス頻度制限に達しました',
-    'API key not valid': 'APIキーが無効です',
-    'Access denied': 'アクセスが拒否されました',
-    'Forbidden': 'アクセス権限がありません',
-    'Bad Request': 'リクエストが無効です',
-    'liveChatDisabled': 'ライブチャットが無効です',
-    'liveChatNotFound': 'ライブチャットが見つかりません',
-    'videoNotLive': 'ライブ配信中ではありません'
-  };
-  
-  // エラーメッセージから該当するパターンを検索
-  for (const [pattern, japanese] of Object.entries(errorMappings)) {
-    if (cleanMessage.toLowerCase().includes(pattern.toLowerCase())) {
-      return japanese;
-    }
-  }
-  
-  return cleanMessage;
-}
-
-// エラー分析と解決策提案機能
+// エラー分析と解決策提案機能。返すのはコードだけで、文言は popup が引く
 function analyzeError(error) {
   // message を持たない値（文字列・null・prototype無しのオブジェクト）が
   // 投げられても、ここで例外を出さないこと。catch の中で落ちると
   // 呼び出し元の再スケジュールに到達せず、ポーリングが恒久停止する（#8）
   const rawErrorMessage = error?.message ?? String(error);
-  const cleanErrorMessage = improveErrorMessage(rawErrorMessage);
-  
+  // HTMLタグ除去は shared/comment.js の stripHtmlTags。
+  // 以前はここで英語のAPIエラーを日本語に置き換える対訳表を通していたが、
+  // 文言を作らなくなったので要らない（突き合わせは下の分類表が英語のまま行う）
+  const cleanErrorMessage = stripHtmlTags(rawErrorMessage);
+
   debugLog('[Background] Analyzing error:', rawErrorMessage);
-  debugLog('[Background] Cleaned error:', cleanErrorMessage);
-  
-  // クリーンアップされたメッセージでパターンマッチング（大文字小文字を区別しない）
+
+  // 生のメッセージとタグを除いたメッセージの両方で突き合わせる（大文字小文字を区別しない）
+  const lowerRawMessage = rawErrorMessage.toLowerCase();
+  const lowerCleanMessage = cleanErrorMessage.toLowerCase();
   for (const [pattern, solution] of Object.entries(ERROR_SOLUTIONS)) {
     const lowerPattern = pattern.toLowerCase();
-    const lowerRawMessage = rawErrorMessage.toLowerCase();
-    const lowerCleanMessage = cleanErrorMessage.toLowerCase();
-    
     if (lowerRawMessage.includes(lowerPattern) || lowerCleanMessage.includes(lowerPattern)) {
       debugLog('[Background] Found matching error pattern:', pattern);
       return {
         ...solution,
-        message: solution.message, // ERROR_SOLUTIONSで定義されたメッセージを使用
         originalError: rawErrorMessage,
         pattern: pattern
       };
     }
   }
-  
-  // マッチするパターンが見つからない場合のデフォルト
+
+  // マッチするパターンが見つからない場合のデフォルト。
+  // detail は API が返した生の説明（訳さない。こちらの文言ではないので）
   return {
-    title: '接続エラーが発生しました',
-    message: cleanErrorMessage || 'サーバーとの通信に問題が発生しました',
-    solution: 'インターネット接続を確認してから再試行してください。問題が続く場合は、APIキーの設定を確認してください',
+    errorType: 'unknown',
+    detail: cleanErrorMessage,
     action: 'checkConnection',
     severity: 'medium',
     originalError: rawErrorMessage,
@@ -447,9 +364,7 @@ function notifyStorageQuotaError() {
   if (Date.now() - lastQuotaNotifyAt < 60000) return;
   lastQuotaNotifyAt = Date.now();
   notifyPopupOfError({
-    title: '保存領域の上限に達しました',
-    message: 'コメント履歴の保存に失敗しています',
-    solution: '古い動画の履歴を自動削除しました。改善しない場合は履歴をクリアしてください',
+    errorType: 'storageQuota',
     action: 'clearHistory',
     severity: 'medium',
     originalError: 'storage quota exceeded',
@@ -1758,7 +1673,7 @@ async function handleTabRemoved(tabId) {
   await ensureStateRestored();
   if (!session.isMonitoring || session.tabId !== tabId) return;
   debugLog('[Background] YouTube tab was closed, auto-stopping monitoring');
-  await autoStopMonitoring('YouTubeタブが閉じられました');
+  await autoStopMonitoring('tabClosed');
 }
 
 // YouTube の SPA 遷移を拾う（#24）。
@@ -2079,24 +1994,25 @@ async function getCommentsHistory(videoId = null, bucket = null) {
   }
 }
 
-// 自動監視停止機能
-async function autoStopMonitoring(reason) {
-  debugLog('[Background] Auto-stopping monitoring:', reason);
+// 自動監視停止機能。
+// reasonKey は理由のコード（'tabClosed'）で、文言は popup が引く（AUTO_STOP_REASONS）
+async function autoStopMonitoring(reasonKey) {
+  debugLog('[Background] Auto-stopping monitoring:', reasonKey);
   
   try {
     // 通常の監視停止処理を実行
     await stopBackgroundMonitoring();
     
     // 自動停止の理由をログに記録
-    debugLog('[Background] Monitoring auto-stopped:', reason);
+    debugLog('[Background] Monitoring auto-stopped:', reasonKey);
     
     // ポップアップが開いている場合に通知（開いていなければ送り先が無いだけ）
     notifyPopup({
       action: 'monitoringAutoStopped',
-      reason: reason
+      reasonKey
     });
     
-    return { success: true, reason: reason };
+    return { success: true, reasonKey };
   } catch (error) {
     debugError('[Background] Error during auto-stop:', error);
     return { success: false, error: error.message };

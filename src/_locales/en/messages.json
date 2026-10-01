@@ -609,7 +609,7 @@
   },
   "autoStopped": {
     "message": "Collecting stopped automatically: $REASON$",
-    "description": "popup: 自動停止の通知。REASON は Service Worker が送ってくる文言",
+    "description": "popup: 自動停止の通知。REASON は Service Worker の reasonKey を訳した文言（autoStopReason*）",
     "placeholders": {
       "reason": {
         "content": "$1",
@@ -644,5 +644,177 @@
   "buttonReloadPageShort": {
     "message": "Reload page",
     "description": "popup: エラーのボタン（タブを再読み込みする）"
+  },
+  "errApiKeyInvalidTitle": {
+    "message": "Invalid API key",
+    "description": "popup: Service Worker のエラー（errorType=apiKeyInvalid）の見出し"
+  },
+  "errApiKeyInvalidMessage": {
+    "message": "The YouTube Data API v3 key is not correct",
+    "description": "popup: Service Worker のエラー（errorType=apiKeyInvalid）の説明"
+  },
+  "errApiKeyInvalidSolution": {
+    "message": "Check the API key in Google Cloud Console and make sure YouTube Data API v3 is enabled",
+    "description": "popup: Service Worker のエラー（errorType=apiKeyInvalid）の解決方法"
+  },
+  "errApiKeyMissingTitle": {
+    "message": "No API key set",
+    "description": "popup: Service Worker のエラー（errorType=apiKeyMissing）の見出し"
+  },
+  "errApiKeyMissingMessage": {
+    "message": "No YouTube Data API v3 key has been set",
+    "description": "popup: Service Worker のエラー（errorType=apiKeyMissing）の説明"
+  },
+  "errApiKeyMissingSolution": {
+    "message": "Open the settings page and enter your API key",
+    "description": "popup: Service Worker のエラー（errorType=apiKeyMissing）の解決方法"
+  },
+  "errQuotaTitle": {
+    "message": "API quota reached",
+    "description": "popup: Service Worker のエラー（errorType=quotaExceeded）の見出し"
+  },
+  "errQuotaMessage": {
+    "message": "The daily YouTube Data API quota has been used up (10,000 units per day)",
+    "description": "popup: Service Worker のエラー（errorType=quotaExceeded）の説明"
+  },
+  "errQuotaSolution": {
+    "message": "It resets at midnight Pacific Time. To use it now, raise the quota in Google Cloud Console",
+    "description": "popup: Service Worker のエラー（errorType=quotaExceeded）の解決方法"
+  },
+  "errRateLimitTitle": {
+    "message": "Too many requests",
+    "description": "popup: Service Worker のエラー（errorType=rateLimited）の見出し"
+  },
+  "errRateLimitMessage": {
+    "message": "Requests to the API are too frequent",
+    "description": "popup: Service Worker のエラー（errorType=rateLimited）の説明"
+  },
+  "errRateLimitSolution": {
+    "message": "Wait a minute and try again",
+    "description": "popup: Service Worker のエラー（errorType=rateLimited）の解決方法"
+  },
+  "errLiveChatDisabledTitle": {
+    "message": "Live chat is disabled",
+    "description": "popup: Service Worker のエラー（errorType=liveChatDisabled）の見出し"
+  },
+  "errLiveChatDisabledMessage": {
+    "message": "Live chat is turned off for this stream",
+    "description": "popup: Service Worker のエラー（errorType=liveChatDisabled）の説明"
+  },
+  "errLiveChatDisabledSolution": {
+    "message": "Wait until the streamer turns on live chat",
+    "description": "popup: Service Worker のエラー（errorType=liveChatDisabled）の解決方法"
+  },
+  "errLiveChatNotFoundTitle": {
+    "message": "Live chat not found",
+    "description": "popup: Service Worker のエラー（errorType=liveChatNotFound）の見出し"
+  },
+  "errLiveChatNotFoundMessage": {
+    "message": "The live chat does not exist, or the stream may have ended",
+    "description": "popup: Service Worker のエラー（errorType=liveChatNotFound）の説明"
+  },
+  "errLiveChatNotFoundSolution": {
+    "message": "Try again on a page that is streaming live",
+    "description": "popup: Service Worker のエラー（errorType=liveChatNotFound）の解決方法"
+  },
+  "errVideoNotLiveTitle": {
+    "message": "Not live",
+    "description": "popup: Service Worker のエラー（errorType=videoNotLive）の見出し"
+  },
+  "errVideoNotLiveMessage": {
+    "message": "This video is not streaming live right now",
+    "description": "popup: Service Worker のエラー（errorType=videoNotLive）の説明"
+  },
+  "errVideoNotLiveSolution": {
+    "message": "This only works on videos that are streaming live",
+    "description": "popup: Service Worker のエラー（errorType=videoNotLive）の解決方法"
+  },
+  "errNetworkTitle": {
+    "message": "Network error",
+    "description": "popup: Service Worker のエラー（errorType=network）の見出し"
+  },
+  "errNetworkMessage": {
+    "message": "There is a problem with your internet connection",
+    "description": "popup: Service Worker のエラー（errorType=network）の説明"
+  },
+  "errNetworkSolution": {
+    "message": "Check your internet connection and try again",
+    "description": "popup: Service Worker のエラー（errorType=network）の解決方法"
+  },
+  "errForbiddenTitle": {
+    "message": "Permission error",
+    "description": "popup: Service Worker のエラー（errorType=forbidden）の見出し"
+  },
+  "errForbiddenMessage": {
+    "message": "The API key does not have the required permissions",
+    "description": "popup: Service Worker のエラー（errorType=forbidden）の説明"
+  },
+  "errForbiddenSolution": {
+    "message": "In Google Cloud Console, check the API key permissions and that YouTube Data API v3 is enabled",
+    "description": "popup: Service Worker のエラー（errorType=forbidden）の解決方法"
+  },
+  "errStorageQuotaTitle": {
+    "message": "Storage is full",
+    "description": "popup: Service Worker のエラー（errorType=storageQuota）の見出し"
+  },
+  "errStorageQuotaMessage": {
+    "message": "Saving the comment history is failing",
+    "description": "popup: Service Worker のエラー（errorType=storageQuota）の説明"
+  },
+  "errStorageQuotaSolution": {
+    "message": "History of older videos was deleted automatically. If this keeps happening, clear the history",
+    "description": "popup: Service Worker のエラー（errorType=storageQuota）の解決方法"
+  },
+  "errUnknownTitle": {
+    "message": "Connection error",
+    "description": "popup: Service Worker のエラー（errorType=unknown）の見出し"
+  },
+  "errUnknownMessage": {
+    "message": "There was a problem communicating with the server",
+    "description": "popup: Service Worker のエラー（errorType=unknown）の説明（API の説明が無いときだけ）"
+  },
+  "errUnknownSolution": {
+    "message": "Check your internet connection and try again. If the problem continues, check your API key settings",
+    "description": "popup: Service Worker のエラー（errorType=unknown）の解決方法"
+  },
+  "autoStopReasonTabClosed": {
+    "message": "The YouTube tab was closed",
+    "description": "popup: 自動停止の理由（reasonKey=tabClosed）。autoStopped の REASON に入る"
+  },
+  "autoStoppedNoReason": {
+    "message": "Collecting stopped automatically",
+    "description": "popup: 自動停止の通知（理由のコードを知らないとき）"
+  },
+  "eventNewMember": {
+    "message": "New member",
+    "description": "popup: APIモードのメンバーイベント（eventKey=newMember）"
+  },
+  "eventMemberUpgrade": {
+    "message": "Upgraded membership",
+    "description": "popup: APIモードのメンバーイベント（eventKey=memberUpgrade）"
+  },
+  "eventMemberMilestone": {
+    "message": "Member for $MONTHS$ mo",
+    "description": "popup: APIモードのメンバーイベント（eventKey=memberMilestone）。MONTHS は連続月数",
+    "placeholders": {
+      "months": {
+        "content": "$1",
+        "example": "12"
+      }
+    }
+  },
+  "eventGiftCount": {
+    "message": "Gifted memberships: $COUNT$",
+    "description": "popup: APIモードのメンバーイベント（eventKey=gift）。COUNT は贈った数",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "5"
+      }
+    }
+  },
+  "eventGift": {
+    "message": "Gifted memberships",
+    "description": "popup: APIモードのメンバーイベント（eventKey=gift、数が無いとき）"
   }
 }

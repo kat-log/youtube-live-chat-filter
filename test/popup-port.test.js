@@ -199,8 +199,9 @@ describe('新着の受け口', () => {
   test('自動停止の通知はそのまま届く', () => {
     const c = controller();
     c.isMonitoring = true;
-    c.popup.chrome.__deliver({ action: 'monitoringAutoStopped', reason: 'テスト' });
+    c.popup.chrome.__deliver({ action: 'monitoringAutoStopped', reasonKey: 'tabClosed' });
     assert.equal(c.isMonitoring, false);
+    assert.equal(c.elements.errorMessage.textContent, 'ℹ️ 取得が自動停止されました: YouTubeタブが閉じられました');
   });
 });
 

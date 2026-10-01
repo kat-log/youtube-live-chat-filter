@@ -124,23 +124,37 @@
     return 'normal';
   }
 
-  // APIの snippet から本文・金額・イベント文言を取り出す。
-  // 種別ごとに詳細の入れ物が違い、displayMessage が無いものもある
+  // APIの snippet から本文・金額・イベントを取り出す。
+  // 種別ごとに詳細の入れ物が違い、displayMessage が無いものもある。
+  //
+  // メンバー加入・連続・アップグレード・ギフトの一行は**文言ではなくコード**で返す
+  // （eventKey と eventArgs。docs/i18n-plan.md の罠2）。訳すのは popup の描画時
+  // （popup.js の EVENT_LABELS）。ここは Service Worker・content script からも
+  // 読まれるので、表示言語を知らない。
+  //   eventKey : 'newMember' | 'memberUpgrade' | 'memberMilestone' | 'gift'
+  //   eventArgs: { months?, count?, level? }（level はメンバーシップのレベル名で、訳さない）
+  // APIモードのコメントは IndexedDB に API の item のまま入り、ここは popup が
+  // 読むたびに通る。だから保存値に日本語は焼き付かない。
+  // スーパーステッカーの eventText だけは DOMモードと同じ正準トークンのまま
+  // （DOMモードでは ID のキーに混ざるので訳せない。表示時の訳は popup の eventTextOf）
   function apiDetailOf(kind, snippet) {
     const fallback = snippet.displayMessage || '';
+    const none = { eventText: null, eventKey: null, eventArgs: null };
+    const levelOf = name => (name ? { level: name } : {});
 
     if (kind === 'superchat') {
       const details = snippet.superChatDetails || {};
       return {
+        ...none,
         message: details.userComment || '',
-        amountText: details.amountDisplayString || null,
-        eventText: null
+        amountText: details.amountDisplayString || null
       };
     }
 
     if (kind === 'supersticker') {
       const details = snippet.superStickerDetails || {};
       return {
+        ...none,
         message: details.superStickerMetadata?.altText || fallback,
         amountText: details.amountDisplayString || null,
         eventText: 'スーパーステッカー'
@@ -151,30 +165,35 @@
       const milestone = snippet.memberMilestoneChatDetails;
       const newSponsor = snippet.newSponsorDetails;
       if (milestone) {
-        const level = milestone.memberLevelName ? ` · ${milestone.memberLevelName}` : '';
         return {
+          ...none,
           message: milestone.userComment || '',
           amountText: null,
-          eventText: `${milestone.memberMonth}か月連続のメンバー${level}`
+          eventKey: 'memberMilestone',
+          eventArgs: { months: milestone.memberMonth ?? null, ...levelOf(milestone.memberLevelName) }
         };
       }
-      const level = newSponsor?.memberLevelName ? ` · ${newSponsor.memberLevelName}` : '';
-      const label = newSponsor?.isUpgrade ? 'メンバーシップをアップグレード' : '新規メンバー';
-      return { message: '', amountText: null, eventText: `${label}${level}` };
+      return {
+        ...none,
+        message: '',
+        amountText: null,
+        eventKey: newSponsor?.isUpgrade ? 'memberUpgrade' : 'newMember',
+        eventArgs: levelOf(newSponsor?.memberLevelName)
+      };
     }
 
     if (kind === 'gift') {
       const details = snippet.membershipGiftingDetails;
-      const level = details?.giftMembershipsLevelName ? ` · ${details.giftMembershipsLevelName}` : '';
-      const count = details?.giftMembershipsCount;
       return {
+        ...none,
         message: '',
         amountText: null,
-        eventText: count ? `メンバーシップギフト ${count}個${level}` : 'メンバーシップギフト'
+        eventKey: 'gift',
+        eventArgs: { count: details?.giftMembershipsCount || null, ...levelOf(details?.giftMembershipsLevelName) }
       };
     }
 
-    return { message: fallback, amountText: null, eventText: null };
+    return { ...none, message: fallback, amountText: null };
   }
 
   // === 絵文字（メンバー限定・YouTube標準） ==================================
@@ -251,10 +270,14 @@
   }
 
   // 検索対象の文字列を組み立てる。取り込み時に1度だけ呼ぶ（#23）。
-  // 検索の1文字目で全件ぶんの NFKC 正規化が同期的に走るのを避けるため
-  function buildSearchText(comment) {
+  // 検索の1文字目で全件ぶんの NFKC 正規化が同期的に走るのを避けるため。
+  //
+  // eventLabel は eventKey（APIモードのメンバーイベント）を訳した一行。
+  // このファイルは表示言語を知らないので、訳せる呼び出し側（popup）が渡す。
+  // 渡されなければ eventText（DOMモード・旧履歴の文言）を使う
+  function buildSearchText(comment, eventLabel) {
     return normalizeForSearch(
-      [comment.displayName, comment.message, comment.eventText, comment.amountText]
+      [comment.displayName, comment.message, eventLabel || comment.eventText, comment.amountText]
         .filter(Boolean).join('\n')
     );
   }
@@ -328,8 +351,11 @@
   // === 正準形 =============================================================
   // {
   //   v, id, bucket, kind, role, displayName, message,
-  //   amountText, eventText, stickerUrl, emojis, avatarUrl, publishedAt, searchText
+  //   amountText, eventText, eventKey, eventArgs, stickerUrl, emojis, avatarUrl,
+  //   publishedAt, searchText
   // }
+  // eventText は文言そのもの（DOMモードは YouTube の表示のまま・旧履歴は日本語）、
+  // eventKey / eventArgs は訳す前のコード（APIモード。apiDetailOf の但し書き）
   const SCHEMA_VERSION = 1;
 
   // API item / DOMモードのメッセージ / 旧保存形式の3入力を正準形に変換する。
@@ -350,6 +376,8 @@
       message: fields.message,
       amountText: fields.amountText,
       eventText: fields.eventText,
+      eventKey: fields.eventKey,
+      eventArgs: fields.eventArgs,
       stickerUrl: fields.stickerUrl,
       emojis: fields.emojis,
       avatarUrl: fields.avatarUrl,
@@ -373,6 +401,8 @@
       message: detail.message,
       amountText: detail.amountText,
       eventText: detail.eventText,
+      eventKey: detail.eventKey,
+      eventArgs: detail.eventArgs,
       // APIモードにステッカー画像は無い（URLが返ってこない）
       stickerUrl: null,
       // 絵文字も同じ。displayMessage には短縮名しか入らないので、
@@ -392,6 +422,9 @@
       message: msg.message || '',
       amountText: msg.amountText || null,
       eventText: msg.eventText || null,
+      // DOMモードのメッセージは持たない。正準形を通し直したときに落とさないためだけに引き継ぐ
+      eventKey: typeof msg.eventKey === 'string' ? msg.eventKey : null,
+      eventArgs: msg.eventArgs && typeof msg.eventArgs === 'object' ? msg.eventArgs : null,
       stickerUrl: msg.stickerUrl || null,
       emojis: normalizeEmojis(msg.emojis),
       avatarUrl: msg.avatarUrl || null,
