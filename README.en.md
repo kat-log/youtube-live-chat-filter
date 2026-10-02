@@ -5,6 +5,8 @@ English | [日本語](README.md)
 **Version:** v3.0.0 (the source of truth is `version` in [`src/manifest.json`](src/manifest.json).
 Changes are listed in [`CHANGELOG.md`](CHANGELOG.md))
 
+**Chrome Web Store:** [YouTube Special Comments Filter](https://chromewebstore.google.com/detail/youtube%E7%89%B9%E5%88%A5%E3%82%B3%E3%83%A1%E3%83%B3%E3%83%88%E3%83%95%E3%82%A3%E3%83%AB%E3%82%BF%E3%83%BC/ngdfibejjanimbkpnenkhfdiledjmogo)
+
 **Website:** https://kat-log.github.io/youtube-live-chat-filter/en/ (source in [`site/`](site/))
 
 A Chrome extension that collects **streamer, moderator, member and regular** comments,
