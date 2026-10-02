@@ -5,6 +5,8 @@ English | [日本語](README.md)
 **Version:** v3.0.0 (the source of truth is `version` in [`src/manifest.json`](src/manifest.json).
 Changes are listed in [`CHANGELOG.md`](CHANGELOG.md))
 
+**Website:** https://kat-log.github.io/youtube-live-chat-filter/en/ (source in [`site/`](site/))
+
 A Chrome extension that collects **streamer, moderator, member and regular** comments,
 plus **Super Chats, Super Stickers and memberships**, from YouTube live chat,
 and shows only the ones you want to see.

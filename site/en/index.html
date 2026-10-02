@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YouTube Special Comments Filter</title>
+  <meta name="description" content="A free Chrome extension, no API key needed. Pulls streamer, moderator and member comments, Super Chats and memberships out of YouTube live chat so you never miss the comments that matter.">
+  <link rel="icon" href="../assets/icon.svg" type="image/svg+xml">
+  <link rel="alternate" hreflang="ja" href="https://kat-log.github.io/youtube-live-chat-filter/">
+  <link rel="alternate" hreflang="en" href="https://kat-log.github.io/youtube-live-chat-filter/en/">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="YouTube Special Comments Filter — Never miss the comments that matter">
+  <meta property="og:description" content="A free Chrome extension, no API key needed. Shows streamer, moderator and member comments, Super Chats and memberships from YouTube live chat.">
+  <meta property="og:image" content="https://kat-log.github.io/youtube-live-chat-filter/assets/og.png">
+  <meta property="og:url" content="https://kat-log.github.io/youtube-live-chat-filter/en/">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="./"><img src="../assets/icon.svg" alt="" width="28" height="28"><span>YouTube Special Comments Filter</span></a>
+      <a class="lang-switch" href="../" hreflang="ja" lang="ja">日本語</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="wrap">
+        <div>
+          <span class="badge">Free · No API key needed</span>
+          <h1>Never miss the comments that matter</h1>
+          <p class="lead">A Chrome extension that pulls streamer, moderator and member comments,
+            Super Chats and memberships out of YouTube live chat and lists them in one place —
+            so a reply from the streamer never scrolls away unseen.</p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="https://chromewebstore.google.com/search/YouTube%20Special%20Comments%20Filter">Add to Chrome — it's free</a>
+            <a class="btn btn-ghost" href="#video">▶ Watch the 1-min video</a>
+          </div>
+          <p class="hero-note">Available on the Chrome Web Store · English / 日本語</p>
+        </div>
+        <div class="hero-shot">
+          <img src="../assets/en-1-monitoring.png" width="1280" height="800"
+            alt="The extension popup collecting live chat, with count badges for each role and type">
+        </div>
+      </div>
+    </section>
+
+    <section id="video">
+      <div class="wrap">
+        <h2 class="section-title">See it in one minute</h2>
+        <p class="section-lead">Install it, open a stream, and that's it. Here's how it looks in action.</p>
+        <div class="video">
+          <iframe src="https://www.youtube-nocookie.com/embed/7vWoDrHcUM4" title="YouTube Special Comments Filter — intro video"
+            loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+        </div>
+      </div>
+    </section>
+
+    <section class="problem">
+      <div class="wrap">
+        <h2 class="section-title">Sound familiar?</h2>
+        <p class="section-lead">The livelier the stream, the faster the chat flies by.</p>
+        <ul class="pain-list">
+          <li><span class="emoji" aria-hidden="true">💬</span>
+            <p>The streamer replied to you in chat — but by the time you noticed, it was <strong>already gone</strong>.</p></li>
+          <li><span class="emoji" aria-hidden="true">📢</span>
+            <p>A moderator posted <strong>an important link or schedule</strong>, buried under hundreds of other messages.</p></li>
+          <li><span class="emoji" aria-hidden="true">💰</span>
+            <p>You want to <strong>look back at the Super Chats</strong> and new members, but scrolling back is a pain.</p></li>
+        </ul>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2 class="section-title">Six groups. Show only what you want.</h2>
+        <p class="section-lead">Who sent it and what kind of message it is are separate switches.
+          Super Chats can come from any viewer, so filtering by role alone never hides them.</p>
+        <ul class="kinds">
+          <li><span class="chip chip-streamer">Streamer</span><p>Messages from the streamer themselves</p></li>
+          <li><span class="chip chip-mod">Moderator</span><p>Notices and updates from the channel's moderators</p></li>
+          <li><span class="chip chip-member">Member</span><p>Fans who support the channel with a membership</p></li>
+          <li><span class="chip chip-regular">Regular</span><p>Everyone else in the chat</p></li>
+          <li><span class="chip chip-super">Super Chat</span><p>Super Chats and Super Stickers, with the amount — stickers shown as images</p></li>
+          <li><span class="chip chip-join">Joins &amp; gifts</span><p>New members, membership milestones and gifted memberships</p></li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="features">
+      <div class="wrap">
+        <div class="feature">
+          <div class="feature-text">
+            <span class="feature-num">POINT 01</span>
+            <h3>Change the filters later — past comments appear too</h3>
+            <p>Everything is collected; the filters only change what's shown. Decide you want regular
+              comments after all, and everything hidden until then shows up at once.
+              Switch it all with the "Special", "All" and "None" presets.</p>
+          </div>
+          <img src="../assets/en-2-filters.png" width="1280" height="800" loading="lazy"
+            alt="Filtering comments with the role and type toggles">
+        </div>
+        <div class="feature">
+          <div class="feature-text">
+            <span class="feature-num">POINT 02</span>
+            <h3>Find comments that already scrolled away</h3>
+            <p>Search every collected comment by keyword, with the number of hits.
+              Text copied from the chat, full-width vs. half-width characters and invisible characters all just work.</p>
+          </div>
+          <img src="../assets/en-3-search.png" width="1280" height="800" loading="lazy"
+            alt="Searching past comments by keyword">
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2 class="section-title">And there's more</h2>
+        <p class="section-lead">For viewers and streamers alike.</p>
+        <ul class="more">
+          <li>Click a name to see only that person's comments — or <kbd>Alt</kbd>+click (<kbd>Option</kbd>+click on Mac) a name in YouTube's chat to open the popup filtered to them</li>
+          <li>Picks up the past comments still in the chat when you start</li>
+          <li>Starts collecting automatically when you open a live stream</li>
+          <li>Super Stickers and member-only emoji shown as images, just like in the chat</li>
+          <li>Count badges for each role and type — see how many Super Chats a stream had</li>
+          <li>Comments are saved per stream and survive closing the popup (last 5 streams)</li>
+          <li>Shows whether the chat is being read (the green dot)</li>
+          <li>Dark mode for the popup and the settings page</li>
+          <li>24-hour or 12-hour (AM/PM) time, with or without seconds</li>
+          <li>Stays fast with thousands of comments</li>
+          <li>English and Japanese, following your browser's language</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="howto">
+      <div class="wrap">
+        <h2 class="section-title">Three steps to get started</h2>
+        <p class="section-lead">No setup required.</p>
+        <ol class="steps">
+          <li><h3>Add to Chrome</h3><p>Install it for free from the Chrome Web Store.</p></li>
+          <li><h3>Open a live stream</h3><p>Open any YouTube live stream and collecting starts automatically.</p></li>
+          <li><h3>Click the icon</h3><p>Click the toolbar icon and the important comments are waiting for you.</p></li>
+        </ol>
+        <p class="tip">💡 If it doesn't start on its own, press "Start" in the popup.
+          You only need to enter an API key in the settings if you choose the YouTube Data API v3 mode.</p>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2 class="section-title">Built to be trusted</h2>
+        <p class="section-lead">It asks only for the permissions it needs.</p>
+        <div class="privacy-grid">
+          <div><h3>🔒 Your data stays local</h3><p>All comments are stored in your own browser and never sent anywhere.</p></div>
+          <div><h3>👀 Reads only the live chat</h3><p>It never looks at the URLs or titles of your other tabs. The only outside connection is the YouTube Data API v3, and only in API mode.</p></div>
+          <div><h3>🆓 Free and open source</h3><p>The source code is on GitHub, so anyone can check what it does.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="faq">
+      <div class="wrap">
+        <h2 class="section-title">FAQ</h2>
+        <div class="faq-list">
+          <details>
+            <summary>Does it cost anything?</summary>
+            <p>No. Every feature is free.</p>
+          </details>
+          <details>
+            <summary>Do I need an API key?</summary>
+            <p>No. The default "DOM mode" reads the chat on the page directly, so it works right after you install it.
+              You only need an API key if you switch to "API mode", which uses the YouTube Data API v3.</p>
+          </details>
+          <details>
+            <summary>Does clicking a name still open YouTube's menu?</summary>
+            <p>Yes. A plain click still opens YouTube's "Block" and "Report" menu. Filtering only happens when you hold <kbd>Alt</kbd> (<kbd>Option</kbd> on Mac) while clicking.</p>
+          </details>
+          <details>
+            <summary>Which browsers are supported?</summary>
+            <p>It's built for Google Chrome. It may also work in other Chromium-based browsers that support Chrome Web Store extensions.</p>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <section class="final">
+      <div class="wrap">
+        <h2 class="section-title">Never miss the comments that matter.</h2>
+        <p class="section-lead">Free, no API key needed. Use it on your very next stream.</p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="https://chromewebstore.google.com/search/YouTube%20Special%20Comments%20Filter">Add to Chrome — it's free</a>
+          <a class="btn btn-ghost" href="https://github.com/kat-log/youtube-live-chat-filter">View on GitHub</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <nav>
+        <a href="https://github.com/kat-log/youtube-live-chat-filter">GitHub</a>
+        <a href="https://github.com/kat-log/youtube-live-chat-filter/blob/main/CHANGELOG.md">Changelog</a>
+        <a href="https://www.youtube.com/@kat-log">YouTube @kat-log</a>
+        <a href="../" hreflang="ja" lang="ja">日本語</a>
+      </nav>
+      <p>© kat-log · YouTube is a trademark of Google LLC. This extension is not affiliated with Google or YouTube.</p>
+    </div>
+  </footer>
+</body>
+</html>

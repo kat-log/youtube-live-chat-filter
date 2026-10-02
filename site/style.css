@@ -1,0 +1,438 @@
+/* ランディングページ（GitHub Pages）。拡張機能本体（src/）とは無関係で、同梱もされない。
+   色はストアのプロモーション画像（promotion/）の紫グラデーションとアイコンの青に揃えてある */
+
+:root {
+  --bg: #f7f6fb;
+  --surface: #ffffff;
+  --text: #1d1b29;
+  --muted: #5d5a70;
+  --border: #e3e0ee;
+  --accent: #1e88e5;
+  --accent-strong: #1565c0;
+  --hero-from: #1f1838;
+  --hero-to: #5b2f86;
+  --check: #2e9d5b;
+  --chip-super: #fde7d6;
+  --chip-super-text: #a8530f;
+  --chip-member: #def5e4;
+  --chip-member-text: #1d7a3a;
+  --chip-mod: #e1e9fd;
+  --chip-mod-text: #2448b8;
+  --chip-join: #efe2fb;
+  --chip-join-text: #7a2fb8;
+  --shadow: 0 10px 30px rgba(30, 20, 60, .12);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14121d;
+    --surface: #1e1b2b;
+    --text: #ece9f6;
+    --muted: #a7a3bb;
+    --border: #2f2b42;
+    --accent: #64b5f6;
+    --accent-strong: #42a5f5;
+    --check: #6fd394;
+    --chip-super: #4a2c17;
+    --chip-super-text: #ffbb85;
+    --chip-member: #173a24;
+    --chip-member-text: #8ee0a8;
+    --chip-mod: #1d2a4d;
+    --chip-mod-text: #a9c0ff;
+    --chip-join: #35214a;
+    --chip-join-text: #dcb2ff;
+    --shadow: 0 10px 30px rgba(0, 0, 0, .4);
+  }
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Noto Sans JP", system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+}
+
+img { max-width: 100%; height: auto; display: block; }
+
+a { color: var(--accent); }
+
+.wrap {
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+
+/* ヘッダー */
+.site-header {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 2;
+}
+.site-header .wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 64px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #fff;
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 15px;
+}
+.brand img { width: 28px; height: 28px; }
+.lang-switch {
+  color: #fff;
+  text-decoration: none;
+  font-size: 14px;
+  padding: 6px 14px;
+  border: 1px solid rgba(255, 255, 255, .35);
+  border-radius: 999px;
+}
+.lang-switch:hover { background: rgba(255, 255, 255, .1); }
+
+/* ヒーロー */
+.hero {
+  background: linear-gradient(135deg, var(--hero-from) 0%, #2d2150 50%, var(--hero-to) 100%);
+  color: #fff;
+  padding: 112px 0 72px;
+  overflow: hidden;
+}
+.hero .wrap {
+  display: grid;
+  grid-template-columns: 1.05fr 1fr;
+  gap: 48px;
+  align-items: center;
+}
+.badge {
+  display: inline-block;
+  padding: 6px 16px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #5b7cfa, #9b59d0);
+  font-weight: 700;
+  font-size: 14px;
+}
+.hero h1 {
+  font-size: clamp(32px, 5vw, 52px);
+  line-height: 1.25;
+  margin: 20px 0 16px;
+  letter-spacing: .01em;
+}
+.hero .lead {
+  font-size: 17px;
+  color: rgba(255, 255, 255, .85);
+  margin: 0 0 28px;
+}
+.cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 26px;
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 16px;
+  text-decoration: none;
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+.btn:hover { transform: translateY(-1px); }
+.btn-primary {
+  background: linear-gradient(135deg, var(--accent-strong), #42a5f5);
+  color: #fff;
+  box-shadow: 0 8px 24px rgba(33, 150, 243, .35);
+}
+.btn-ghost {
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, .4);
+}
+.btn-ghost:hover { background: rgba(255, 255, 255, .08); }
+.hero-note {
+  margin-top: 16px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, .65);
+}
+.hero-shot img {
+  border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .45);
+}
+
+/* セクション共通 */
+section { padding: 80px 0; }
+.section-title {
+  text-align: center;
+  font-size: clamp(24px, 3.4vw, 34px);
+  line-height: 1.35;
+  margin: 0 0 12px;
+}
+.section-lead {
+  text-align: center;
+  color: var(--muted);
+  margin: 0 auto 48px;
+  max-width: 640px;
+}
+
+/* 動画 */
+.video {
+  max-width: 860px;
+  margin: 0 auto;
+  aspect-ratio: 16 / 9;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  background: #000;
+}
+.video iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+
+/* 悩み */
+.problem { background: var(--surface); }
+.pain-list {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.pain-list li {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 24px;
+}
+.pain-list .emoji { font-size: 28px; }
+.pain-list p { margin: 8px 0 0; }
+
+/* 6種類 */
+.kinds {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.kinds li {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px;
+}
+.chip {
+  display: inline-block;
+  padding: 2px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.chip-streamer { background: var(--chip-super); color: var(--chip-super-text); }
+.chip-mod { background: var(--chip-mod); color: var(--chip-mod-text); }
+.chip-member { background: var(--chip-member); color: var(--chip-member-text); }
+.chip-regular { background: var(--border); color: var(--muted); }
+.chip-super { background: var(--chip-super); color: var(--chip-super-text); }
+.chip-join { background: var(--chip-join); color: var(--chip-join-text); }
+.kinds p { margin: 10px 0 0; color: var(--muted); font-size: 15px; }
+
+/* 機能（画像と文の交互） */
+.features { background: var(--surface); }
+.feature {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 48px;
+  align-items: center;
+  margin-bottom: 72px;
+}
+.feature:last-child { margin-bottom: 0; }
+.feature:nth-child(even) .feature-text { order: 2; }
+.feature h3 {
+  font-size: clamp(20px, 2.6vw, 26px);
+  line-height: 1.4;
+  margin: 0 0 12px;
+}
+.feature p { margin: 0; color: var(--muted); }
+.feature img {
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+.feature-num {
+  display: inline-block;
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: 6px;
+  letter-spacing: .08em;
+}
+
+/* その他の機能 */
+.more {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px 32px;
+  list-style: none;
+  padding: 0;
+  margin: 0 auto;
+  max-width: 860px;
+}
+.more li {
+  position: relative;
+  padding-left: 28px;
+}
+.more li::before {
+  content: "✓";
+  position: absolute;
+  left: 0;
+  color: var(--check);
+  font-weight: 700;
+}
+
+/* 使い方 */
+.howto { background: var(--surface); }
+.steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  counter-reset: step;
+}
+.steps li {
+  counter-increment: step;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 28px 24px 24px;
+  position: relative;
+}
+.steps li::before {
+  content: counter(step);
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent-strong), #42a5f5);
+  color: #fff;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+.steps h3 { margin: 0 0 6px; font-size: 18px; }
+.steps p { margin: 0; color: var(--muted); font-size: 15px; }
+.tip {
+  max-width: 860px;
+  margin: 32px auto 0;
+  padding: 16px 20px;
+  border-left: 4px solid var(--accent);
+  background: var(--bg);
+  border-radius: 0 10px 10px 0;
+  font-size: 15px;
+}
+kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .9em;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--surface);
+}
+
+/* プライバシー */
+.privacy-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+.privacy-grid div {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 24px;
+}
+.privacy-grid h3 { margin: 0 0 8px; font-size: 17px; }
+.privacy-grid p { margin: 0; color: var(--muted); font-size: 15px; }
+
+/* FAQ */
+.faq { background: var(--surface); }
+.faq-list { max-width: 760px; margin: 0 auto; }
+.faq details {
+  border-bottom: 1px solid var(--border);
+  padding: 18px 4px;
+}
+.faq summary {
+  cursor: pointer;
+  font-weight: 700;
+  list-style: none;
+  position: relative;
+  padding-right: 28px;
+}
+.faq summary::-webkit-details-marker { display: none; }
+.faq summary::after {
+  content: "+";
+  position: absolute;
+  right: 4px;
+  top: -2px;
+  font-size: 22px;
+  color: var(--muted);
+}
+.faq details[open] summary::after { content: "−"; }
+.faq details p { margin: 10px 0 0; color: var(--muted); }
+
+/* 最後の CTA */
+.final {
+  background: linear-gradient(135deg, var(--hero-from) 0%, #2d2150 50%, var(--hero-to) 100%);
+  color: #fff;
+  text-align: center;
+}
+.final .section-lead { color: rgba(255, 255, 255, .8); }
+.final .cta-row { justify-content: center; }
+
+footer {
+  padding: 32px 0;
+  text-align: center;
+  font-size: 14px;
+  color: var(--muted);
+}
+footer a { color: var(--muted); }
+footer nav { display: flex; justify-content: center; gap: 20px; flex-wrap: wrap; margin-bottom: 8px; }
+
+/* スマホ */
+@media (max-width: 860px) {
+  .hero { padding: 96px 0 56px; }
+  .hero .wrap,
+  .feature { grid-template-columns: 1fr; gap: 28px; }
+  .feature:nth-child(even) .feature-text { order: 0; }
+  .feature { margin-bottom: 56px; }
+  .pain-list, .kinds, .steps, .privacy-grid { grid-template-columns: 1fr; }
+  .more { grid-template-columns: 1fr; }
+  section { padding: 60px 0; }
+  .brand span { display: none; }
+}
+
+@media (min-width: 600px) and (max-width: 860px) {
+  .kinds { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .btn { transition: none; }
+}
