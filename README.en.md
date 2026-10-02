@@ -1,7 +1,5 @@
 # YouTube Special Comments Filter
 
-English | [日本語](README.md)
-
 **Chrome Web Store:** [YouTube Special Comments Filter](https://chromewebstore.google.com/detail/youtube%E7%89%B9%E5%88%A5%E3%82%B3%E3%83%A1%E3%83%B3%E3%83%88%E3%83%95%E3%82%A3%E3%83%AB%E3%82%BF%E3%83%BC/ngdfibejjanimbkpnenkhfdiledjmogo)
 
 **Website:** https://kat-log.github.io/youtube-live-chat-filter/en/
@@ -17,6 +15,8 @@ and shows only the ones you want to see.
 [![Watch the intro video on YouTube](promotion/promo-video-thumbnail-en.jpg)](https://youtu.be/7vWoDrHcUM4)
 
 ▶ [Watch on YouTube](https://youtu.be/7vWoDrHcUM4)
+
+English | [日本語](README.md)
 
 ---
 
