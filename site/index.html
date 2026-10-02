@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YouTube特別コメントフィルター</title>
+  <meta name="description" content="APIキー不要の無料Chrome拡張。YouTubeライブチャットから配信者・モデレーター・メンバーのコメントとスーパーチャット・メンバー加入だけを取り出して表示。推しの返事や大事なコメントを見逃しません。">
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="alternate" hreflang="ja" href="https://kat-log.github.io/youtube-live-chat-filter/">
+  <link rel="alternate" hreflang="en" href="https://kat-log.github.io/youtube-live-chat-filter/en/">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="YouTube特別コメントフィルター — 大事なコメントを見逃さない">
+  <meta property="og:description" content="APIキー不要の無料Chrome拡張。配信者・モデレーター・メンバーのコメントとスパチャ・メンバー加入だけを一覧表示。">
+  <meta property="og:image" content="https://kat-log.github.io/youtube-live-chat-filter/assets/og.png">
+  <meta property="og:url" content="https://kat-log.github.io/youtube-live-chat-filter/">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="./"><img src="assets/icon.svg" alt="" width="28" height="28"><span>YouTube特別コメントフィルター</span></a>
+      <a class="lang-switch" href="en/" hreflang="en" lang="en">English</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="wrap">
+        <div>
+          <span class="badge">無料・APIキー不要</span>
+          <h1>推しの返事、<br>もう流れた…！？</h1>
+          <p class="lead">YouTubeライブチャットから、配信者・モデレーター・メンバーのコメントと
+            スーパーチャット・メンバー加入だけを取り出して一覧表示するChrome拡張機能です。
+            大事なコメントを、もう見逃しません。</p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="https://chromewebstore.google.com/search/YouTube%E7%89%B9%E5%88%A5%E3%82%B3%E3%83%A1%E3%83%B3%E3%83%88%E3%83%95%E3%82%A3%E3%83%AB%E3%82%BF%E3%83%BC">Chromeに追加（無料）</a>
+            <a class="btn btn-ghost" href="#video">▶ 1分の紹介動画</a>
+          </div>
+          <p class="hero-note">Chrome ウェブストアで配布中 ／ 日本語・English 対応</p>
+        </div>
+        <div class="hero-shot">
+          <img src="assets/ja-1-superchat.png" width="1280" height="800"
+            alt="拡張機能のポップアップ。スーパーチャットが金額つきで強調表示され、役割ごとの件数バッジが並んでいる">
+        </div>
+      </div>
+    </section>
+
+    <section id="video">
+      <div class="wrap">
+        <h2 class="section-title">1分でわかる使い方</h2>
+        <p class="section-lead">インストールして配信を開くだけ。実際の画面で見てみてください。</p>
+        <div class="video">
+          <iframe src="https://www.youtube-nocookie.com/embed/HZnoYyByUos" title="YouTube特別コメントフィルター 紹介動画"
+            loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+        </div>
+      </div>
+    </section>
+
+    <section class="problem">
+      <div class="wrap">
+        <h2 class="section-title">ライブチャット、こんなことありませんか？</h2>
+        <p class="section-lead">盛り上がる配信ほど、コメントは一瞬で流れていきます。</p>
+        <ul class="pain-list">
+          <li><span class="emoji" aria-hidden="true">💬</span>
+            <p>配信者がチャットで返事をくれたのに、気づいたときには<strong>もう画面の外</strong>。</p></li>
+          <li><span class="emoji" aria-hidden="true">📢</span>
+            <p>モデレーターの<strong>大事なお知らせ</strong>（URLや予定）が、一般のコメントに埋もれて読めない。</p></li>
+          <li><span class="emoji" aria-hidden="true">💰</span>
+            <p>スパチャやメンバー加入を<strong>あとから振り返りたい</strong>のに、遡るのが大変。</p></li>
+        </ul>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2 class="section-title">チャットを6種類に分けて、<br>見たいものだけを表示</h2>
+        <p class="section-lead">「誰の発言か」と「何のメッセージか」を別々に切り替えられます。
+          スパチャは一般の視聴者からも飛んでくるので、役割だけで絞っても取りこぼしません。</p>
+        <ul class="kinds">
+          <li><span class="chip chip-streamer">配信者</span><p>配信者本人からの直接のメッセージ</p></li>
+          <li><span class="chip chip-mod">モデレーター</span><p>チャンネル管理者からのお知らせや連絡</p></li>
+          <li><span class="chip chip-member">メンバー</span><p>メンバーシップでチャンネルを支えるファンの声</p></li>
+          <li><span class="chip chip-regular">一般</span><p>そのほかすべての視聴者のコメント</p></li>
+          <li><span class="chip chip-super">スパチャ</span><p>スーパーチャットとスーパーステッカー。金額つき、ステッカーは画像で</p></li>
+          <li><span class="chip chip-join">加入・ギフト</span><p>新規加入・継続（マイルストーン）・メンバーシップギフト</p></li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="features">
+      <div class="wrap">
+        <div class="feature">
+          <div class="feature-text">
+            <span class="feature-num">POINT 01</span>
+            <h3>フィルターを変えると、<br>過去のコメントも出てくる</h3>
+            <p>取り込みは常に全件。フィルターは表示を切り替えるだけなので、
+              「やっぱり一般コメントも見たい」と思ったときに、それまで隠れていた分もまとめて出てきます。
+              「特別」「すべて」「なし」のプリセットでワンクリック切り替え。</p>
+          </div>
+          <img src="assets/ja-2-filters.png" width="1280" height="800" loading="lazy"
+            alt="役割と種別のトグルでコメントを絞り込んでいる画面">
+        </div>
+        <div class="feature">
+          <div class="feature-text">
+            <span class="feature-num">POINT 02</span>
+            <h3>流れていったコメントも、<br>キーワードで探せる</h3>
+            <p>取得したコメント全件をキーワード検索。チャットからコピーした語や、
+              全角・半角の違い、見えない文字が混ざっていてもそのまま引けます。ヒット件数も表示。</p>
+          </div>
+          <img src="assets/ja-3-search.png" width="1280" height="800" loading="lazy"
+            alt="キーワードで過去のコメントを検索している画面">
+        </div>
+        <div class="feature">
+          <div class="feature-text">
+            <span class="feature-num">POINT 03</span>
+            <h3>気になる人のコメントだけを<br>追いかける</h3>
+            <p>ポップアップで名前をクリックすると、その人の発言だけに絞り込み。
+              YouTubeのチャット欄でも、名前やアイコンを <kbd>Alt</kbd>＋クリック（Macは <kbd>Option</kbd>＋クリック）すると、
+              その人で絞り込んだ状態でポップアップが開きます。</p>
+          </div>
+          <img src="assets/ja-4-user.png" width="1280" height="800" loading="lazy"
+            alt="特定の発言者のコメントだけに絞り込んだ画面">
+        </div>
+        <div class="feature">
+          <div class="feature-text">
+            <span class="feature-num">POINT 04</span>
+            <h3>夜の配信でもまぶしくない<br>ダークモード</h3>
+            <p>ポップアップも設定画面もダークテーマに対応。
+              時刻表示は24時間／12時間、秒のあり・なしも選べます。</p>
+          </div>
+          <img src="assets/ja-5-dark.png" width="1280" height="800" loading="lazy"
+            alt="ダークモードで表示したポップアップ">
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2 class="section-title">ほかにも、こんなことができます</h2>
+        <p class="section-lead">配信を見る人にも、配信する人にも。</p>
+        <ul class="more">
+          <li>取得を始めた時点でチャット欄に残っている過去のコメントもまとめて取り込み</li>
+          <li>ライブ配信ページを開くと自動で取得開始</li>
+          <li>スーパーステッカーやメンバー限定絵文字も、チャット欄と同じ画像で表示</li>
+          <li>役割・種別ごとの件数バッジ。スパチャや加入が何件あったかがひと目でわかる</li>
+          <li>配信ごとにコメントを保存。ポップアップを閉じても消えない（直近5配信ぶん）</li>
+          <li>チャットを読み取れているかを表示（緑の点）</li>
+          <li>数千件たまってもスクロールと検索が軽いまま</li>
+          <li>表示言語は日本語と英語。ブラウザに合わせて自動で切り替え</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="howto">
+      <div class="wrap">
+        <h2 class="section-title">使い方はかんたん3ステップ</h2>
+        <p class="section-lead">面倒な設定はいりません。</p>
+        <ol class="steps">
+          <li><h3>Chromeに追加</h3><p>Chrome ウェブストアから無料でインストール。</p></li>
+          <li><h3>ライブ配信を開く</h3><p>YouTubeのライブ配信ページを開くと、自動でコメントの取得が始まります。</p></li>
+          <li><h3>アイコンをクリック</h3><p>ツールバーのアイコンを押すと、大事なコメントだけが並んでいます。</p></li>
+        </ol>
+        <p class="tip">💡 自動で始まらないときは、ポップアップの「開始」ボタンを押してください。
+          YouTube Data API v3 を使うモードを選ぶ場合だけ、設定画面でAPIキーの登録が必要です。</p>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2 class="section-title">安心して使えるように</h2>
+        <p class="section-lead">必要最小限の権限だけで動きます。</p>
+        <div class="privacy-grid">
+          <div><h3>🔒 データは手元だけ</h3><p>コメントはすべてお使いのブラウザの中に保存され、どこへも送信しません。</p></div>
+          <div><h3>👀 読むのはライブチャットだけ</h3><p>ほかのタブのURLやタイトルは見ません。外部への通信はAPIモードのときの YouTube Data API v3 だけです。</p></div>
+          <div><h3>🆓 無料・オープンソース</h3><p>ソースコードは GitHub で公開しています。誰でも中身を確かめられます。</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="faq">
+      <div class="wrap">
+        <h2 class="section-title">よくある質問</h2>
+        <div class="faq-list">
+          <details>
+            <summary>お金はかかりますか？</summary>
+            <p>かかりません。すべての機能を無料で使えます。</p>
+          </details>
+          <details>
+            <summary>APIキーは必要ですか？</summary>
+            <p>いりません。既定の「DOMモード」はページのチャットを直接読み取るので、インストールしてすぐ使えます。
+              YouTube Data API v3 を使う「APIモード」を選んだときだけ、APIキーの登録が必要です。</p>
+          </details>
+          <details>
+            <summary>名前をクリックすると YouTube のメニューが開かないのですか？</summary>
+            <p>普通のクリックは YouTube の「ブロック」「報告」メニューのままです。絞り込みは <kbd>Alt</kbd>（Macは <kbd>Option</kbd>）を押しながらクリックしたときだけ働きます。</p>
+          </details>
+          <details>
+            <summary>どのブラウザで使えますか？</summary>
+            <p>Google Chrome 向けの拡張機能です。Chrome ウェブストアの拡張機能に対応した Chromium 系ブラウザでも動く場合があります。</p>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <section class="final">
+      <div class="wrap">
+        <h2 class="section-title">大事なコメントを、もう見逃さない。</h2>
+        <p class="section-lead">無料・APIキー不要。インストールしたその配信から使えます。</p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="https://chromewebstore.google.com/search/YouTube%E7%89%B9%E5%88%A5%E3%82%B3%E3%83%A1%E3%83%B3%E3%83%88%E3%83%95%E3%82%A3%E3%83%AB%E3%82%BF%E3%83%BC">Chromeに追加（無料）</a>
+          <a class="btn btn-ghost" href="https://github.com/kat-log/youtube-live-chat-filter">GitHub で見る</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <nav>
+        <a href="https://github.com/kat-log/youtube-live-chat-filter">GitHub</a>
+        <a href="https://github.com/kat-log/youtube-live-chat-filter/blob/main/CHANGELOG.md">変更履歴</a>
+        <a href="https://www.youtube.com/@kat-log">YouTube @kat-log</a>
+        <a href="en/" hreflang="en" lang="en">English</a>
+      </nav>
+      <p>© kat-log ／ YouTube は Google LLC の商標です。本拡張機能は Google および YouTube とは無関係です。</p>
+    </div>
+  </footer>
+</body>
+</html>

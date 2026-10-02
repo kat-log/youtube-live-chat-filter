@@ -5,6 +5,8 @@
 **バージョン:** v3.0.0（正は [`src/manifest.json`](src/manifest.json) の `version`。
 変更履歴は [`CHANGELOG.md`](CHANGELOG.md)）
 
+**紹介ページ:** https://kat-log.github.io/youtube-live-chat-filter/ （ソースは [`site/`](site/)）
+
 YouTubeライブチャットから、**配信者・モデレーター・メンバー・一般**のコメントと
 **スーパーチャット／スーパーステッカー／メンバーシップ**を取り込み、
 見たいものだけを絞り込んで表示するChrome拡張機能です。
