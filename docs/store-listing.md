@@ -3,7 +3,7 @@
 ストアの掲載文はこのファイルを正とする。機能を追加・変更したら、コードと一緒にここも更新すること。
 （ストア側への反映は手動。デベロッパーダッシュボードに貼り付ける）
 
-最終更新: 2026-10-01（v3.0.0 / 英語対応。名前・詳細な説明・スクリーンショット・告知文の英語版を追加）
+最終更新: 2026-10-02（v3.0.1 / チャット欄の表示切り替えでの二重取り込みを修正。告知文を追加。日本語のスクリーンショットを作り直し）
 
 **英語版の掲載文**はこのファイルの「・英語」の付いた節にある。ストアは掲載文を言語ごとに持つので、
 ダッシュボードの「ストアの掲載情報」で言語に English を追加し、英語の節を貼る。
@@ -220,6 +220,69 @@ How to use:
 * An API key (set on the settings page) is only needed if you use the YouTube Data API v3 mode.
 
 A handy tool for streamers and anyone who watches live streams a lot!
+```
+
+---
+
+## 更新の告知文（v3.0.1）
+
+ダッシュボードの「このバージョンの新機能」や、公開後の案内に貼る。
+中身は #113 の修正（#115）だけ。掲載文・スクリーンショットに変更は無い。
+審査中のアイテムには新しいパッケージを上げられないので、**v3.0.0 の審査を取り下げて v3.0.1 を出すと、v3.0.0 は公開されない**。
+その場合、利用者は v2.2.1 から直接 v3.0.1 に上がるので、
+**v3.0.0 を公開済みかどうかで貼る版を選ぶ**。日英それぞれ2版ずつ用意した。
+権限は増えていないので、更新で拡張機能が無効化されることはない。
+
+v3.0.0 を公開済みのとき（修正だけ）:
+
+```
+v3.0.1 では、不具合を1つ直しました。
+
+■ 直したこと
+・YouTube のチャット欄で「上位のチャット」と「チャット」を切り替えると、その時点でチャット欄に出ていたコメントがもう一度取り込まれ、同じ行が2回並んでいたのを直しました。同じ人が同じ分に同じ文を本当に2回送った場合は、これまでどおり2件として並びます
+
+・要求する権限は変わっていません
+```
+
+```
+Version 3.0.1 fixes one bug.
+
+■ Fixed
+・Switching YouTube's chat between "Top chat" and "Live chat" no longer picks up the comments already in the chat a second time, so the same rows no longer appear twice. If someone really sends the same message twice in the same minute, it still appears as two comments
+
+・No new permissions are requested
+```
+
+v3.0.0 をまだ公開していないとき（v2.2.1 から直接上がる。英語対応も書く）:
+
+```
+v3.0.1 から、英語でも使えるようになりました。
+
+■ 表示言語を選べるようになりました
+ポップアップと設定画面が、日本語と英語に対応しました。
+・ふだんはブラウザの言語に合わせて切り替わります（日本語のブラウザではこれまでどおり日本語です）
+・設定画面の「言語」で、English / 日本語 を選ぶこともできます
+・拡張機能の名前とツールバーのツールチップは、Chrome の仕様でブラウザの言語のままです
+
+■ 直したこと
+・YouTube のチャット欄で「上位のチャット」と「チャット」を切り替えると、その時点でチャット欄に出ていたコメントがもう一度取り込まれ、同じ行が2回並んでいたのを直しました。同じ人が同じ分に同じ文を本当に2回送った場合は、これまでどおり2件として並びます
+
+・要求する権限は変わっていません
+```
+
+```
+Version 3.0.1 makes the extension available in English.
+
+■ English is now supported
+The popup and the settings page are now available in English and Japanese.
+・They follow your browser language by default
+・You can also choose English or 日本語 under "Language" on the settings page
+・The extension name and the toolbar tooltip always follow the browser language (a Chrome limitation)
+
+■ Fixed
+・Switching YouTube's chat between "Top chat" and "Live chat" no longer picks up the comments already in the chat a second time, so the same rows no longer appear twice
+
+・No new permissions are requested
 ```
 
 ---
