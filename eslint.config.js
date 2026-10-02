@@ -192,6 +192,16 @@ module.exports = [
     rules: RULES
   },
   {
+    // ランディングページ（GitHub Pages）。拡張機能には同梱されない
+    files: ['site/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'script',
+      globals: BROWSER_GLOBALS
+    },
+    rules: RULES
+  },
+  {
     files: ['test/**/*.js', 'eslint.config.js'],
     languageOptions: {
       ecmaVersion: 2022,
