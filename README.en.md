@@ -2,7 +2,7 @@
 
 English | [日本語](README.md)
 
-**Version:** v3.0.0 (the source of truth is `version` in [`src/manifest.json`](src/manifest.json).
+**Version:** v3.0.1 (the source of truth is `version` in [`src/manifest.json`](src/manifest.json).
 Changes are listed in [`CHANGELOG.md`](CHANGELOG.md))
 
 A Chrome extension that collects **streamer, moderator, member and regular** comments,

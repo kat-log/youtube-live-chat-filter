@@ -2,7 +2,7 @@
 
 [English](README.en.md) | 日本語
 
-**バージョン:** v3.0.0（正は [`src/manifest.json`](src/manifest.json) の `version`。
+**バージョン:** v3.0.1（正は [`src/manifest.json`](src/manifest.json) の `version`。
 変更履歴は [`CHANGELOG.md`](CHANGELOG.md)）
 
 YouTubeライブチャットから、**配信者・モデレーター・メンバー・一般**のコメントと
