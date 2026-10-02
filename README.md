@@ -1,7 +1,5 @@
 # YouTube特別コメントフィルター
 
-[English](README.en.md) | 日本語
-
 **Chrome ウェブストア:** [YouTube特別コメントフィルター](https://chromewebstore.google.com/detail/youtube%E7%89%B9%E5%88%A5%E3%82%B3%E3%83%A1%E3%83%B3%E3%83%88%E3%83%95%E3%82%A3%E3%83%AB%E3%82%BF%E3%83%BC/ngdfibejjanimbkpnenkhfdiledjmogo)
 
 **紹介ページ:** https://kat-log.github.io/youtube-live-chat-filter/
@@ -17,6 +15,8 @@ YouTubeライブチャットから、**配信者・モデレーター・メン�
 [![紹介動画を YouTube で見る](promotion/promo-video-thumbnail.jpg)](https://youtu.be/HZnoYyByUos)
 
 ▶ [YouTube で見る](https://youtu.be/HZnoYyByUos)
+
+[English](README.en.md) | 日本語
 
 ---
 
