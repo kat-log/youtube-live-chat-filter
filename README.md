@@ -63,7 +63,7 @@ YouTubeライブチャットから、**配信者・モデレーター・メン�
 
 ### Chrome ウェブストアから（推奨）
 
-[Chrome ウェブストア](https://chromewebstore.google.com/) から「YouTube特別コメントフィルター」を検索してインストールしてください。
+[Chrome ウェブストアの掲載ページ](https://chromewebstore.google.com/detail/youtube%E7%89%B9%E5%88%A5%E3%82%B3%E3%83%A1%E3%83%B3%E3%83%88%E3%83%95%E3%82%A3%E3%83%AB%E3%82%BF%E3%83%BC/ngdfibejjanimbkpnenkhfdiledjmogo) からインストールしてください。
 
 ### 開発者モードで手動インストール
 

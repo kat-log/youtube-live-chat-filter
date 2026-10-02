@@ -63,7 +63,7 @@ Turn a toggle on later and the comments that came in before show up as well.
 
 ### From the Chrome Web Store (recommended)
 
-Search for "YouTube Special Comments Filter" on the [Chrome Web Store](https://chromewebstore.google.com/) and install it.
+Install it from its [Chrome Web Store page](https://chromewebstore.google.com/detail/youtube%E7%89%B9%E5%88%A5%E3%82%B3%E3%83%A1%E3%83%B3%E3%83%88%E3%83%95%E3%82%A3%E3%83%AB%E3%82%BF%E3%83%BC/ngdfibejjanimbkpnenkhfdiledjmogo).
 
 ### Manual install in developer mode
 
