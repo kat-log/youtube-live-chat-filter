@@ -1,0 +1,289 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="fonts/fonts.css">
+<script src="data.js"></script>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:#140c2e;font-family:Nunito,sans-serif;color:#fff}
+#bg{position:absolute;inset:0;background:radial-gradient(1200px 800px at 15% 10%,#3b1f7a 0%,transparent 60%),radial-gradient(1000px 700px at 90% 90%,#7a1f5c 0%,transparent 60%),linear-gradient(135deg,#160d33,#24124a)}
+.blob{position:absolute;border-radius:50%;filter:blur(60px);opacity:.45}
+#browser{position:absolute;left:0;top:0;width:1920px;height:1232px;transform-origin:0 0;border-radius:22px;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.55);background:#0f0f0f}
+#chrome{height:72px;background:#202124;display:flex;align-items:center;padding:0 24px;gap:14px}
+.dot{width:18px;height:18px;border-radius:50%}
+#addr{margin-left:40px;flex:1;height:44px;border-radius:22px;background:#2f3033;color:#bdc1c6;font:600 22px Nunito;display:flex;align-items:center;padding:0 22px;gap:10px}
+#exticon{width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center}
+#exticon img{width:34px;height:34px}
+#watch{display:block;width:1920px;height:1160px}
+#popup{position:absolute;left:1236px;top:150px;width:630px;height:900px;overflow:hidden;transform-origin:100% 0;border-radius:14px;box-shadow:0 30px 80px rgba(0,0,0,.6);background:#f7f7f7}
+#popup img{display:block;width:750px;height:980px}
+.ring{position:absolute;border:6px solid #ffd54a;border-radius:16px;box-shadow:0 0 0 6px rgba(255,213,74,.25),0 0 40px rgba(255,213,74,.6);pointer-events:none}
+#chapter{position:absolute;left:64px;top:62px;display:flex;align-items:center;gap:16px;font:700 44px Fredoka}
+#chapter .n{width:60px;height:60px;border-radius:50%;background:linear-gradient(135deg,#ff6fb5,#ffb86b);display:flex;align-items:center;justify-content:center;font:700 34px Fredoka;color:#2a0f3d}
+#sub{position:absolute;display:flex;align-items:flex-start;gap:18px;font:800 42px/1.25 Nunito;text-shadow:0 3px 10px rgba(0,0,0,.5)}
+#sub .who{flex:none;margin-top:4px;padding:4px 16px;border-radius:999px;font:700 26px Fredoka;color:#1a0b2e}
+#sub .txt{background:rgba(16,8,36,.72);padding:12px 24px;border-radius:18px}
+.sticker{position:absolute;font:700 40px Fredoka;padding:14px 26px;border-radius:20px;color:#2a0f3d;background:#fff;box-shadow:0 12px 30px rgba(0,0,0,.4);white-space:nowrap;transform-origin:50% 50%}
+#title{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:26px;text-align:center}
+#title img{width:230px;height:230px;filter:drop-shadow(0 20px 40px rgba(0,0,0,.5))}
+#title h1{margin:0;font:700 96px/1.05 Fredoka;letter-spacing:-1px;background:linear-gradient(90deg,#fff,#ffd1ec);-webkit-background-clip:text;color:transparent}
+#title p{margin:0;font:700 40px Nunito;color:#ffd7a8}
+#cursor{position:absolute;width:52px;height:52px;pointer-events:none;filter:drop-shadow(0 4px 6px rgba(0,0,0,.5))}
+#ripple{position:absolute;width:90px;height:90px;margin:-45px 0 0 -45px;border-radius:50%;border:6px solid #ffd54a;pointer-events:none}
+#mag{position:absolute;overflow:hidden;border-radius:22px;border:5px solid #ffd54a;box-shadow:0 20px 60px rgba(0,0,0,.6);background:#0f0f0f}
+#mag img{position:absolute;transform-origin:0 0}
+#keys{position:absolute;display:flex;align-items:center;gap:14px;font:700 44px Fredoka}
+.key{background:#fff;color:#2a0f3d;border-radius:14px;padding:8px 24px;box-shadow:0 8px 0 #b9a6d8}
+.key.down{transform:translateY(6px);box-shadow:0 2px 0 #b9a6d8;background:#ffe27a}
+#mac{position:absolute;font:700 30px Nunito;color:#ffd7a8}
+#end{position:absolute;inset:0}
+#end .left{position:absolute;left:120px;top:150px;width:1020px}
+#end .brand{display:flex;align-items:center;gap:30px}
+#end .brand img{width:150px;height:150px}
+#end h2{margin:0;font:700 74px/1.05 Fredoka}
+#end .tag{margin:34px 0 34px;font:800 46px Nunito;color:#ffd7a8}
+#end .chips{display:flex;flex-wrap:wrap;gap:16px}
+#end .chip{font:700 30px Nunito;padding:10px 22px;border-radius:999px;background:rgba(255,255,255,.12);border:2px solid rgba(255,255,255,.25)}
+#end .right{position:absolute;right:120px;top:160px;width:560px;text-align:center}
+#end .qr{background:#fff;border-radius:28px;padding:26px;display:inline-block;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+#end .qr img{width:380px;height:380px;display:block;image-rendering:pixelated}
+#end .store{margin-top:26px;font:700 40px Fredoka}
+#end .url{margin-top:10px;font:700 22px Nunito;color:#d8c9f5;word-break:break-all}
+#end .note{position:absolute;left:120px;right:120px;bottom:46px;font:600 24px Nunito;color:#b9a6d8}
+</style></head>
+<body>
+<div id="bg"><div class="blob" id="b1" style="width:520px;height:520px;background:#ff5fa8"></div><div class="blob" id="b2" style="width:460px;height:460px;background:#5f8bff"></div></div>
+
+<div id="browser">
+  <div id="chrome">
+    <div class="dot" style="background:#ff5f57"></div><div class="dot" style="background:#febc2e"></div><div class="dot" style="background:#28c840"></div>
+    <div id="addr">🔒 youtube.com/watch?v=…</div>
+    <div id="exticon"><img src="icon.svg"></div>
+  </div>
+  <img id="watch">
+</div>
+
+<div id="popup"><img id="popimg"></div>
+<div class="ring" id="ring"></div>
+<div id="mag"><img id="magimg"><svg id="magcur" style="position:absolute;width:64px;height:64px" viewBox="0 0 24 24"><path d="M4 2l15 11-6.5 1.2L16 21l-3 1.4-3.4-6.6L4 20z" fill="#fff" stroke="#111" stroke-width="1.4" stroke-linejoin="round"/></svg></div>
+<div id="keys"><span class="key" id="kalt">Alt</span><span>+</span><span class="key">Click</span></div>
+<div id="mac">Option-click on Mac</div>
+
+<div id="title"><img src="icon.svg"><h1>YouTube Special<br>Comments Filter</h1><p>A free Chrome extension</p></div>
+
+<div id="chapter"><div class="n" id="chn">1</div><div id="cht"></div></div>
+<div class="sticker" id="st1"></div>
+<div class="sticker" id="st2"></div>
+
+<div id="end">
+  <div class="left">
+    <div class="brand"><img src="icon.svg"><h2>YouTube Special<br>Comments Filter</h2></div>
+    <div class="tag">Never miss the comments that matter.</div>
+    <div class="chips">
+      <span class="chip">👑 Streamer</span><span class="chip">🔧 Mods</span><span class="chip">⭐ Members</span><span class="chip">💰 Super Chats</span>
+      <span class="chip">🔍 Keyword search</span><span class="chip">🖱️ Alt-click to follow a viewer</span><span class="chip">🔑 No API key needed</span>
+    </div>
+  </div>
+  <div class="right">
+    <div class="qr"><img src="qr.png"></div>
+    <div class="store">Free on the Chrome Web Store</div>
+    <div class="url">chromewebstore.google.com/detail/<br>ngdfibejjanimbkpnenkhfdiledjmogo</div>
+  </div>
+  <div class="note">The stream and chat shown are fictional, created for this video. · Voices: ElevenLabs (elevenlabs.io)</div>
+</div>
+
+<div id="sub"><span class="who" id="who"></span><span class="txt" id="subtxt"></span></div>
+<div id="ripple"></div>
+<svg id="cursor" viewBox="0 0 24 24"><path d="M4 2l15 11-6.5 1.2L16 21l-3 1.4-3.4-6.6L4 20z" fill="#fff" stroke="#111" stroke-width="1.4" stroke-linejoin="round"/></svg>
+
+<script>
+const $ = id => document.getElementById(id);
+const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+const lerp = (a,b,k) => a + (b-a)*k;
+const ease = k => { k = clamp(k,0,1); return k<.5 ? 2*k*k : 1-Math.pow(-2*k+2,2)/2; };
+const pop = k => { k = clamp(k,0,1); const c=1.70158*1.4; return 1 + (c+1)*Math.pow(k-1,3) + c*Math.pow(k-1,2); };
+const ramp = (t,a,b) => clamp((t-a)/(b-a),0,1);
+const win = (t,a,b,f=.25) => Math.min(ramp(t,a,a+f), 1-ramp(t,b-f,b));
+const FPS = 30, WATCH_N = 1363, POP_N = 1363, POP_T0 = 8.70;
+
+// ---- 収録の時刻への対応 ----
+function watchRec(t){
+  if (t < 5.6) return 0.8 + 0.75*t;
+  if (t < 9.2) return 5.0 + 2*(t-5.6);
+  if (t < 13.6) return 6.4 + (t-9.2);
+  return Math.min(t - 2.8, 45.3);
+}
+function popRec(t){
+  if (t < 20.0) return t - 2.8;
+  if (t < 24.4) return Math.min(t - 2.8, 17.2);
+  if (t < 33.0) return Math.min(t - 7.2, 24.5);
+  if (t < 36.3) return t - 8.5;
+  if (t < 40.4) return t - 2.8;
+  return Math.min(t + 0.4, 45.3);
+}
+const pad = n => String(n).padStart(5,'0');
+
+// ---- レイアウト ----
+const BIG = {x:192, y:46, s:0.80}, SMALL = {x:64, y:168, s:0.54};
+function browserLayout(t){
+  const k = ease(ramp(t, 13.35, 13.95));
+  return {x:lerp(BIG.x,SMALL.x,k), y:lerp(BIG.y,SMALL.y,k), s:lerp(BIG.s,SMALL.s,k)};
+}
+const PX = 1236, PY = 150, PS = 0.93;
+const popPt = (cx,cy) => [PX + cx*1.5*PS, PY + cy*1.5*PS];
+const watchPt = (L,px,py) => [L.x + px*1.5*L.s, L.y + (72 + py*1.5)*L.s];
+
+const CHAPTERS = [[13.6,'1','Catch what matters'],[23.3,'2','Your filters'],[31.0,'3','Search & follow'],[40.4,'4','Ready to go']];
+const COLORS = {A:'#ff8fc8', B:'#7fe3d2'};
+const NAMES = {A:'Fan', B:'Guide'};
+
+let lastW = '', lastP = '';
+async function render(t){
+  const waits = [];
+  // 背景のゆらぎ
+  $('b1').style.left = (180 + 80*Math.sin(t*.4)) + 'px'; $('b1').style.top = (560 + 60*Math.cos(t*.3)) + 'px';
+  $('b2').style.left = (1400 + 90*Math.cos(t*.35)) + 'px'; $('b2').style.top = (60 + 70*Math.sin(t*.5)) + 'px';
+
+  // ブラウザ
+  const L = browserLayout(t);
+  const B = $('browser');
+  const inEnd = ramp(t, 46.1, 46.6);
+  const titleK = win(t, 9.15, 13.6, .35);
+  B.style.transform = `translate(${L.x}px,${L.y}px) scale(${L.s})`;
+  B.style.filter = titleK > 0 ? `blur(${14*titleK}px) brightness(${1-.55*titleK})` : 'none';
+  B.style.opacity = 1 - inEnd;
+  const wf = 'rec/watch30/' + pad(clamp(Math.round(watchRec(t)*FPS),0,WATCH_N-1)) + '.jpg';
+  if (wf !== lastW) { $('watch').src = wf; $('magimg').src = wf; lastW = wf; waits.push($('watch').decode().catch(()=>{}), $('magimg').decode().catch(()=>{})); }
+
+  // popup（ツールバーのアイコンを押したところから開く）
+  const P = $('popup');
+  const pk = ramp(t, 14.2, 14.65);
+  const pr = popRec(t);
+  if (t >= 14.2 && pr >= POP_T0) {
+    const pf = 'rec/popup30/' + pad(clamp(Math.round(pr*FPS),0,POP_N-1)) + '.jpg';
+    if (pf !== lastP) { $('popimg').src = pf; lastP = pf; waits.push($('popimg').decode().catch(()=>{})); }
+    P.style.display = 'block';
+    P.style.opacity = Math.min(pk*1.5, 1) * (1 - inEnd);
+    P.style.transform = `scale(${PS * (0.6 + 0.4*pop(pk))})`;
+  } else P.style.display = 'none';
+
+  // 字幕
+  const line = TL.find(l => t >= l.start - 0.05 && t <= l.end + 0.2);
+  const S = $('sub');
+  if (line && t < 46.2) {
+    S.style.display = 'flex';
+    $('who').textContent = NAMES[line.sp]; $('who').style.background = COLORS[line.sp];
+    $('subtxt').textContent = line.text;
+    const k = ramp(t, line.start - 0.05, line.start + 0.12);
+    S.style.opacity = k;
+    if (t < 13.6) { S.style.left = '200px'; S.style.top = (t < 9.2 ? '890px' : '930px'); S.style.width = '1520px'; S.style.justifyContent = 'center'; }
+    else { S.style.left = '64px'; S.style.top = '858px'; S.style.width = '1110px'; S.style.justifyContent = 'flex-start'; }
+    S.style.transform = `translateY(${(1-k)*14}px)`;
+  } else S.style.display = 'none';
+
+  // 章の見出し
+  const ch = [...CHAPTERS].reverse().find(c => t >= c[0]);
+  const C = $('chapter');
+  if (ch && t < 46.2) {
+    C.style.display = 'flex'; $('chn').textContent = ch[1]; $('cht').textContent = ch[2];
+    const k = ramp(t, ch[0], ch[0] + 0.35);
+    C.style.opacity = k * (1 - ramp(t, 45.9, 46.2)); C.style.transform = `translateX(${(1-ease(k))*-40}px)`;
+  } else C.style.display = 'none';
+
+  // タイトル
+  const T = $('title');
+  T.style.display = titleK > 0 ? 'flex' : 'none';
+  T.style.opacity = titleK;
+  T.querySelector('img').style.transform = `scale(${pop(ramp(t, 9.2, 9.75))}) rotate(${(1-pop(ramp(t,9.2,9.75)))*-20}deg)`;
+  T.querySelector('h1').style.transform = `scale(${0.8 + 0.2*pop(ramp(t, 9.35, 9.9))})`;
+  T.querySelector('p').style.opacity = ramp(t, 11.2, 11.6);
+
+  // ステッカー
+  const st = (el, text, x, y, a, b, bg='#fff', rot=-3) => {
+    if (t < a || t > b) { el.style.display = 'none'; return; }
+    el.style.display = 'block'; el.textContent = text; el.style.background = bg;
+    el.style.left = x + 'px'; el.style.top = y + 'px';
+    const k = pop(ramp(t, a, a + .35)) * (1 - ramp(t, b - .2, b));
+    el.style.transform = `scale(${k}) rotate(${rot}deg)`;
+  };
+  if (t < 9.2) {
+    const [rx, ry] = watchPt(L, 975, 470);
+    st($('st1'), '💬 The streamer replied!', 980, 640, 1.0, 3.4, '#ffe27a', -4);
+    st($('st2'), 'gone… 😭', 1080, 700, 4.0, 5.6, '#ffffff', 4);
+    if (t >= 6.4) st($('st2'), '💨 300+ messages a minute', 900, 760, 6.4, 9.2, '#ffd0e8', 3);
+  } else if (t >= 40.9 && t < 46.2) {
+    st($('st1'), '✓ No API key', 200, 300, 41.2, 46.2, '#b8f5d0', -3);
+    st($('st2'), '✓ No setup', 300, 420, 42.2, 46.2, '#b8f5d0', 2);
+  } else if (t >= 26.0 && t < 31.0) {
+    st($('st1'), '6 toggles', 1060, 410, 26.4, 30.9, '#ffe27a', 4);
+    $('st2').style.display = 'none';
+  } else { $('st1').style.display = 'none'; $('st2').style.display = 'none'; }
+
+  // 強調の枠
+  const R = $('ring');
+  const ringAt = (cx, cy, w, h, a, b) => {
+    const [x, y] = popPt(cx, cy); const k = win(t, a, b, .3);
+    R.style.display = 'block'; R.style.opacity = k;
+    R.style.left = (x-8) + 'px'; R.style.top = (y-8) + 'px';
+    R.style.width = (w*1.5*PS + 16) + 'px'; R.style.height = (h*1.5*PS + 16) + 'px';
+  };
+  if (t >= 20.5 && t < 23.2) ringAt(6, 366, 408, 74, 20.5, 23.2);        // @pixelpanda への返事
+  else if (t >= 41.6 && t < 46.2) ringAt(14, 126, 392, 30, 41.6, 46.2); // DOM mode: … No API key needed.
+  else R.style.display = 'none';
+
+  // カーソル
+  const CU = $('cursor'), RP = $('ripple');
+  let cur = null, clickT = null;
+  const tb = () => { const L2 = browserLayout(t); return [L2.x + 1770*L2.s, L2.y + 36*L2.s]; };
+  const path = (pts) => { // pts: [[t,x,y],...]
+    if (t < pts[0][0] || t > pts[pts.length-1][0]) return null;
+    for (let i = 0; i < pts.length-1; i++) { const [ta,xa,ya]=pts[i], [tb2,xb,yb]=pts[i+1];
+      if (t <= tb2) { const k = ease((t-ta)/(tb2-ta||1)); return [lerp(xa,xb,k), lerp(ya,yb,k)]; } }
+    return pts[pts.length-1].slice(1);
+  };
+  const M = MK;
+  const pp = n => popPt(M[n].x, M[n].y);
+  const clicks = [];
+  if (t >= 13.4 && t < 15.2) { const [x,y] = tb(); cur = path([[13.4,700,700],[14.15,x,y],[15.2,x,y]]); clicks.push([14.15,x,y]); }
+  if (t >= 23.6 && t < 28.6) {
+    const g = pp('gear'), m = pp('member_on'), c = pp('gear_close');
+    cur = path([[23.6,1500,700],[24.45,g[0],g[1]],[25.5,g[0],g[1]],[26.1,m[0],m[1]],[27.1,m[0],m[1]],[27.75,c[0],c[1]],[28.6,c[0]+40,c[1]+60]]);
+    clicks.push([24.5,...g],[26.13,...m],[27.77,...c]);
+  }
+  if (t >= 32.3 && t < 34.6) { const s = pp('search_click'); cur = path([[32.3,1500,700],[33.1,s[0],s[1]],[34.6,s[0],s[1]+70]]); clicks.push([33.15,...s]); }
+  if (t >= 40.3 && t < 41.9) { const g = pp('gear2'); cur = path([[40.3,1500,600],[40.9,g[0],g[1]],[41.9,g[0]+30,g[1]+80]]); clicks.push([40.96,...g]); }
+  if (cur) { CU.style.display = 'block'; CU.style.left = (cur[0]-6) + 'px'; CU.style.top = (cur[1]-4) + 'px'; } else CU.style.display = 'none';
+  const ck = clicks.find(c => t >= c[0] && t < c[0] + 0.5);
+  if (ck) { const k = (t - ck[0]) / 0.5; RP.style.display = 'block'; RP.style.left = ck[1] + 'px'; RP.style.top = ck[2] + 'px'; RP.style.opacity = 1-k; RP.style.transform = `scale(${0.4 + k})`; } else RP.style.display = 'none';
+
+  // Alt+クリック：チャット欄を拡大して見せる
+  const MG = $('mag'), KY = $('keys'), MC = $('mac');
+  const mk = win(t, 36.15, 40.35, .3);
+  if (mk > 0) {
+    const fx = M.alt_click.x*1.5, fy = M.alt_click.y*1.5;      // watch のフレーム上の名前の位置
+    const rx0 = 1172, ry0 = fy - 150, rw = 720, rh = 230, z = 1.45;
+    MG.style.display = 'block'; MG.style.opacity = mk;
+    MG.style.left = '96px'; MG.style.top = '300px'; MG.style.width = (rw*z) + 'px'; MG.style.height = (rh*z) + 'px';
+    MG.style.transform = `scale(${0.85 + 0.15*pop(ramp(t,36.15,36.5))})`;
+    const I = $('magimg'); I.style.width = '1920px'; I.style.height = '1160px';
+    I.style.transform = `translate(${-rx0*z}px,${-ry0*z}px) scale(${z})`;
+    const mc = $('magcur'); const cx = (fx - rx0)*z, cy = (fy - ry0)*z;
+    const dx = lerp(160, 0, ease(ramp(t, 36.2, 36.8))), dy = lerp(90, 0, ease(ramp(t, 36.2, 36.8)));
+    mc.style.left = (cx - 8 + dx) + 'px'; mc.style.top = (cy - 6 + dy) + 'px';
+    KY.style.display = 'flex'; KY.style.opacity = mk; KY.style.left = '140px'; KY.style.top = (300 + rh*z + 40) + 'px';
+    $('kalt').className = 'key' + (t >= 36.9 && t < 37.5 ? ' down' : '');
+    MC.style.display = 'block'; MC.style.opacity = mk; MC.style.left = '146px'; MC.style.top = (300 + rh*z + 140) + 'px';
+    if (t >= 37.31 && t < 37.81) { const k = (t-37.31)/.5; RP.style.display='block'; RP.style.left = (96 + cx) + 'px'; RP.style.top = (300 + cy) + 'px'; RP.style.opacity = 1-k; RP.style.transform = `scale(${0.4+k})`; }
+  } else { MG.style.display = 'none'; KY.style.display = 'none'; MC.style.display = 'none'; }
+
+  // エンドカード（最後まで残す）
+  const E = $('end');
+  E.style.display = inEnd > 0 ? 'block' : 'none';
+  E.style.opacity = inEnd;
+  E.querySelector('.left').style.transform = `translateY(${(1-ease(ramp(t,46.1,46.8)))*40}px)`;
+  E.querySelector('.qr').style.transform = `scale(${pop(ramp(t, 46.4, 46.9))})`;
+
+  await Promise.all(waits);
+}
+window.render = render;
+</script>
+</body></html>

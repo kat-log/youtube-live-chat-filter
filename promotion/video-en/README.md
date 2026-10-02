@@ -51,11 +51,24 @@ python3 sheet.py popup 9.5,20,27,36 sheet.jpg   # 指定秒のコマを並べて
 - popup は別ウィンドウで開き、`chrome.tabs.query` を init script で watch タブに向けている
 - 時刻は America/Los_Angeles・12時間表示で、夜の配信に見えるようにしてある
 
+## 動画の組み立て（初稿 2026-10-02・56秒）
+
+声は A＝Jessica、B＝Sarah（`eleven_v3`、無料プランの標準の声）。セリフの最終形は `lines.json`。
+
+```bash
+python3 tts.py        # セリフ → vo/、timeline.json、data.js（生成済みの mp3 は使い回す）
+python3 prep.py       # 30fps の連番・フォント・QR・アイコン
+python3 preview.py 1.5,14.5,37.2 pv.jpg   # 指定秒を並べて確認
+python3 audio.py && ffmpeg -i mix_raw.wav -af loudnorm=I=-14:TP=-1.5:LRA=11 -ar 48000 -ac 2 mix.wav
+python3 render.py 56  # → video.mp4（約10分）
+ffmpeg -i video.mp4 -i mix.wav -c:v libx264 -preset slow -crf 20 -pix_fmt yuv420p -c:a aac -b:a 192k -shortest -movflags +faststart promo-en.mp4
+```
+
+- 収録のコマは 1920×1160（ビューポートが 1280×773 になった）。1080 と決め打ちすると縦に潰れ、拡大表示のカーソルが1行ずれる
+- 声と BGM の差は約15dB（ダッキング -11dB）
+- 収録と動画の時刻の対応は `stage.html` の `watchRec()` / `popRec()`
+
 ## 残り
 
-1. ElevenLabs：環境変数 `ELEVENLABS_API_KEY`。声の候補サンプル → ユーザーが選ぶ → 全セリフ生成・長さを測る
-   （`eleven_v3` なら `[excited]` などの音声タグで感情を付けられる）
-2. タイムラインを組み、`stage.html` の `render(t)` で1フレームずつ描く（watch と popup を並べて構成。Alt+クリックのカーソルとキーは描き足す）
-3. BGM・効果音は numpy で自作、ダッキング、`loudnorm=I=-14:TP=-1.5`
-4. エンドカードに「デモ画面は説明用に用意した架空のもの」「Voices: ElevenLabs」を入れる
-5. 限定公開でアップロード → 確認 → 公開。README.en.md の動画リンク差し替え（README.md は日本語版のまま）
+1. ユーザーの確認（音のバランス・字幕・言い回し）
+2. 限定公開でアップロード → 確認 → 公開。README.en.md の動画リンク差し替え（README.md は日本語版のまま）

@@ -5,3 +5,12 @@ out/
 *.mp4
 *.wav
 *.mp3
+vo/
+fonts/
+data.js
+timeline.json
+rec*/
+*.jpg
+*.png
+!site/av/*.png
+icon.svg
