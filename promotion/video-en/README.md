@@ -68,7 +68,8 @@ ffmpeg -i video.mp4 -i mix.wav -c:v libx264 -preset slow -crf 20 -pix_fmt yuv420
 - 声と BGM の差は約15dB（ダッキング -11dB）
 - 収録と動画の時刻の対応は `stage.html` の `watchRec()` / `popRec()`
 
-## 残り
+## 公開
 
-1. ユーザーの確認（音のバランス・字幕・言い回し）
-2. 限定公開でアップロード → 確認 → 公開。README.en.md の動画リンク差し替え（README.md は日本語版のまま）
+- 2026-10-02 公開：https://youtu.be/7vWoDrHcUM4 （kat-log チャンネル）
+- `README.en.md` の動画リンクとサムネイル（`promotion/promo-video-thumbnail-en.jpg`）を英語版に差し替えた。`README.md` は日本語版のまま
+- 初稿は popup 側のカーソルと枠が約44px 左にずれていた（popup を右上基準で縮めているのに左上基準で座標を計算していた）。直してから公開した
