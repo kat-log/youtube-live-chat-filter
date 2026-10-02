@@ -219,7 +219,7 @@ npm test
   審査を通らない（2026-09 に差し戻された）。
 - **`manifest.json` の権限を増やすこと。** 審査のやり直しになるうえ、
   `test/manifest.test.js` が固定しているのでテストも落ちる。
-- **バージョンを上げること。** `src/manifest.json` と `README.md`・`README.en.md` の冒頭は
+- **バージョンを上げること。** `src/manifest.json` と `README.md`・`README.en.md` の「バージョンと変更履歴」の節は
   対で直す（食い違いは `test/manifest.test.js` が落とす）。
 
 ---

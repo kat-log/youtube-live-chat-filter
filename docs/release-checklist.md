@@ -12,7 +12,7 @@
 ## 手順
 
 1. `npm run lint` と `npm test` が通る
-2. `src/manifest.json` の `version` を上げる。**`README.md` と `README.en.md` の冒頭と対で直す**
+2. `src/manifest.json` の `version` を上げる。**`README.md` と `README.en.md` の「バージョンと変更履歴」の節と対で直す**
    （`test/manifest.test.js` が食い違いを落とす）
 3. `CHANGELOG.md` に、利用者から見える変更だけを書く。`### English` の節も併記する
    （「未リリース」の節があれば、そのバージョンの見出しに付け替える）

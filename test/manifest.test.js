@@ -134,13 +134,13 @@ describe('manifest.json', () => {
     }
   });
 
-  test('version は README の冒頭と揃っている（#44）', () => {
+  test('version は README の「バージョンと変更履歴」と揃っている（#44）', () => {
     // 英語版の README.en.md も対で直す
     for (const [file, pattern] of [['README.md', /\*\*バージョン:\*\* v(\d+\.\d+\.\d+)/],
                                    ['README.en.md', /\*\*Version:\*\* v(\d+\.\d+\.\d+)/]]) {
       const readme = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
       const shown = readme.match(pattern);
-      assert.ok(shown, `${file} の冒頭にバージョンが見つからない`);
+      assert.ok(shown, `${file} にバージョンが見つからない`);
       assert.equal(shown[1], manifest.version, `${file} のバージョンが manifest とずれている`);
     }
   });
