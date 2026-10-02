@@ -129,7 +129,8 @@ function browserLayout(t){
   return {x:lerp(BIG.x,SMALL.x,k), y:lerp(BIG.y,SMALL.y,k), s:lerp(BIG.s,SMALL.s,k)};
 }
 const PX = 1236, PY = 150, PS = 0.93;
-const popPt = (cx,cy) => [PX + cx*1.5*PS, PY + cy*1.5*PS];
+// popup は右上を基準に縮めているので、左端は PX + 630*(1-PS) にずれる
+const popPt = (cx,cy) => [PX + 630*(1-PS) + cx*1.5*PS, PY + cy*1.5*PS];
 const watchPt = (L,px,py) => [L.x + px*1.5*L.s, L.y + (72 + py*1.5)*L.s];
 
 const CHAPTERS = [[13.6,'1','Catch what matters'],[23.3,'2','Your filters'],[31.0,'3','Search & follow'],[40.4,'4','Ready to go']];
@@ -233,7 +234,7 @@ async function render(t){
   // カーソル
   const CU = $('cursor'), RP = $('ripple');
   let cur = null, clickT = null;
-  const tb = () => { const L2 = browserLayout(t); return [L2.x + 1770*L2.s, L2.y + 36*L2.s]; };
+  const tb = () => { const r = $('exticon').getBoundingClientRect(); return [r.left + r.width/2, r.top + r.height/2]; };
   const path = (pts) => { // pts: [[t,x,y],...]
     if (t < pts[0][0] || t > pts[pts.length-1][0]) return null;
     for (let i = 0; i < pts.length-1; i++) { const [ta,xa,ya]=pts[i], [tb2,xb,yb]=pts[i+1];
