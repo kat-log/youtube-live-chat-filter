@@ -9,7 +9,7 @@ A Chrome extension that collects **streamer, moderator, member and regular** com
 plus **Super Chats, Super Stickers and memberships**, from YouTube live chat,
 and shows only the ones you want to see.
 
-![Promotional image](promotion/promotion_1280x800.jpg)
+![Promotional image](promotion/store-screenshots-en/en-1-monitoring.png)
 
 ### Intro video (1 min)
 

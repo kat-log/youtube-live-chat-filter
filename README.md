@@ -9,7 +9,7 @@ YouTubeライブチャットから、**配信者・モデレーター・メン�
 **スーパーチャット／スーパーステッカー／メンバーシップ**を取り込み、
 見たいものだけを絞り込んで表示するChrome拡張機能です。
 
-![プロモーション画像](promotion/promotion_1280x800.jpg)
+![プロモーション画像](promotion/store-screenshots-ja/ja-1-superchat.png)
 
 ### 紹介動画（1分）
 
