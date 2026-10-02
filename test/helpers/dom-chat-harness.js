@@ -46,6 +46,16 @@ const ROW_SELECTORS = new Set([
   'yt-live-chat-author-badge-renderer[type="member"]'
 ]);
 
+// dom-chat.js が要素から getAttribute で読む属性の全部。セレクタと同じ理由で、
+// 知らない属性は例外にする（綴りを取り違えると、null が返るだけで黙って
+// 従来の動き —— たとえば #113 の控えが効かない —— に戻ってしまう）
+const ROW_ATTRIBUTES = new Set([
+  'author-type', // 行: 発言者の種別（roleOf）
+  'id',          // 行: YouTube 側のメッセージID（messageIdFor。#113）
+  'alt',         // img: ステッカー名・絵文字の名前
+  'src'          // img: ステッカーが生えたかどうか
+]);
+
 function unknownSelector(selector, known) {
   return new Error(
     `ハーネスが知らないセレクタを引かれた: ${JSON.stringify(selector)}\n` +
@@ -282,7 +292,14 @@ function element(textContent = '', children = {}, attributes = {}) {
       if (!ROW_SELECTORS.has(selector)) throw unknownSelector(selector, 'ROW_SELECTORS');
       return this.children[selector] || null;
     },
-    getAttribute(name) { return this.attributes[name] ?? null; },
+    getAttribute(name) {
+      if (!ROW_ATTRIBUTES.has(name)) {
+        throw new Error(
+          `ハーネスが知らない属性を引かれた: ${JSON.stringify(name)}\n` +
+          'dom-chat.js が読む属性を変えたなら、dom-chat-harness.js の ROW_ATTRIBUTES にも足すこと');
+      }
+      return this.attributes[name] ?? null;
+    },
     // クリックされた要素から行へ遡る経路。本物と同じく自分自身も対象になる
     closest(selector) { return closestFrom(this, selector); }
   };
@@ -360,13 +377,15 @@ function avatarImage({ src = '//yt3.ggpht.com/AVATAR=s32-c-k-c0x00ffffff-no-rj' 
 /**
  * スーパーステッカーの行。画像は最初は付いていない（YouTubeが後から作るため）。
  * `attachSticker()` で生やせる。
+ * youtubeId は行の要素に付く YouTube 側のメッセージID（id 属性）。省略すると付けない
  */
-function stickerRow({ displayName = '@viewer', timestamp = '23:02', amount = '¥1,000' } = {}) {
+function stickerRow({ displayName = '@viewer', timestamp = '23:02', amount = '¥1,000',
+  youtubeId = null } = {}) {
   const row = element('', {
     '#author-name': element(displayName),
     '#timestamp': element(timestamp),
     '#purchase-amount': element(amount)
-  });
+  }, youtubeId ? { id: youtubeId } : {});
   row.tagName = 'yt-live-chat-paid-sticker-renderer';
   row.attachSticker = (image = stickerImage()) => {
     row.children['#sticker img'] = image;
@@ -404,15 +423,16 @@ function messageElement(parts) {
 
 /**
  * 通常のテキストコメントの行。
- * messageParts を渡すと、本文を文字と絵文字画像の並びとして組み立てる
+ * messageParts を渡すと、本文を文字と絵文字画像の並びとして組み立てる。
+ * youtubeId は行の要素に付く YouTube 側のメッセージID（id 属性）。省略すると付けない
  */
 function textRow({ displayName = '@viewer', message = 'こんばんは', timestamp = '23:02',
-  messageParts = null } = {}) {
+  messageParts = null, youtubeId = null } = {}) {
   const row = element('', {
     '#author-name': element(displayName),
     '#timestamp': element(timestamp),
     '#message': messageParts ? messageElement(messageParts) : element(message)
-  });
+  }, youtubeId ? { id: youtubeId } : {});
   row.tagName = 'yt-live-chat-text-message-renderer';
   return row;
 }
@@ -440,5 +460,5 @@ const added = (...nodes) => [{ addedNodes: nodes }];
 module.exports = {
   loadDomChat, element, stickerImage, avatarImage, emojiImage, messageElement,
   stickerRow, textRow, withLateAvatar, added,
-  ITEM_LIST_SELECTOR, ITEM_HOST_SELECTOR, ROW_SELECTORS
+  ITEM_LIST_SELECTOR, ITEM_HOST_SELECTOR, ROW_SELECTORS, ROW_ATTRIBUTES
 };

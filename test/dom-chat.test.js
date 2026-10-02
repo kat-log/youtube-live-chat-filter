@@ -661,6 +661,130 @@ describe('コメントIDの発番', () => {
   });
 });
 
+// 「上位のチャット ↔ チャット」の切り替え（#113）。
+//
+// YouTube は切り替えのたびに、チャット欄のコメントを**別の要素で描き直す**。
+// 要素の控え（idByElement）には当たらないので、内容のキーをもう一度引いて
+// 出現回数が進み、`_1` の別IDとして二重に取り込まれていた。
+// 行に付いている YouTube 側のメッセージID（id 属性）で同じコメントだと分かれば、
+// 一度振ったIDをそのまま返す。ただし本当の連投（#29）は2件のまま残すこと
+describe('描き直された行のID（#113）', () => {
+  const lineOf = youtubeId =>
+    textRow({ displayName: '@viewer', message: '8888', timestamp: '23:02', youtubeId });
+
+  test('#items ごと描き直されても、同じコメントには同じIDを振って送り直さない', () => {
+    const h = loadDomChat({ rows: [lineOf('ChwKGkA'), textRow({ message: 'こんばんは', youtubeId: 'ChwKGkB' })] });
+    const before = h.messages().map(m => m.id);
+    assert.equal(before.length, 2);
+
+    // 切り替えで #items が作り直され、同じ2件が別の要素で入っている
+    h.replaceItemList([lineOf('ChwKGkA'), textRow({ message: 'こんばんは', youtubeId: 'ChwKGkB' })]);
+    h.emitHost();
+
+    assert.deepEqual(h.messages().map(m => m.id), before, '描き直した行を新しいコメントとして送っている');
+
+    // 番人の force スキャン（送信済みの控えを素通りする）でも、IDは描き直し前と同じ。
+    // background 側の既読・IndexedDB の重複判定はこのIDで弾く
+    h.deliver({ action: 'requestInitialSweep', force: true });
+    const resent = h.messages().slice(before.length).map(m => m.id);
+    assert.deepEqual(resent, before, '描き直した行に別のID（_1 など）を振っている');
+  });
+
+  test('#items の中身だけ差し替わっても、同じコメントには同じIDを振る', () => {
+    const h = loadDomChat();
+    h.emit(added(lineOf('ChwKGkA')));
+    const [first] = h.messages();
+
+    // 同じ #items に、別の要素で同じコメントが入ってくる
+    h.emit(added(lineOf('ChwKGkA')));
+
+    assert.equal(h.messages().length, 1, '描き直した行を二重に送っている');
+    assert.match(first.id, /_0$/);
+  });
+
+  test('「上位のチャット」→「チャット」で増えた行だけを送る', () => {
+    // 上位のチャットは絞り込んだ部分集合。切り替えると、隠れていた行が初めて現れる
+    const h = loadDomChat({ rows: [lineOf('ChwKGkA')] });
+
+    h.replaceItemList([
+      lineOf('ChwKGkA'),
+      textRow({ displayName: '@other', message: '初見です', youtubeId: 'ChwKGkC' })
+    ]);
+    h.emitHost();
+
+    assert.deepEqual(h.messages().map(m => m.message), ['8888', '初見です']);
+  });
+
+  test('本当の連投は、描き直しをまたいでも2件のまま（#29）', () => {
+    // 同じ人・同じ分・同じ本文でも、YouTube 側のIDは別々
+    const h = loadDomChat({ rows: [lineOf('ChwKGkA'), lineOf('ChwKGkD')] });
+    const before = h.messages().map(m => m.id);
+    assert.equal(before.length, 2, '連投の2件目を送っていない');
+    assert.match(before[0], /_0$/);
+    assert.match(before[1], /_1$/);
+
+    h.replaceItemList([lineOf('ChwKGkA'), lineOf('ChwKGkD')]);
+    h.emitHost();
+    h.replaceItemList([lineOf('ChwKGkA'), lineOf('ChwKGkD')]);
+    h.emitHost();
+
+    assert.deepEqual(h.messages().map(m => m.id), before, '描き直しのたびに連番が進んでいる');
+
+    // そのあとの3回目の連投は、ちゃんと次の番号になる
+    h.emit(added(lineOf('ChwKGkE')));
+    const ids = h.messages().map(m => m.id);
+    assert.equal(ids.length, 3);
+    assert.match(ids[2], /_2$/);
+  });
+
+  test('IDの形は変えない（保存済みの履歴と突き合わせられる）', () => {
+    // YouTube のIDを控えに使うだけで、保存するIDには混ぜない。
+    // 混ぜると、更新前に保存した履歴が全件スキャンで二重に積まれる
+    const withAttr = loadDomChat();
+    withAttr.emit(added(lineOf('ChwKGkA')));
+    const plain = loadDomChat();
+    plain.emit(added(lineOf(null)));
+
+    assert.equal(withAttr.messages()[0].id, plain.messages()[0].id);
+    assert.equal(withAttr.messages()[0].legacyId, plain.messages()[0].legacyId);
+  });
+
+  test('スーパーステッカーも描き直しで二重にならない', () => {
+    const h = loadDomChat();
+    const first = stickerRow({ youtubeId: 'ChwKGkS' });
+    first.attachSticker();
+    h.emit(added(first));
+    assert.equal(h.messages().length, 1);
+
+    const redrawn = stickerRow({ youtubeId: 'ChwKGkS' });
+    redrawn.attachSticker();
+    h.replaceItemList([redrawn]);
+    h.emitHost();
+
+    assert.equal(h.messages().length, 1, '描き直したステッカーを二重に送っている');
+  });
+
+  test('id 属性が無い行は、これまでどおり出現回数で数える', () => {
+    // 属性が取れないときは従来の採番に戻る（悪くても以前と同じ）
+    const h = loadDomChat();
+    h.emit(added(lineOf(null)));
+    h.emit(added(lineOf(null)));
+
+    assert.deepEqual(h.messages().map(m => m.id.slice(-2)), ['_0', '_1']);
+  });
+
+  test('同じ YouTube のIDでも中身が違えば、控えを使わない', () => {
+    // 取り違えて「既出」として落とすと、コメントが黙って消える
+    const h = loadDomChat();
+    h.emit(added(lineOf('ChwKGkA')));
+    h.emit(added(textRow({ displayName: '@other', message: '別の発言', youtubeId: 'ChwKGkA' })));
+
+    const messages = h.messages();
+    assert.equal(messages.length, 2, '中身の違うコメントを既出として落としている');
+    assert.notEqual(messages[0].id, messages[1].id);
+  });
+});
+
 // セレクタのモックが厳格であること（#T1 #T2）。
 // 「知らないセレクタなら例外」にしておかないと、dom-chat.js 側の綴りが変わっても
 // モックが null を返すだけで、テストは通ったまま本番でだけ壊れる
@@ -675,6 +799,15 @@ describe('ハーネスのセレクタ', () => {
     assert.throws(() => row.querySelector('#autor-name'), /知らないセレクタ/);
     // 既知のセレクタで、その行に無いものは null（例外にしない）
     assert.equal(row.querySelector('#purchase-amount'), null);
+  });
+
+  test('知らない属性を引かれたら例外にする', () => {
+    // 綴りを取り違えると null が返るだけで、#113 の控えが黙って効かなくなる
+    const row = textRow({ youtubeId: 'ChwKGkA' });
+
+    assert.throws(() => row.getAttribute('data-id'), /知らない属性/);
+    assert.equal(row.getAttribute('id'), 'ChwKGkA');
+    assert.equal(row.getAttribute('author-type'), null);
   });
 
   test('closest も、解釈できないセレクタは例外にする', () => {
