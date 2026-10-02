@@ -1,0 +1,7 @@
+rec/
+prof-*/
+work/
+out/
+*.mp4
+*.wav
+*.mp3
