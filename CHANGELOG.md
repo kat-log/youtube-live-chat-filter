@@ -4,7 +4,7 @@
 経緯そのものは [`docs/redesign-plan.md`](docs/redesign-plan.md) の実施記録に置く。
 
 バージョンの正は [`src/manifest.json`](src/manifest.json) の `version`。
-[`README.md`](README.md) の冒頭と**対で**更新する（過去に片方だけ古くなった。監査 #44）。
+[`README.md`](README.md) の「バージョンと変更履歴」の節と**対で**更新する（過去に片方だけ古くなった。監査 #44）。
 
 1.10.0 以前は git のコミット履歴を参照（このファイルは 2.0.0 から始めた）。
 
@@ -17,7 +17,7 @@ Earlier versions are in Japanese only.*
 
 ---
 
-## 未リリース
+## 3.0.1 — 2026-10-02
 
 ### 直ったこと
 

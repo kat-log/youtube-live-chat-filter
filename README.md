@@ -2,18 +2,15 @@
 
 [English](README.en.md) | 日本語
 
-**バージョン:** v3.0.0（正は [`src/manifest.json`](src/manifest.json) の `version`。
-変更履歴は [`CHANGELOG.md`](CHANGELOG.md)）
-
 **Chrome ウェブストア:** [YouTube特別コメントフィルター](https://chromewebstore.google.com/detail/youtube%E7%89%B9%E5%88%A5%E3%82%B3%E3%83%A1%E3%83%B3%E3%83%88%E3%83%95%E3%82%A3%E3%83%AB%E3%82%BF%E3%83%BC/ngdfibejjanimbkpnenkhfdiledjmogo)
 
-**紹介ページ:** https://kat-log.github.io/youtube-live-chat-filter/ （ソースは [`site/`](site/)）
+**紹介ページ:** https://kat-log.github.io/youtube-live-chat-filter/
 
 YouTubeライブチャットから、**配信者・モデレーター・メンバー・一般**のコメントと
 **スーパーチャット／スーパーステッカー／メンバーシップ**を取り込み、
 見たいものだけを絞り込んで表示するChrome拡張機能です。
 
-![プロモーション画像](promotion/store-screenshots-ja/ja-1-superchat.png)
+[![プロモーション画像](promotion/store-screenshots-ja/ja-1-superchat.png)](https://chromewebstore.google.com/detail/youtube%E7%89%B9%E5%88%A5%E3%82%B3%E3%83%A1%E3%83%B3%E3%83%88%E3%83%95%E3%82%A3%E3%83%AB%E3%82%BF%E3%83%BC/ngdfibejjanimbkpnenkhfdiledjmogo)
 
 ### 紹介動画（1分）
 
@@ -114,6 +111,13 @@ Alt+クリック**すると、その人で絞り込んだ状態でポップア�
 | `https://www.googleapis.com/youtube/v3/*` | APIモードのときだけ使う YouTube Data API v3 |
 
 コメントは**すべて手元のブラウザの中だけ**に保存され、どこへも送信しません。
+
+---
+
+## バージョンと変更履歴
+
+**バージョン:** v3.0.1（正は [`src/manifest.json`](src/manifest.json) の `version`。
+変更履歴は [`CHANGELOG.md`](CHANGELOG.md)）
 
 ---
 
