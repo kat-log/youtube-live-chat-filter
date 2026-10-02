@@ -25,6 +25,10 @@ const idByElement = new WeakMap();
 // 同一内容・同一時刻のコメントを区別するための連番（キーごとの出現回数）
 const occurrenceByKey = new Map();
 const MAX_OCCURRENCE_KEYS = 5000;
+// YouTube のメッセージID → { key, ids }。要素が作り直されても同じコメントに
+// 同じIDを振るための控え（#113）。上限と間引き方は occurrenceByKey に揃える
+const idByYouTubeId = new Map();
+const MAX_YOUTUBE_IDS = 5000;
 
 // 上限を超えたぶんを古い方から捨てる。Map / Set の反復は挿入順なので、
 // 先頭から必要数だけ delete すれば FIFO になる。
@@ -88,6 +92,9 @@ const SELECTORS = {
 
 // 行に付く属性も YouTube 由来。roleOf が読む
 const AUTHOR_TYPE_ATTR = 'author-type';
+// 行の要素に付いている YouTube 側のメッセージID（`ChwKGk…` の形）。
+// messageIdFor が「描き直された同じ行」を見分けるのに使う（#113）
+const MESSAGE_ID_ATTR = 'id';
 
 // チャット行そのものを指すセレクタ。クリックされた要素から行へ遡るのに使う。
 // KIND_BY_TAG から組み立てるので、監視対象の行が増えればここも自動で追従する
@@ -673,6 +680,15 @@ function roleOf(el, kind) {
 // IDは「同じコメントなら再スキャンでもリロード後でも同じ値」であることが条件。
 // 位置ではなく内容＋出現回数から作るので、DOMの間引きで値がずれない。
 // 新旧2つのIDを返す。旧形式は、更新前に保存された履歴との突き合わせにだけ使う
+//
+// 「上位のチャット ↔ チャット」の切り替えでは、YouTube が同じコメントを
+// **別の要素で描き直す**（#113）。idByElement には当たらず、出現回数だけが
+// 進んで `_1` が振られ、同じ人が同じ文を2回送った扱いで二重に取り込まれていた。
+// そこで行に付いている YouTube 側のメッセージIDでも控えを引き、一度振ったIDを
+// そのまま返す。保存するIDの形（dom2_<key>_<N>）は変えない —— 変えると
+// 更新前の履歴と突き合わせられなくなる。
+// 本当の連投は YouTube 側のIDが別々なので、これまでどおり連番が進んで2件になる。
+// 属性が無い・控えに無いときは従来の採番に戻る（悪くても以前と同じになるだけ）
 function messageIdFor(el, kind, displayName, detail, timestampText) {
   const cached = idByElement.get(el);
   if (cached) return cached;
@@ -680,6 +696,17 @@ function messageIdFor(el, kind, displayName, detail, timestampText) {
   // キーの作り方は旧版と同じ（shared/comment.js に移した）。形が同じなので
   // 旧形式のIDをそのまま計算し直せる
   const key = commentKeyOf(kind, displayName, detail, timestampText);
+
+  const youtubeId = el.getAttribute(MESSAGE_ID_ATTR) || '';
+  const known = youtubeId ? idByYouTubeId.get(youtubeId) : null;
+  // キーまで一致したときだけ使う。万一 YouTube 側のIDが別のコメントに
+  // 使い回されても、取り違えて「既出」として落とすことはしない
+  if (known && known.key === key) {
+    idByYouTubeId.delete(youtubeId); // 引いたら末尾へ（まだ現役の行を間引かない）
+    idByYouTubeId.set(youtubeId, known);
+    idByElement.set(el, known.ids);
+    return known.ids;
+  }
 
   const occurrence = occurrenceByKey.get(key) || 0;
   // 同じキーを引くたびに末尾へ入れ直す。挿入順のままだと、連投され続けている
@@ -693,6 +720,11 @@ function messageIdFor(el, kind, displayName, detail, timestampText) {
     legacyId: legacyCommentIdFor(key, occurrence)
   };
   idByElement.set(el, ids);
+  if (youtubeId) {
+    idByYouTubeId.delete(youtubeId);
+    idByYouTubeId.set(youtubeId, { key, ids });
+    trimOldest(idByYouTubeId, MAX_YOUTUBE_IDS);
+  }
   return ids;
 }
 

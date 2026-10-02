@@ -17,6 +17,22 @@ Earlier versions are in Japanese only.*
 
 ---
 
+## 未リリース
+
+### 直ったこと
+
+- **DOMモードで、YouTube のチャット欄を「上位のチャット ↔ チャット」と切り替えても、
+  コメントが二重に並ばなくなりました。** これまでは切り替えた時点でチャット欄に出ていた
+  コメントがもう一度取り込まれ、同じ行が2回並んで件数も増えていました。
+  同じ人が同じ分に同じ文を本当に2回送った場合は、これまでどおり2件として並びます
+
+### English
+
+- **In DOM mode, switching YouTube's chat between "Top chat" and "Live chat" no longer duplicates comments.**
+  Previously, the comments shown in the chat at the moment of switching were picked up again, so the same
+  rows appeared twice and the counts went up. If someone really sends the same message twice in the same
+  minute, it still appears as two comments
+
 ## 3.0.0 — 2026-10-01
 
 ### できるようになったこと
