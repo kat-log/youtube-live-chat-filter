@@ -1,0 +1,45 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<meta property="og:url" content="https://www.youtube.com/watch?v=DEMOstar01x">
+<title>Late-Night Karaoke 🌙 Requests open!</title>
+<style>
+ html,body{margin:0;background:#0f0f0f;color:#f1f1f1;font-family:Roboto,Arial,sans-serif;overflow:hidden;height:100%}
+ #top{height:56px;display:flex;align-items:center;padding:0 24px;gap:16px}
+ .logo{font-weight:700;font-size:20px;letter-spacing:-.5px}.logo b{background:#7c4dff;color:#fff;border-radius:6px;padding:1px 7px;margin-right:6px}
+ .search{margin-left:120px;width:420px;height:36px;border:1px solid #303030;border-radius:18px;background:#121212}
+ #wrap{display:flex;gap:24px;padding:8px 24px}
+ #left{flex:1;min-width:0}
+ #movie_player{position:relative;aspect-ratio:16/9;border-radius:12px;overflow:hidden;background:#000}
+ canvas{width:100%;height:100%;display:block}
+ h1{font-size:20px;margin:12px 0 8px}
+ .ch{display:flex;align-items:center;gap:12px;color:#aaa;font-size:14px}
+ .ch img{width:40px;height:40px;border-radius:50%}
+ .ch b{color:#f1f1f1;font-size:16px;display:block}
+ #chat{width:400px;height:calc(100vh - 72px);border:1px solid #2a2a2a;border-radius:12px;overflow:hidden;flex:none}
+ iframe{width:100%;height:100%;border:0}
+</style></head><body>
+<div id="top"><div class="logo"><b>▶</b>StarTube</div><div class="search"></div></div>
+<div id="wrap">
+ <div id="left">
+  <div id="movie_player"><canvas id="cv" width="1280" height="720"></canvas></div>
+  <h1>Late-Night Karaoke 🌙 Requests open!</h1>
+  <div class="ch"><img src="https://yt3.ggpht.com/demo/Kiri%20Aozora=s88-c-k"><div><b>Kiri Aozora</b>128K subscribers</div></div>
+ </div>
+ <div id="chat"><iframe src="/live_chat?is_popout=0&v=DEMOstar01x"></iframe></div>
+</div>
+<script>
+const cv=document.getElementById('cv'),x=cv.getContext('2d');
+const stars=[...Array(140)].map((_,i)=>[(i*977)%1280,(i*571)%520,(i%5)/3+0.5,i]);
+function draw(ts){const t=ts/1000;
+ const g=x.createLinearGradient(0,0,0,720);g.addColorStop(0,'#0b1033');g.addColorStop(.6,'#3a1c71');g.addColorStop(1,'#d76d77');
+ x.fillStyle=g;x.fillRect(0,0,1280,720);
+ for(const[sx,sy,r,i]of stars){x.globalAlpha=.5+.5*Math.sin(t*2+i);x.fillStyle='#fff';x.beginPath();x.arc(sx,sy,r,0,7);x.fill()}
+ x.globalAlpha=1;x.fillStyle='#fff6d5';x.shadowColor='#fff6d5';x.shadowBlur=60;x.beginPath();x.arc(980,170,90,0,7);x.fill();x.shadowBlur=0;
+ for(let i=0;i<48;i++){const h=40+140*Math.abs(Math.sin(t*3+i*.7)*Math.sin(t*1.3+i*.31));
+  x.fillStyle=`hsla(${280+i*2},90%,70%,.85)`;x.fillRect(80+i*23.5,700-h,16,h)}
+ x.fillStyle='#fff';x.font='bold 64px Roboto,Arial';x.fillText('♪ Late-Night Karaoke',80,170);
+ x.font='28px Roboto,Arial';x.fillStyle='#ffe3f1';x.fillText('Now singing: "Midnight Satellite"',84,220);
+ x.fillStyle='#e00';x.fillRect(80,260,78,34);x.fillStyle='#fff';x.font='bold 22px Roboto,Arial';x.fillText('LIVE',95,285);
+ requestAnimationFrame(draw)}
+requestAnimationFrame(draw);
+</script></body></html>
