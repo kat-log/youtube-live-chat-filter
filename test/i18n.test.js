@@ -401,7 +401,8 @@ const JAPANESE_ALLOWED = {
     "'午後'"
   ],
   // 言語セレクトの選択肢。言語名はどの表示言語でもその言語自身の名前で出す（訳さない）
-  'options/options.html': ['>日本語<']
+  'options/options.html': ['>日本語<'],
+  'popup/popup.html': ['>日本語<']
 };
 
 describe('日本語のリテラル', () => {

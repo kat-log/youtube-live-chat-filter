@@ -62,7 +62,7 @@ the regular comments that came in before show up as well.
 - Time format options (12/24-hour, with or without seconds)
 - Auto start on live pages, auto scroll, debug mode
 - Shows whether the chat is being read (while collecting in DOM mode)
-- English and Japanese (follows the browser language; you can also choose one on the settings page)
+- English and Japanese (follows the browser language; you can also choose one in the popup settings (gear icon) or on the settings page)
 
 ---
 

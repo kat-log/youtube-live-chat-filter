@@ -36,6 +36,15 @@ chrome.storage.onChanged.addListener((changes) => {
     if (toggle) toggle.checked = (newTheme === 'dark');
   }
 
+  // 表示言語が変わったら開き直す。data-i18n* だけでなく、JS が書いた文言
+  // （件数・状態・エラー）も引き直す必要があり、描き直す口を1つずつ持つより
+  // 起動の段取りを丸ごと通すほうが漏れが無い。ポートは張り直しになるが、
+  // popup を閉じて開くのと同じで、Service Worker 側に害は無い
+  if (changes.uiLanguage) {
+    location.reload();
+    return;
+  }
+
   if (changes.timeHour12 || changes.timeShowSeconds) {
     popupController?.applyTimeSettings({
       hour12: changes.timeHour12?.newValue,
@@ -314,8 +323,9 @@ class PopupController {
      * 手動の言語切替に追従しないので使わない）
      */
     async applyLanguage() {
-        await self.YTFi18n.loadOverride();
+        const language = await self.YTFi18n.loadOverride();
         self.YTFi18n.applyTo(document);
+        this.elements.languageSelect.value = language;
         this.elements.modeSelectWrapper.setAttribute('data-hint', t('chatModeLockedHint'));
         this.elements.errorSolution.setAttribute('data-label', t('errorSolutionLabel'));
     }
@@ -906,6 +916,8 @@ class PopupController {
             startMonitoringBtn: document.getElementById('start-monitoring'),
             stopMonitoringBtn: document.getElementById('stop-monitoring'),
             clearCommentsBtn: document.getElementById('clear-comments'),
+            openOptionsBtn: document.getElementById('open-options'),
+            languageSelect: document.getElementById('ui-language-select'),
             fixExtensionBtn: document.getElementById('fix-extension'),
             fixExtensionContainer: document.getElementById('fix-extension-container'),
             
@@ -975,6 +987,9 @@ class PopupController {
         this.elements.startMonitoringBtn.addEventListener('click', () => this.startMonitoring());
         this.elements.stopMonitoringBtn.addEventListener('click', () => this.stopMonitoring());
         this.elements.clearCommentsBtn.addEventListener('click', () => this.clearComments());
+        this.elements.openOptionsBtn.addEventListener('click', () => this.openOptionsPage());
+        // 描き直しは storage.onChanged から（開き直す）
+        this.elements.languageSelect.addEventListener('change', () => this.saveLanguage());
         this.elements.fixExtensionBtn.addEventListener('click', () => {
             if (this.elements.fixExtensionBtn.dataset.action === 'reload') {
                 this.reloadCurrentTab();
@@ -2722,6 +2737,18 @@ class PopupController {
         window.open('https://console.cloud.google.com/apis/api/youtube.googleapis.com/quotas', '_blank');
     }
     
+    // 表示言語（'auto' | 'en' | 'ja'）。正は storage.local の uiLanguage で、設定画面と共有
+    async saveLanguage() {
+        const { LANGUAGE_KEY, normalizeLanguage } = self.YTFi18n;
+        try {
+            await chrome.storage.local.set({
+                [LANGUAGE_KEY]: normalizeLanguage(this.elements.languageSelect.value)
+            });
+        } catch (error) {
+            console.error('Error saving language setting:', error);
+        }
+    }
+
     openOptionsPage() {
         debugLog('[Popup] Opening options page');
         chrome.runtime.openOptionsPage();

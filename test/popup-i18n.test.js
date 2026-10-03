@@ -67,7 +67,8 @@ describe('popup.html の既定文言', () => {
   });
 
   test('popup.html には日本語の文言が残っていない（コメントを除く）', () => {
-    const html = POPUP_HTML.replace(/<!--[\s\S]*?-->/g, '');
+    // 言語セレクトの「日本語」だけは訳さない（どの表示言語でもその言語自身の名前で出す）
+    const html = POPUP_HTML.replace(/<!--[\s\S]*?-->/g, '').replace('>日本語<', '><');
     assert.doesNotMatch(html, /[぀-ヿ一-鿿]/);
     assert.match(POPUP_HTML, /<html lang="en">/);
   });
@@ -369,5 +370,53 @@ describe('英語で開いた popup: APIモードのメンバーイベント', ()
     const stored = c.comments.find(comment => comment.id === 'new');
     assert.equal(stored.eventKey, 'newMember');
     assert.equal(stored.eventText, null);
+  });
+});
+
+describe('popup の設定から表示言語を切り替える', () => {
+  test('言語セレクトに、保存してある設定を出す', async () => {
+    const popup = loadPopup({ chrome: createChromeMock({ locale: 'en' }) });
+    popup.YTFi18n.loadOverride = async () => 'ja';
+    const c = new popup.__popup.PopupController();
+    await c.applyLanguage();
+    assert.equal(c.elements.languageSelect.value, 'ja');
+  });
+
+  test('選ぶと storage.local の uiLanguage（設定画面と同じ正）に保存する', async () => {
+    const storage = {};
+    const popup = loadPopup({ chrome: createChromeMock({ storage, locale: 'en' }) });
+    const c = new popup.__popup.PopupController();
+    c.elements.languageSelect.value = 'ja';
+    c.elements.languageSelect.fire('change');
+    await Promise.resolve();
+    assert.equal(storage.uiLanguage, 'ja');
+
+    // 知らない値は 'auto' に落とす
+    c.elements.languageSelect.value = 'fr';
+    await c.saveLanguage();
+    assert.equal(storage.uiLanguage, 'auto');
+  });
+
+  test('uiLanguage が変わったら popup を開き直す（JS が書いた文言まで引き直すため）', () => {
+    const chrome = createChromeMock({ locale: 'en' });
+    const listeners = [];
+    chrome.storage.onChanged.addListener = fn => listeners.push(fn);
+    const popup = loadPopup({ chrome });
+    let reloads = 0;
+    popup.location = { reload: () => { reloads++; } };
+
+    listeners.forEach(fn => fn({ theme: { newValue: 'dark' } }));
+    assert.equal(reloads, 0);
+    listeners.forEach(fn => fn({ uiLanguage: { newValue: 'ja' } }));
+    assert.equal(reloads, 1);
+  });
+
+  test('設定ドロワーの「詳しい設定」で設定画面を開く', () => {
+    const popup = loadPopup({ chrome: createChromeMock({ locale: 'en' }) });
+    let opened = 0;
+    popup.chrome.runtime.openOptionsPage = () => { opened++; };
+    const c = new popup.__popup.PopupController();
+    c.elements.openOptionsBtn.fire('click');
+    assert.equal(opened, 1);
   });
 });

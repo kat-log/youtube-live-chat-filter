@@ -130,6 +130,18 @@
                     </label>
                 </div>
 
+                <!-- 表示言語。値は storage.local の uiLanguage（設定画面と同じ）。
+                     English / 日本語 は訳さない（どの表示言語でも、その言語自身の名前で出す）。
+                     変えたら popup を開き直す（JS が書いた文言まで描き直すため。popup.js） -->
+                <div class="drawer-row drawer-theme-row">
+                    <label class="drawer-label" for="ui-language-select" data-i18n="languageLabel">Language</label>
+                    <select id="ui-language-select" class="mode-select drawer-language-select">
+                        <option value="auto" data-i18n="languageAuto">Auto (browser)</option>
+                        <option value="en" lang="en">English</option>
+                        <option value="ja" lang="ja">日本語</option>
+                    </select>
+                </div>
+
                 <!-- 時刻表示 -->
                 <div class="drawer-row drawer-theme-row">
                     <label class="drawer-label" for="time-hour12-toggle" data-i18n="hour12Label">12-hour clock (AM/PM)</label>
@@ -149,6 +161,7 @@
                 <!-- 操作ボタン群 -->
                 <div class="drawer-controls">
                     <button id="clear-comments" class="btn btn-secondary" data-i18n="buttonClearHistory">Clear history</button>
+                    <button id="open-options" class="btn btn-secondary" data-i18n="buttonOpenOptions">All settings</button>
                     <div id="fix-extension-container" style="display: none;">
                         <button id="fix-extension" class="btn btn-warning" data-i18n="buttonRepair">Repair</button>
                     </div>

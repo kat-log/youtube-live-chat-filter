@@ -716,6 +716,11 @@ body {
 }
 
 /* Drawer bottom controls */
+/* 言語セレクトはトグルと同じ行に右寄せで置く（.mode-select は幅いっぱいが既定） */
+.drawer-language-select {
+    width: auto;
+}
+
 .drawer-controls {
     display: flex;
     gap: 8px;
