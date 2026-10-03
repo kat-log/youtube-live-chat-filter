@@ -12,7 +12,7 @@ and shows only the ones you want to see.
 
 ### Intro video (1 min)
 
-[![Watch the intro video on YouTube](promotion/promo-video-thumbnail-en.jpg)](https://youtu.be/7vWoDrHcUM4)
+https://github.com/user-attachments/assets/c3df87db-9196-4f1e-a359-ae9fd47dd6f1
 
 ▶ [Watch on YouTube](https://youtu.be/7vWoDrHcUM4)
 
