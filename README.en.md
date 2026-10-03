@@ -29,18 +29,26 @@ English | [日本語](README.md)
 | **DOM mode** (default) | Reads the live chat on the YouTube page directly | Not needed |
 | **API mode** | Fetches comments with the YouTube Data API v3 | Required |
 
-### Two filter axes
+### Show only the comments you want
 
-Role (who sent it) and kind (what kind of message it is) are separate axes.
-Super Chats can come from regular viewers too, so filtering by role alone would miss them.
+Buttons in the popup show or hide each of these six groups:
 
-| Axis | Toggles |
+| Group | What it contains |
 |---|---|
-| Role | **Streamer** / **Moderator** / **Member** (sponsor) / **Regular** |
-| Kind | **Super Chat** (including Super Stickers) / **Joins & gifts** (new members, milestones, gift purchases) |
+| **Streamer** | Comments from the streamer themselves |
+| **Moderator** | Comments from the channel's moderators |
+| **Member** | Comments from people with a channel membership |
+| **Regular** | Comments from everyone else |
+| **Super Chat** | Super Chats and Super Stickers (with the amount) |
+| **Joins & gifts** | New members, membership milestones and gifted memberships |
 
-**Everything is collected; the filters only change what is shown.**
-Turn a toggle on later and the comments that came in before show up as well.
+The "Special", "All" and "None" buttons switch them all at once.
+Super Chats and joins appear under "Super Chat" and "Joins & gifts" even when the sender is a regular viewer
+(hiding "Regular" doesn't hide them).
+
+**Changing what's shown also applies to past comments.**
+Every comment is collected whatever its group, so if you turn on "Regular" partway through,
+the regular comments that came in before show up as well.
 
 ### Other features
 
@@ -64,13 +72,20 @@ Turn a toggle on later and the comments that came in before show up as well.
 
 Install it from its [Chrome Web Store page](https://chromewebstore.google.com/detail/youtube%E7%89%B9%E5%88%A5%E3%82%B3%E3%83%A1%E3%83%B3%E3%83%88%E3%83%95%E3%82%A3%E3%83%AB%E3%82%BF%E3%83%BC/ngdfibejjanimbkpnenkhfdiledjmogo).
 
-### Manual install in developer mode
+### Manual install from a release zip
 
-1. Clone this repository (or download and unzip it)
+If you'd rather not use the store, you can get a zip from the GitHub releases.
+
+1. Download `youtube-live-chat-filter-vX.Y.Z.zip` from "Assets" in the
+   [latest release](https://github.com/kat-log/youtube-live-chat-filter/releases/latest) and unzip it
 2. Open `chrome://extensions/` in Chrome
 3. Turn on "Developer mode" in the top right
 4. Click "Load unpacked"
-5. Select the `src/` folder
+5. Select the unzipped folder (the one that contains `manifest.json`)
+
+A manual install doesn't update itself. When a new version comes out, install it again the same way.
+
+To try the development code instead, clone this repository and select the `src/` folder in step 5.
 
 ---
 
