@@ -17,6 +17,24 @@ Earlier versions are in Japanese only.*
 
 ---
 
+## 3.1.0 — 2026-10-03
+
+### できるようになったこと
+
+- **ポップアップの設定（歯車）から表示言語を切り替えられるようになりました。**
+  「表示言語」で 自動（ブラウザ）/ English / 日本語 を選ぶと、ポップアップがその言語で開き直ります。
+  設定画面の「言語」と同じ設定なので、どちらで変えてももう一方にも反映されます
+- **ポップアップの設定から設定画面を開けるようになりました。**
+  設定の下にある「詳しい設定」ボタンを押すと、設定画面が開きます
+
+### English
+
+- **You can now switch the display language from the popup settings (gear icon).**
+  Choose Auto (browser) / English / 日本語 under "Language" and the popup reopens in that language.
+  It is the same setting as "Language" on the settings page, so changing either one updates the other
+- **You can now open the settings page from the popup settings.**
+  Click the "All settings" button at the bottom of the settings panel
+
 ## 3.0.1 — 2026-10-02
 
 ### 直ったこと

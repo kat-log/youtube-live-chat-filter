@@ -137,7 +137,7 @@ All comments are stored **only in your browser** and are never sent anywhere.
 
 ## Version and changelog
 
-**Version:** v3.0.1 (the source of truth is `version` in [`src/manifest.json`](src/manifest.json).
+**Version:** v3.1.0 (the source of truth is `version` in [`src/manifest.json`](src/manifest.json).
 Changes are listed in [`CHANGELOG.md`](CHANGELOG.md))
 
 ---
