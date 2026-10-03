@@ -47,3 +47,8 @@ ffmpeg -i video.mp4 -i mix.wav -c:v libx264 -preset slow -crf 20 -pix_fmt yuv420
 - 収録と動画の時刻の対応は `stage.html` の `watchRec()` / `popRec()`、popup の枠の座標は収録フレーム（CSS の 1.5倍）上の値
 - 声と BGM の差は 12dB に合わせている（`audio.py`）
 - クレジット：VOICEVOX:ずんだもん / 四国めたん（動画内と概要欄）
+
+## サムネイル
+
+`thumbnail.html` → `thumbnail.png`（1080×1920）。中央の画面は popup の収録フレーム（`rec/popup`、13.6秒）を切り出した `thumb-pop.png`。
+ショートのサムネを選べるのはスマホアプリでアップロードするときだけで、選べるのは動画内のフレームから。
