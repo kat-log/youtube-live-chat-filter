@@ -12,7 +12,7 @@ YouTubeライブチャットから、**配信者・モデレーター・メン�
 
 ### 紹介動画（1分）
 
-[![紹介動画を YouTube で見る](promotion/promo-video-thumbnail.jpg)](https://youtu.be/HZnoYyByUos)
+https://github.com/user-attachments/assets/dcf46e04-1005-4b13-9ff1-474c65f2776b
 
 ▶ [YouTube で見る](https://youtu.be/HZnoYyByUos)
 
