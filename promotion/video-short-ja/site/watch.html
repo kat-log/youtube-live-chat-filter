@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta property="og:url" content="https://www.youtube.com/watch?v=DEMOkiri01x">
+<title>【歌枠】リクエスト受付中🌙 夜ふかしカラオケ</title>
+<style>
+ html,body{margin:0;background:#0f0f0f;color:#f1f1f1;font-family:Roboto,'Noto Sans JP','Noto Sans CJK JP',Arial,sans-serif;overflow:hidden;height:100%}
+ #movie_player{position:relative;aspect-ratio:16/9;background:#000}
+ canvas{width:100%;height:100%;display:block}
+ .ctl{position:absolute;left:0;right:0;bottom:0;height:52px;background:linear-gradient(transparent,rgba(0,0,0,.65));}
+ .bar{position:absolute;left:12px;right:12px;bottom:44px;height:3px;background:rgba(255,255,255,.3)}
+ .bar i{position:absolute;left:0;top:0;bottom:0;right:0;background:#f00}
+ .bar b{position:absolute;right:-6px;top:-5px;width:13px;height:13px;border-radius:50%;background:#f00}
+ .btns{position:absolute;left:14px;right:14px;bottom:8px;height:30px;display:flex;align-items:center;gap:18px;font-size:14px}
+ .btns svg{width:24px;height:24px;fill:#fff}
+ .live{display:flex;align-items:center;gap:6px;font-weight:500}.live:before{content:'';width:8px;height:8px;border-radius:50%;background:#f00}
+ .sp{flex:1}
+ h1{font-size:17px;line-height:23px;margin:10px 12px 8px;font-weight:600}
+ .ch{display:flex;align-items:center;gap:10px;color:#aaa;font-size:12px;margin:0 12px 10px}
+ .ch img{width:36px;height:36px;border-radius:50%}
+ .ch b{color:#f1f1f1;font-size:15px;display:block;font-weight:600}
+ .sub{margin-left:auto;background:#f1f1f1;color:#0f0f0f;border-radius:18px;padding:8px 16px;font-weight:600;font-size:14px}
+ #chat{position:absolute;left:0;right:0;bottom:0;top:var(--ct,0);border-top:1px solid #2a2a2a;overflow:hidden}
+ iframe{width:100%;height:100%;border:0}
+</style></head><body>
+<div id="movie_player"><canvas id="cv" width="1280" height="720"></canvas>
+ <div class="ctl"></div><div class="bar"><i></i><b></b></div>
+ <div class="btns">
+  <svg viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
+  <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8v8a4.5 4.5 0 0 0 2.5-4z"/></svg>
+  <span class="live">ライブ</span><span class="sp"></span>
+  <svg viewBox="0 0 24 24"><path d="M19.4 13a7.5 7.5 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7 7 0 0 0-1.7-1L15 3h-4l-.4 2.7a7 7 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.5 7.5 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7 7 0 0 0 1.7 1L11 21h4l.4-2.7a7 7 0 0 0 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></svg>
+  <svg viewBox="0 0 24 24"><path d="M5 5h5v2H7v3H5zm9 0h5v5h-2V7h-3zM5 14h2v3h3v2H5zm12 3v-3h2v5h-5v-2z"/></svg>
+ </div>
+</div>
+<h1>【歌枠】リクエスト受付中🌙 夜ふかしカラオケ</h1>
+<div class="ch"><img src="https://yt3.ggpht.com/demo/%E7%A9%BA%E4%B9%83%E3%82%AD%E3%83%AA=s88-c-k"><div><b>空乃キリ</b>チャンネル登録者数 12.8万人</div><span class="sub">登録済み</span></div>
+<div id="chat"><iframe src="/live_chat?is_popout=0&v=DEMOkiri01x"></iframe></div>
+<script>
+document.getElementById('chat').style.setProperty('--ct', (document.querySelector('.ch').getBoundingClientRect().bottom) + 'px');
+const cv=document.getElementById('cv'),x=cv.getContext('2d');
+const stars=[...Array(140)].map((_,i)=>[(i*977)%1280,(i*571)%520,(i%5)/3+0.5,i]);
+function draw(ts){const t=ts/1000;
+ const g=x.createLinearGradient(0,0,0,720);g.addColorStop(0,'#0b1033');g.addColorStop(.6,'#3a1c71');g.addColorStop(1,'#d76d77');
+ x.fillStyle=g;x.fillRect(0,0,1280,720);
+ for(const[sx,sy,r,i]of stars){x.globalAlpha=.5+.5*Math.sin(t*2+i);x.fillStyle='#fff';x.beginPath();x.arc(sx,sy,r,0,7);x.fill()}
+ x.globalAlpha=1;x.fillStyle='#fff6d5';x.shadowColor='#fff6d5';x.shadowBlur=60;x.beginPath();x.arc(1000,190,90,0,7);x.fill();x.shadowBlur=0;
+ for(let i=0;i<48;i++){const h=40+140*Math.abs(Math.sin(t*3+i*.7)*Math.sin(t*1.3+i*.31));
+  x.fillStyle=`hsla(${280+i*2},90%,70%,.85)`;x.fillRect(80+i*23.5,640-h,16,h)}
+ x.fillStyle='#fff';x.font="bold 76px 'Noto Sans CJK JP',sans-serif";x.fillText('♪ 夜ふかしカラオケ',80,190);
+ x.font="34px 'Noto Sans CJK JP',sans-serif";x.fillStyle='#ffe3f1';x.fillText('いま歌っている曲：「真夜中サテライト」',84,250);
+ requestAnimationFrame(draw)}
+requestAnimationFrame(draw);
+</script></body></html>

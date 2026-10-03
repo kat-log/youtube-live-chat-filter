@@ -1,0 +1,89 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>chat</title>
+<style>
+  html,body{margin:0;height:100%;background:#0f0f0f;color:#f1f1f1;font-family:Roboto,'Noto Sans JP','Noto Sans CJK JP',Arial,sans-serif;overflow:hidden}
+  #hdr{height:48px;font-size:16px;display:flex;align-items:center;padding:0 16px;border-bottom:1px solid #2a2a2a;font-size:16px;font-weight:500}
+  #hdr small{margin-left:auto;color:#aaa;font-size:13px}
+  yt-live-chat-item-list-renderer{display:block;position:absolute;top:49px;bottom:56px;left:0;right:0;overflow:hidden}
+  #items{position:absolute;left:0;right:0;bottom:0;display:flex;flex-direction:column;padding:4px 0}
+  #foot{position:absolute;bottom:0;left:0;right:0;height:56px;border-top:1px solid #2a2a2a;display:flex;align-items:center;padding:0 16px}
+  #foot div{flex:1;height:34px;border-radius:0;background:transparent;border-bottom:1px solid #3f3f3f;color:#888;font-size:14px;display:flex;align-items:center;padding:0 14px}
+  yt-live-chat-text-message-renderer{display:flex;align-items:flex-start;gap:16px;padding:4px 24px;font-size:13px;line-height:18px}
+  #author-photo img{width:24px;height:24px;border-radius:50%;display:block}
+  #author-photo{cursor:pointer;flex:none}
+  .c{flex:1;min-width:0}
+  #timestamp{display:none}
+  #author-name{color:#aaa;font-weight:500;margin-right:8px;cursor:pointer;border-radius:2px}
+  [author-type=owner] #author-name{background:#ffd600;color:#111;padding:0 4px}
+  [author-type=moderator] #author-name{color:#5e84f1}
+  [author-type=member] #author-name{color:#2ba640}
+  yt-live-chat-author-badge-renderer{display:inline-block;font-size:11px;margin-right:4px;vertical-align:1px}
+  #message{word-wrap:break-word}
+  yt-live-chat-paid-message-renderer{display:block;margin:6px 16px;border-radius:6px;overflow:hidden;font-size:14px}
+  yt-live-chat-paid-message-renderer .h{display:flex;align-items:center;gap:10px;padding:8px 14px}
+  yt-live-chat-paid-message-renderer #author-name{color:rgba(0,0,0,.7);background:none;padding:0}
+  yt-live-chat-paid-message-renderer #purchase-amount{font-weight:600;color:#111}
+  yt-live-chat-paid-message-renderer #message{padding:6px 14px 10px;color:#111}
+  yt-live-chat-paid-message-renderer img#img{width:40px;height:40px;border-radius:50%}
+  yt-live-chat-membership-item-renderer{display:block;margin:6px 16px;border-radius:6px;overflow:hidden;background:#0a8043;font-size:14px}
+  yt-live-chat-membership-item-renderer .h{display:flex;align-items:center;gap:10px;padding:10px 14px}
+  yt-live-chat-membership-item-renderer #author-name{color:#fff;background:none;padding:0}
+  #header-subtext{color:#e6ffee;font-size:13px}
+  yt-live-chat-membership-item-renderer img#img{width:40px;height:40px;border-radius:50%}
+  .focus{background:rgba(255,214,0,.10)}
+  .hl{animation:hl 1.6s ease-out}
+  @keyframes hl{0%{background:rgba(255,214,0,.35)}100%{background:transparent}}
+  .alt-hover #author-name{outline:2px solid #3ea6ff}
+</style></head>
+<body>
+<div id="hdr">上位のチャット <span style="margin-left:6px;font-size:12px">▼</span><small><svg width="20" height="20" viewBox="0 0 24 24" fill="#aaa"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></small></div>
+<yt-live-chat-item-list-renderer><div id="items"></div></yt-live-chat-item-list-renderer>
+<div id="foot"><img src="https://yt3.ggpht.com/demo/%E3%81%BD%E3%81%A6%E3%81%A8=s32" style="width:24px;height:24px;border-radius:50%;margin-right:14px"><div>チャット...</div><span style="margin-left:14px;font-size:20px;color:#aaa">☺</span><span style="margin-left:14px;color:#aaa;font-size:18px">＄</span></div>
+<script>
+const items = document.getElementById('items');
+const AV = n => 'https://yt3.ggpht.com/demo/' + encodeURIComponent(n) + '=s32-c-k-c0x00ffffff-no-rj';
+let seq = 0;
+function clock(){
+  const d = new Date(); let h = d.getHours(), m = d.getMinutes();
+  return h + ':' + String(m).padStart(2,'0');
+}
+function esc(s){return s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+// spec: {name, role:'owner'|'moderator'|'member'|'', text, kind:'text'|'superchat'|'membership', amount, color, mark}
+function addRow(spec){
+  let el;
+  const id = 'ChwKGkNE' + (++seq) + 'demo' + Math.random().toString(36).slice(2,8);
+  if (spec.kind === 'superchat') {
+    el = document.createElement('yt-live-chat-paid-message-renderer');
+    el.innerHTML = `<div class="h" style="background:${spec.color2||'#e65100'}"><img id="img" src="${AV(spec.name)}"><div><div id="author-name">${esc(spec.name)}</div><div id="purchase-amount">${esc(spec.amount)}</div></div><span id="timestamp" style="margin-left:auto;color:rgba(0,0,0,.5)">${clock()}</span></div><div id="message" style="background:${spec.color||'#ff9800'}">${esc(spec.text||'')}</div>`;
+  } else if (spec.kind === 'membership') {
+    el = document.createElement('yt-live-chat-membership-item-renderer');
+    el.innerHTML = `<div class="h"><img id="img" src="${AV(spec.name)}"><div><div id="author-name">${esc(spec.name)}</div><div id="header-subtext">${esc(spec.text||'「ほしぞら組」へようこそ！')}</div></div><span id="timestamp" style="margin-left:auto;color:#cfe">${clock()}</span></div>`;
+  } else {
+    el = document.createElement('yt-live-chat-text-message-renderer');
+    if (spec.role) el.setAttribute('author-type', spec.role);
+    const badge = spec.role === 'moderator' ? '<yt-live-chat-author-badge-renderer type="moderator">🔧</yt-live-chat-author-badge-renderer>'
+      : spec.role === 'member' ? '<yt-live-chat-author-badge-renderer type="member">⭐</yt-live-chat-author-badge-renderer>' : '';
+    el.innerHTML = `<div id="author-photo"><img src="${AV(spec.name)}"></div><div class="c"><span id="timestamp">${clock()}</span><span id="author-name">${esc(spec.name)}</span>${badge}<span id="message">${esc(spec.text)}</span></div>`;
+  }
+  el.id = id;
+  if (spec.mark) el.dataset.mark = spec.mark;
+  if (spec.focus) el.classList.add('focus');
+  items.appendChild(el);
+  while (items.children.length > 120) items.firstElementChild.remove();
+  return el;
+}
+const FILL_NAMES = ["ぱんだ丸","あおいとり","こたつねこ","らーめん太郎","ゆずぽん","ねむねむ","ほしくず","たこやき","みかん箱","しずく","くろまめ","ぽてと","つきみ","さくら餅","ぴこ","そらまめ","はなび"];
+const FILL = ["こんばんは〜！","88888888","うますぎる","草","初見です！","神曲きた","鳥肌たった","声すき","アンコール！","わこつ","🎤🎤🎤","かわいい","高音きれい…","今日も最高","泣いた","この曲すき！！","おつかれさま","きたあああ","切り抜き確定","✨✨✨","こんばんは！","ナイス！","wwww","優勝","てぇてぇ","ねむいけど来た","今北","最高かよ","🌙✨","リクエスト通りますように","いい声すぎる"];
+let rate = 0, timer = null, rnd = 1;
+function r(){ rnd = (rnd * 16807) % 2147483647; return rnd / 2147483647; }
+function setRate(perSec){
+  rate = perSec; if (timer) clearTimeout(timer); timer = null;
+  const tick = () => { if (!rate) return;
+    addRow({name: FILL_NAMES[Math.floor(r()*FILL_NAMES.length)], role: r() < 0.07 ? 'member' : '', text: FILL[Math.floor(r()*FILL.length)]});
+    timer = setTimeout(tick, (1000/rate) * (0.5 + r())); };
+  tick();
+}
+window.addRow = addRow; window.setRate = setRate;
+window.rowByMark = m => document.querySelector(`[data-mark="${m}"]`);
+</script>
+</body></html>

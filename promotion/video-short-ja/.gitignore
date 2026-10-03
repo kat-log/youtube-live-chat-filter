@@ -1,0 +1,14 @@
+rec/
+rec*/
+vo/
+fonts/
+prof-*/
+*.mp4
+*.wav
+*.jpg
+qr.png
+icon.svg
+data.js
+timeline.json
+__pycache__/
+thumb-pop.png
