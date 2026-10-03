@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<link rel="stylesheet" href="fonts/fonts.css">
+<script src="data.js"></script>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;width:1080px;height:1920px;overflow:hidden;background:#1a0f3a;font-family:'M PLUS Rounded 1c',sans-serif;color:#fff}
+#bg{position:absolute;inset:0;overflow:hidden;background:radial-gradient(900px 900px at 20% 15%,#4a2590 0%,transparent 60%),radial-gradient(900px 900px at 85% 85%,#8a2464 0%,transparent 60%),linear-gradient(160deg,#1b0f3f,#2a1350)}
+#rays{position:absolute;left:50%;top:50%;width:3000px;height:3000px;margin:-1500px 0 0 -1500px;background:repeating-conic-gradient(rgba(255,255,255,.05) 0 6deg,transparent 6deg 15deg);opacity:0}
+.blob{position:absolute;border-radius:50%;filter:blur(70px);opacity:.45}
+#card{position:absolute;left:40px;top:390px;width:1000px;height:1140px;border-radius:30px;overflow:hidden;background:#0f0f0f;box-shadow:0 30px 80px rgba(0,0,0,.55)}
+#card img{position:absolute;left:0;top:0;width:1080px;height:1832px;transform-origin:0 0}
+#dim{position:absolute;inset:0;background:#000;opacity:0}
+#tb{position:absolute;right:26px;top:22px;height:76px;padding:0 14px;border-radius:38px;background:rgba(32,33,36,.92);display:flex;align-items:center;gap:12px;box-shadow:0 8px 24px rgba(0,0,0,.5)}
+#tb .dot{width:46px;height:46px;border-radius:12px;background:#3c4043}
+#tb img.ic{position:static;width:56px;height:56px;transform:none}
+#popup{position:absolute;left:146px;top:400px;width:788px;height:1125px;border-radius:22px;overflow:hidden;background:#f7f7f7;box-shadow:0 30px 90px rgba(0,0,0,.7);transform-origin:88% 0}
+#popup img{display:block;width:937.5px;height:1225px}
+.ring{position:absolute;border:7px solid #ffd54a;border-radius:18px;box-shadow:0 0 0 7px rgba(255,213,74,.25),0 0 40px rgba(255,213,74,.6);pointer-events:none}
+#sub{position:absolute;left:40px;right:40px;top:150px;height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center}
+#sub .who{padding:4px 22px;border-radius:999px;font:800 30px 'M PLUS Rounded 1c';color:#1a0b2e}
+#sub .txt{white-space:pre-line;font:800 56px/1.28 'M PLUS Rounded 1c';-webkit-text-stroke:12px #1a0b2e;paint-order:stroke fill;letter-spacing:1px}
+.sticker{position:absolute;font:800 46px 'M PLUS Rounded 1c';padding:16px 30px;border-radius:24px;color:#2a0f3d;background:#fff;box-shadow:0 12px 30px rgba(0,0,0,.45);white-space:nowrap}
+#title{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:34px;text-align:center}
+#title img{width:300px;height:300px;filter:drop-shadow(0 20px 40px rgba(0,0,0,.5))}
+#title h1{margin:0;font:400 84px/1.15 'Dela Gothic One';-webkit-text-stroke:16px #1a0b2e;paint-order:stroke fill}
+#title h1 span{color:#ffd54a}
+#title p{margin:0;font:800 48px 'M PLUS Rounded 1c';color:#ffd7a8;-webkit-text-stroke:10px #1a0b2e;paint-order:stroke fill}
+#cursor{position:absolute;width:72px;height:72px;pointer-events:none;filter:drop-shadow(0 4px 6px rgba(0,0,0,.5))}
+#ripple{position:absolute;width:110px;height:110px;margin:-55px 0 0 -55px;border-radius:50%;border:7px solid #ffd54a;pointer-events:none}
+#end{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;text-align:center;padding-top:190px}
+#end .brand img{width:170px;height:170px}
+#end h2{margin:18px 0 0;font:400 80px/1.15 'Dela Gothic One';-webkit-text-stroke:14px #1a0b2e;paint-order:stroke fill}
+#end .tag{margin:26px 0 30px;font:800 48px 'M PLUS Rounded 1c';color:#ffd7a8}
+#end .chips{display:flex;flex-wrap:wrap;justify-content:center;gap:14px;width:960px}
+#end .chip{font:800 34px 'M PLUS Rounded 1c';padding:10px 24px;border-radius:999px;background:rgba(255,255,255,.13);border:2px solid rgba(255,255,255,.28)}
+#end .qr{margin-top:44px;background:#fff;border-radius:28px;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+#end .qr img{width:300px;height:300px;display:block;image-rendering:pixelated}
+#end .store{margin-top:22px;font:800 46px 'M PLUS Rounded 1c'}
+#end .note{margin-top:20px;font:500 26px/1.5 'M PLUS Rounded 1c';color:#cbbbef}
+</style></head>
+<body>
+<div id="bg"><div id="rays"></div><div class="blob" id="b1" style="width:560px;height:560px;background:#ff5fa8"></div><div class="blob" id="b2" style="width:500px;height:500px;background:#5f8bff"></div></div>
+
+<div id="card"><img id="watch"><div id="dim"></div>
+  <div id="tb"><div class="dot"></div><div class="dot"></div><img class="ic" src="icon.svg"></div>
+</div>
+<div id="popup"><img id="popimg"></div>
+<div class="ring" id="ring"></div>
+
+<div id="title"><img src="icon.svg"><h1>YouTube<br><span>Special Comments</span><br>Filter</h1><p>A free Chrome extension</p></div>
+
+<div class="sticker" id="st1"></div>
+<div class="sticker" id="st2"></div>
+
+<div id="end">
+  <div class="brand"><img src="icon.svg"></div>
+  <h2>YouTube Special<br>Comments Filter</h2>
+  <div class="tag">Never miss the comments that matter.</div>
+  <div class="chips">
+    <span class="chip">👑 Streamer</span><span class="chip">🔧 Mods</span><span class="chip">⭐ Members</span><span class="chip">💰 Super Chats</span>
+    <span class="chip">🔍 Keyword search</span><span class="chip">🔑 No API key</span>
+  </div>
+  <div class="qr"><img src="qr.png"></div>
+  <div class="store">Free on the Chrome Web Store</div>
+  <div class="note">The stream and chat shown are fictional.<br>Voices: ElevenLabs (elevenlabs.io)</div>
+</div>
+
+<div id="sub"><span class="who" id="who"></span><span class="txt" id="subtxt"></span></div>
+<div id="ripple"></div>
+<svg id="cursor" viewBox="0 0 24 24"><path d="M4 2l15 11-6.5 1.2L16 21l-3 1.4-3.4-6.6L4 20z" fill="#fff" stroke="#111" stroke-width="1.4" stroke-linejoin="round"/></svg>
+
+<script>
+const $ = id => document.getElementById(id);
+const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+const lerp = (a,b,k) => a + (b-a)*k;
+const ease = k => { k = clamp(k,0,1); return k<.5 ? 2*k*k : 1-Math.pow(-2*k+2,2)/2; };
+const pop = k => { k = clamp(k,0,1); const c=1.70158*1.4; return 1 + (c+1)*Math.pow(k-1,3) + c*Math.pow(k-1,2); };
+const ramp = (t,a,b) => clamp((t-a)/(b-a),0,1);
+const win = (t,a,b,f=.25) => Math.min(ramp(t,a,a+f), 1-ramp(t,b-f,b));
+const FPS = 30, END = 26.4;
+const pad = n => String(n).padStart(5,'0');
+
+// ---- 収録の時刻への対応 ----
+const watchRec = t => t + 0.6;
+function popRec(t){
+  if (t < 19.7) return t + 0.3;            // 開く → スパチャ・モデレーター → 設定でメンバーをON
+  if (t < 21.1) return t + 3.5;            // キーワード検索（「歌」）
+  return Math.min(t + 8.2, 33.3);          // 設定の「DOMモード（APIキー不要）」
+}
+// popup の収録フレーム（CSS 1.5倍）上の座標 → 画面の座標
+const PS = 1.25, PX = 146, PY = 400;
+const popBox = (x0,y0,x1,y1) => [PX + x0*PS, PY + y0*PS, (x1-x0)*PS, (y1-y0)*PS];
+
+const COLORS = {A:'#ff8fc8', B:'#7fe3d2'};
+const NAMES = {A:'Fan', B:'Guide'};
+
+let lastW = '', lastP = '';
+async function render(t){
+  const waits = [];
+  $('b1').style.left = (-120 + 80*Math.sin(t*.4)) + 'px'; $('b1').style.top = (1250 + 60*Math.cos(t*.3)) + 'px';
+  $('b2').style.left = (680 + 90*Math.cos(t*.35)) + 'px'; $('b2').style.top = (60 + 70*Math.sin(t*.5)) + 'px';
+
+  const inEnd = ramp(t, END, END + 0.45);
+  const titleK = win(t, 5.15, 8.45, .3);
+  $('rays').style.opacity = Math.max(titleK, inEnd);
+  $('rays').style.transform = `rotate(${t*6}deg)`;
+
+  // 配信画面：最初はページ全体 → チャット欄に寄る
+  const C = $('card'), WI = $('watch');
+  const z = ease(ramp(t, 0.35, 1.25));
+  const s = lerp(1000/1080, 1.45, z);
+  const ty = lerp(0, 1140 - 1832*1.45, z);
+  WI.style.transform = `translate(0px,${ty}px) scale(${s})`;
+  C.style.filter = titleK > 0 ? `blur(${14*titleK}px) brightness(${1-.5*titleK})` : 'none';
+  C.style.opacity = 1 - inEnd;
+  const wf = 'rec/watch30/' + pad(clamp(Math.round(watchRec(t)*FPS),0,NF.watch-1)) + '.jpg';
+  if (wf !== lastW) { WI.src = wf; lastW = wf; waits.push(WI.decode().catch(()=>{})); }
+
+  // ツールバー（拡張機能のアイコン）と popup
+  const tbK = ramp(t, 7.9, 8.2);
+  $('tb').style.opacity = tbK * (1 - inEnd);
+  $('tb').style.transform = `scale(${0.7 + 0.3*pop(tbK)})`;
+  const P = $('popup');
+  const pk = ramp(t, 8.55, 8.95);
+  $('dim').style.opacity = 0.55 * pk;
+  if (t >= 8.55) {
+    const pf = 'rec/popup30/' + pad(clamp(Math.round(popRec(t)*FPS),0,NF.popup-1)) + '.jpg';
+    if (pf !== lastP) { $('popimg').src = pf; lastP = pf; waits.push($('popimg').decode().catch(()=>{})); }
+    P.style.display = 'block';
+    P.style.opacity = Math.min(pk*1.6, 1) * (1 - inEnd);
+    P.style.transform = `scale(${0.4 + 0.6*pop(pk)})`;
+  } else P.style.display = 'none';
+
+  // 字幕
+  const line = TL.find(l => t >= l.start - 0.05 && t <= l.end + 0.25);
+  const S = $('sub');
+  if (line && !(t >= END && line.start < END)) {
+    S.style.display = 'flex';
+    $('who').textContent = NAMES[line.sp]; $('who').style.background = COLORS[line.sp];
+    const TX = $('subtxt');
+    if (TX.textContent !== line.text) {   // 1行が幅に収まるまで字を小さくする
+      TX.textContent = line.text; let fs = 56; TX.style.fontSize = fs + 'px'; TX.style.display = 'inline-block'; TX.style.whiteSpace = 'pre';
+      while (TX.getBoundingClientRect().width > 980 && fs > 36) { fs -= 2; TX.style.fontSize = fs + 'px'; }
+    }
+    const k = ramp(t, line.start - 0.05, line.start + 0.12);
+    S.style.opacity = k; S.style.transform = `translateY(${(1-k)*16}px)`;
+    // エンドカードでは字幕を下（QR の下ではなく、帯の上）に出さず、上の余白に重ねない
+    S.style.top = t >= END ? '1560px' : '150px';
+    if (t >= END) { S.style.opacity = 0; }
+  } else S.style.display = 'none';
+
+  // タイトル
+  const T = $('title');
+  T.style.display = titleK > 0 ? 'flex' : 'none';
+  T.style.opacity = titleK;
+  T.querySelector('img').style.transform = `scale(${pop(ramp(t, 5.3, 5.85))}) rotate(${(1-pop(ramp(t,5.3,5.85)))*-20}deg)`;
+  T.querySelector('h1').style.transform = `scale(${0.8 + 0.2*pop(ramp(t, 5.45, 6.0))})`;
+  T.querySelector('p').style.opacity = ramp(t, 6.6, 7.0);
+
+  // ステッカー
+  const st = (el, text, x, y, a, b, bg='#fff', rot=-3) => {
+    if (t < a || t > b) { el.style.display = 'none'; return; }
+    el.style.display = 'block'; el.textContent = text; el.style.background = bg;
+    el.style.left = x + 'px'; el.style.top = y + 'px';
+    const k = pop(ramp(t, a, a + .35)) * (1 - ramp(t, b - .2, b));
+    el.style.transform = `scale(${k}) rotate(${rot}deg)`;
+  };
+  if (t < 5.3) {
+    st($('st1'), '💬 They replied!', 560, 1060, 1.1, 2.9, '#ffe27a', -4);
+    st($('st2'), '💨 Gone in seconds…', 330, 1400, 3.1, 5.25, '#ffd0e8', 3);
+  } else if (t >= 17.9 && t < 19.7) {
+    st($('st1'), '6 toggles', 380, 1385, 18.0, 19.7, '#ffe27a', -3);
+    $('st2').style.display = 'none';
+  } else if (t >= 19.7 && t < 21.2) {
+    st($('st1'), '🔍 Search "song"', 420, 1385, 20.2, 21.2, '#ffe27a', 3);
+    $('st2').style.display = 'none';
+  } else if (t >= 21.6 && t < END) {
+    st($('st1'), '✓ No API key', 120, 1390, 21.8, END, '#b8f5d0', -3);
+    st($('st2'), '✓ No setup', 620, 1390, 22.8, END, '#b8f5d0', 3);
+  } else { $('st1').style.display = 'none'; $('st2').style.display = 'none'; }
+
+  // 強調の枠（popup の収録フレーム上の座標）
+  const R = $('ring');
+  const ringAt = (box, a, b) => {
+    const [x, y, w, h] = popBox(...box); const k = win(t, a, b, .3);
+    R.style.display = 'block'; R.style.opacity = k;
+    R.style.left = (x-10) + 'px'; R.style.top = (y-10) + 'px'; R.style.width = (w+20) + 'px'; R.style.height = (h+20) + 'px';
+  };
+  if (t >= 13.0 && t < 15.6) ringAt([12,552,618,660], 13.0, 15.6);          // @pixelpanda への返事
+  else if (t >= 17.9 && t < 19.6) ringAt([24,358,310,405], 17.9, 19.6);     // メンバーのスイッチ
+  else if (t >= 20.25 && t < 21.1) ringAt([18,82,612,120], 20.25, 21.1);   // 検索欄（song）
+  else if (t >= 21.6 && t < END) ringAt([24,126,606,237], 21.6, END);       // DOMモード（APIキー不要）
+  else R.style.display = 'none';
+
+  // カーソル（拡張機能のアイコンと、popup の中のクリック）
+  const CU = $('cursor'), RP = $('ripple');
+  let cur = null;
+  const path = pts => {
+    if (t < pts[0][0] || t > pts[pts.length-1][0]) return null;
+    for (let i = 0; i < pts.length-1; i++) { const [ta,xa,ya]=pts[i], [tb,xb,yb]=pts[i+1];
+      if (t <= tb) { const k = ease((t-ta)/(tb-ta||1)); return [lerp(xa,xb,k), lerp(ya,yb,k)]; } }
+    return pts[pts.length-1].slice(1);
+  };
+  const pp = n => [PX + MK[n].x*1.5*PS, PY + MK[n].y*1.5*PS];
+  const clicks = [];
+  const icx = 40 + 1000 - 26 - 14 - 28, icy = 390 + 22 + 38;
+  if (t >= 7.9 && t < 8.9) { cur = path([[7.9,640,1100],[8.4,icx,icy],[8.9,icx,icy]]); clicks.push([8.42,icx,icy]); }
+  const at = n => MK[n].t - 0.3;   // 収録の時刻 → 動画の時刻（popRec の最初の区間）
+  if (t >= 15.7 && t < 19.9) {
+    const g = pp('gear'), m = pp('member_on'), c = pp('gear_close');
+    cur = path([[15.7,700,1300],[at('gear'),g[0],g[1]],[at('gear')+0.6,g[0],g[1]],[at('member_on'),m[0],m[1]],[at('member_on')+0.8,m[0],m[1]],[at('gear_close'),c[0],c[1]],[19.9,c[0]+40,c[1]+60]]);
+    clicks.push([at('gear'),...g],[at('member_on'),...m],[at('gear_close'),...c]);
+  }
+  if (t >= 19.7 && t < 20.6) { const s2 = pp('search_click'), a2 = MK.search_click.t - 3.5; cur = path([[19.7,s2[0]+120,s2[1]+160],[a2,s2[0],s2[1]],[20.6,s2[0],s2[1]+60]]); clicks.push([a2,...s2]); }
+  if (t >= 21.1 && t < 22.1) { const g = pp('gear2'), a3 = MK.gear2.t - 8.2; cur = path([[21.1,700,1200],[a3,g[0],g[1]],[22.1,g[0]-40,g[1]+90]]); clicks.push([a3,...g]); }
+  if (cur) { CU.style.display = 'block'; CU.style.left = (cur[0]-8) + 'px'; CU.style.top = (cur[1]-5) + 'px'; } else CU.style.display = 'none';
+  const ck = clicks.find(c => t >= c[0] && t < c[0] + 0.5);
+  if (ck) { const k = (t - ck[0]) / 0.5; RP.style.display = 'block'; RP.style.left = ck[1] + 'px'; RP.style.top = ck[2] + 'px'; RP.style.opacity = 1-k; RP.style.transform = `scale(${0.4 + k})`; } else RP.style.display = 'none';
+
+  // エンドカード（フェードさせず最後まで残す）
+  const E = $('end');
+  E.style.display = inEnd > 0 ? 'flex' : 'none';
+  E.style.opacity = inEnd;
+  E.style.transform = `translateY(${(1-ease(ramp(t,END,END+0.6)))*40}px)`;
+  E.querySelector('.qr').style.transform = `scale(${pop(ramp(t, END+0.3, END+0.8))})`;
+
+  await Promise.all(waits);
+}
+window.render = render;
+</script>
+</body></html>
