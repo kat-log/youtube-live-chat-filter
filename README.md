@@ -131,7 +131,7 @@ Alt+クリック**すると、その人で絞り込んだ状態でポップア�
 
 ## バージョンと変更履歴
 
-**バージョン:** v3.0.1（正は [`src/manifest.json`](src/manifest.json) の `version`。
+**バージョン:** v3.1.0（正は [`src/manifest.json`](src/manifest.json) の `version`。
 変更履歴は [`CHANGELOG.md`](CHANGELOG.md)）
 
 ---

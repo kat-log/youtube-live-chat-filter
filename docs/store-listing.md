@@ -138,7 +138,7 @@ YouTubeのライブ配信では大量のコメントが流れるため、重要�
 	•	チャットを読み取れているかを表示。動いているのに増えないのか、読めていないのかがわかります
 	•	Tabキーだけでフィルターとダークモードを操作できます
 	•	長時間の配信でも軽いまま。数千件たまってもスクロールと検索が引っかかりません
-	•	表示言語は日本語と英語。ブラウザの言語に合わせて切り替わり、設定画面で選ぶこともできます
+	•	表示言語は日本語と英語。ブラウザの言語に合わせて切り替わり、ポップアップの設定や設定画面で選ぶこともできます
 
 使い方：
 	1.	YouTubeのライブ配信ページを開く
@@ -209,7 +209,7 @@ Features:
 	•	Shows whether the chat is being read, so you can tell "no new comments" from "can't read the chat"
 	•	Filters and dark mode can be operated with the Tab key alone
 	•	Stays fast on long streams – scrolling and search stay smooth with thousands of comments
-	•	English and Japanese. Follows your browser language, or choose one on the settings page
+	•	English and Japanese. Follows your browser language, or choose one in the popup settings or on the settings page
 
 How to use:
 	1.	Open a YouTube live stream page
@@ -220,6 +220,53 @@ How to use:
 * An API key (set on the settings page) is only needed if you use the YouTube Data API v3 mode.
 
 A handy tool for streamers and anyone who watches live streams a lot!
+```
+
+---
+
+## 更新の告知文（v3.1.0）
+
+ダッシュボードの「このバージョンの新機能」や、公開後の案内に貼る。
+中身は popup の設定ドロワーへの言語セレクトと「詳しい設定」ボタンの追加（#126）だけ。権限は変えていない。
+詳細な説明は言語の行だけ直した（上の「詳細な説明」と「・英語」）。
+設定ドロワーが写っているスクリーンショットがあれば、言語セレクトとボタンが増えているので差し替え対象。
+
+v3.0.0 と v3.0.1 の審査・公開の状況によって、利用者がどの版から上がるかが変わる。
+**ストアで公開済みの版を見て、公開されていない版の項目を足す**
+（v3.0.1 が未公開なら下の「直したこと」を、v3.0.0 も未公開なら v3.0.1 の告知文にある英語対応の節も）。
+
+v3.0.1 を公開済みのとき:
+
+```
+v3.1.0 では、ポップアップから設定を変えやすくしました。
+
+■ できるようになったこと
+・ポップアップの設定（歯車）から、表示言語（自動 / English / 日本語）を切り替えられるようになりました。設定画面の「言語」と同じ設定です
+・ポップアップの設定にある「詳しい設定」ボタンから、設定画面を開けるようになりました
+
+・要求する権限は変わっていません
+```
+
+```
+Version 3.1.0 makes settings easier to reach from the popup.
+
+■ New
+・You can now switch the display language (Auto / English / 日本語) from the popup settings (gear icon). It is the same setting as "Language" on the settings page
+・The new "All settings" button in the popup settings opens the settings page
+
+・No new permissions are requested
+```
+
+v3.0.1 がまだ公開されていないときは、上のそれぞれの「要求する権限」の行の前に足す:
+
+```
+■ 直したこと
+・YouTube のチャット欄で「上位のチャット」と「チャット」を切り替えると、その時点でチャット欄に出ていたコメントがもう一度取り込まれ、同じ行が2回並んでいたのを直しました。同じ人が同じ分に同じ文を本当に2回送った場合は、これまでどおり2件として並びます
+```
+
+```
+■ Fixed
+・Switching YouTube's chat between "Top chat" and "Live chat" no longer picks up the comments already in the chat a second time, so the same rows no longer appear twice. If someone really sends the same message twice in the same minute, it still appears as two comments
 ```
 
 ---
