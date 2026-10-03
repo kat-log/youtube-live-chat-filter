@@ -209,6 +209,18 @@
     "message": "加入・ギフト",
     "description": "popup: フィルターの名前（メンバー加入・ギフト）"
   },
+  "languageLabel": {
+    "message": "表示言語",
+    "description": "popup: 設定（言語セレクトのラベル）"
+  },
+  "languageAuto": {
+    "message": "自動（ブラウザ）",
+    "description": "popup: 言語セレクトの「自動」。English / 日本語 の選択肢は訳さない"
+  },
+  "buttonOpenOptions": {
+    "message": "詳しい設定",
+    "description": "popup: 設定ドロワーのボタン（設定画面を開く）"
+  },
   "darkModeLabel": {
     "message": "ダークモード",
     "description": "popup / options: 設定"

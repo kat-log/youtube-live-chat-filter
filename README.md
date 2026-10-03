@@ -62,7 +62,7 @@ https://github.com/user-attachments/assets/dcf46e04-1005-4b13-9ff1-474c65f2776b
 - 時刻表示の切り替え（12/24時間・秒の有無）
 - ライブページでの自動起動、自動スクロール、デバッグモード
 - チャットを読み取れているかの表示（DOMモードで監視中のとき）
-- 表示言語は日本語と英語（ブラウザの言語に従う。設定画面で選ぶこともできる）
+- 表示言語は日本語と英語（ブラウザの言語に従う。ポップアップの設定（歯車）か設定画面で選ぶこともできる）
 
 ---
 
@@ -217,6 +217,6 @@ npm test      # node:test。約430件・依存パッケージなし
 | 6つのトグル | `shared/comment.js` の `DEFAULT_COMMENT_FILTERS`（`owner` / `moderator` / `sponsor` / `normal` / `superchat` / `membership`）と1対1で対応する |
 | 権限は最小限 | `manifest.json` の `permissions` / `host_permissions`。内容は `test/manifest.test.js` が固定している |
 | どこへも送信しない | 外部への通信は APIモードの `https://www.googleapis.com/youtube/v3/*` だけ（`service-worker.js` / `options.js`） |
-| 日本語と英語 | 文言は `src/_locales/{en,ja}/messages.json`。設定画面の言語セレクトが `storage.local.uiLanguage`（`auto` / `en` / `ja`）を保存し、`shared/i18n.js` の `loadOverride()` が読む。拡張機能の名前とツールチップは manifest 由来なのでブラウザの言語のまま |
+| 日本語と英語 | 文言は `src/_locales/{en,ja}/messages.json`。設定画面とポップアップの設定ドロワーの言語セレクトが `storage.local.uiLanguage`（`auto` / `en` / `ja`）を保存し、`shared/i18n.js` の `loadOverride()` が読む。拡張機能の名前とツールチップは manifest 由来なのでブラウザの言語のまま |
 
 英語版の [`README.en.md`](README.en.md) と**対で**直す（バージョンの食い違いは `test/manifest.test.js` が落とす）。
