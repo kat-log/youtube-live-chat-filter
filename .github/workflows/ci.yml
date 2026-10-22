@@ -30,10 +30,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # package.json の engines に合わせる（node:test を使うため 20 以上が要る）
+      # package.json の engines（20 以上）を満たすサポート中の LTS。20 は EOL で 2026-10 のセキュリティ修正が来ない
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - run: npm ci
