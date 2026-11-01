@@ -178,3 +178,27 @@ describe('件数バッジの母集団（#18）', () => {
     assert.equal(badgeCounts(c).normal, 2, '隠しただけの枠が 0 になっている');
   });
 });
+
+describe('ユーザー絞り込みとトグル', () => {
+  test('ユーザーで絞っている間は、トグルで切った枠の発言も出す', () => {
+    // モデレーターだけONのままメンバーを Alt+クリックすると、その人の発言が
+    // 全部 sponsor 枠に入っているせいで0件になっていた
+    const c = controller({
+      owner: false, moderator: true, sponsor: false,
+      normal: false, superchat: false, membership: false
+    });
+    c.setComments([
+      comment({ role: 'member', displayName: 'メンバーさん', message: '1' }),
+      comment({ role: 'member', kind: 'superchat', amountText: '¥500', displayName: 'メンバーさん' }),
+      comment({ role: 'moderator', displayName: 'モデさん' })
+    ]);
+
+    c.filterByUser('メンバーさん');
+    assert.deepEqual(visibleNames(c), ['メンバーさん', 'メンバーさん']);
+    assert.equal(c.elements.noComments.style.display, 'none');
+
+    // 解除するとトグルの状態に戻る
+    c.clearUserFilter();
+    assert.deepEqual(visibleNames(c), ['モデさん']);
+  });
+});

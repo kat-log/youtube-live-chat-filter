@@ -2176,10 +2176,17 @@ class PopupController {
 
         // 役割・種別の絞り込み。取り込みは全件になったので（決定1）、
         // トグルをONに戻せば過去分もここから出てくる。
-        // 行はもう出来ているので、決めるのは「どれを見せるか」だけ
+        // 行はもう出来ているので、決めるのは「どれを見せるか」だけ。
+        //
+        // ユーザーで絞っている間はトグルを見ない。1人を選んだ時点で「この人の発言を
+        // 見たい」は明らかで、しかも1人の役割はたいてい1つなので、役割トグルを重ねると
+        // 「全部出る」か「0件」にしかならない（モデレーターだけONのままメンバーを
+        // Alt+クリックすると、何も出なくなっていた）。解除すればトグルの状態に戻る
+        const ignoreToggles = this.selectedUser !== null;
         const visibleIds = new Set();
         for (const comment of scoped) {
-            if (isCommentEnabled(comment.kind, comment.role, this.commentFilters)) {
+            if (ignoreToggles
+                || isCommentEnabled(comment.kind, comment.role, this.commentFilters)) {
                 visibleIds.add(comment.id);
             }
         }
